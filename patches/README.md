@@ -19,4 +19,8 @@ retry, non transport failures, and context cancellation. The continuation is
 also bounded by the caller output budget and an internal segment limit.
 
 Rebuild and verification inputs are in [`proxy/manifest.json`](../proxy/manifest.json)
-and [`scripts/build-proxy-assets.sh`](../scripts/build-proxy-assets.sh).
+and [`scripts/build-proxy-assets.sh`](../scripts/build-proxy-assets.sh). Canonical
+release binaries are built on Linux/amd64 with the exact Go version recorded in
+the manifest; builds on another host are intentionally rejected because Go
+cross platform build output is not guaranteed to be byte identical across host
+systems.

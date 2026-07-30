@@ -85,12 +85,13 @@ emulate security or browser behavior that does not exist.
 
 The binary version and SHA-256 digests are security sensitive. To update them:
 
-1. use the official upstream release;
-2. collect every macOS, Linux, and Windows x64/ARM64 asset used by the
-   installers;
-3. calculate each digest independently;
-4. update both installers together;
-5. run the full test matrix;
+1. pin and verify the official upstream source archive;
+2. apply the reviewed patch and build every macOS, Linux, and Windows x64/ARM64
+   asset on Linux/amd64 with the exact Go version in `proxy/manifest.json`;
+3. build twice from clean output directories and compare every asset byte for
+   byte;
+4. update the manifest and both installers together with the resulting digests;
+5. run the focused bridge tests and the full test matrix;
 6. describe the upstream changes and digest verification in the pull request.
 
 Never replace a digest just to make a failed download pass.

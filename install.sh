@@ -460,10 +460,10 @@ proxy_asset_details() {
     *) fail "unsupported CPU architecture: $(uname -m)" ;;
   esac
   case "${os}_${arch}" in
-    darwin_aarch64) checksum=0895f9dac36842fe10910647d7c50267ad5bb4de0e1e52885c85c773f3ca5d81 ;;
-    darwin_amd64) checksum=22b4a57957eab4df9c5a497eaffc4b28e07542f2cf407e76daed24ae7e9c902c ;;
-    linux_aarch64) checksum=5025037c67ae9a395cfdbd58578cd3b51dadfc25e1c1559911a2d6219e386664 ;;
-    linux_amd64) checksum=b64ea016539bee6674088238c7995c66c17a0f514ea020fd72e00f73c22ea308 ;;
+    darwin_aarch64) checksum=8bfba8bebc2183c980c35e59dfe65c3b50b254e05708befec4141cd289319fde ;;
+    darwin_amd64) checksum=a7955ea10475574dfbd33107428aa9a29105101f318178e032d5da0beb4544a8 ;;
+    linux_aarch64) checksum=b9fde58933b58bbf0032d8085a2cefb8eb38dc53497c0e0f9abdecbb447abe04 ;;
+    linux_amd64) checksum=0f8c0ffb79992c1e6d9471800d541b85c87c017168b5c30456206e7f153db07d ;;
   esac
   printf '%s %s %s\n' "$os" "$arch" "$checksum"
 }
