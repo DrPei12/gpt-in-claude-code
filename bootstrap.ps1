@@ -6,7 +6,7 @@ Set-StrictMode -Version 2.0
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $repositoryUrl = 'https://github.com/DrPei12/gpt-in-claude-code'
-$apiUrl = 'https://api.github.com/repos/DrPei12/gpt-in-claude-code/releases/latest'
+$latestUrl = "$repositoryUrl/releases/latest"
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('gicc-bootstrap-' + [guid]::NewGuid().ToString('N'))
 
 function Fail([string] $Message) {
@@ -17,8 +17,21 @@ function Fail([string] $Message) {
 try {
     [IO.Directory]::CreateDirectory($temporary) | Out-Null
     $headers = @{ 'User-Agent' = 'GICC-Installer' }
-    $release = Invoke-RestMethod -UseBasicParsing -Headers $headers -Uri $apiUrl -TimeoutSec 60
-    $tag = [string] $release.tag_name
+    $latest = Invoke-WebRequest -UseBasicParsing -Headers $headers -Method Head -Uri $latestUrl -TimeoutSec 60
+    $baseResponse = $latest.BaseResponse
+    $effectiveUri = if ($baseResponse.PSObject.Properties['ResponseUri']) {
+        $baseResponse.ResponseUri
+    } elseif ($baseResponse.PSObject.Properties['RequestMessage'] -and $baseResponse.RequestMessage) {
+        $baseResponse.RequestMessage.RequestUri
+    } else { $null }
+    if (-not $effectiveUri) { Fail 'the latest release redirect did not return its final URL' }
+    $effectiveUrl = [string] $effectiveUri.AbsoluteUri
+    $tagPrefix = "$repositoryUrl/releases/tag/"
+    if (-not $effectiveUrl.StartsWith($tagPrefix, [StringComparison]::Ordinal)) {
+        Fail 'the latest release redirect did not stay on the expected GitHub repository'
+    }
+    $tag = $effectiveUrl.Substring($tagPrefix.Length)
+    if ($effectiveUrl -cne "$tagPrefix$tag") { Fail 'the latest release redirect returned an unexpected URL' }
     if ($tag -notmatch '^v(\d+)\.(\d+)\.(\d+)$') { Fail "the latest release tag is invalid: $tag" }
     $version = $tag.Substring(1)
     $archiveName = "gicc-$version-windows.zip"

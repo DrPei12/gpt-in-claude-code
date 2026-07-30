@@ -17,7 +17,7 @@ function Get-AbsoluteInstallDirectory([string] $Value, [string] $VariableName) {
 
 $root = $PSScriptRoot
 $proxyVersion = '7.2.91-gicc.1'
-$proxyRelease = 'v0.1.0'
+$proxyRelease = 'v0.1.1'
 $requestedBinDir = if ($env:GICC_BIN_DIR) { $env:GICC_BIN_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
 $requestedConfigDir = if ($env:GICC_CONFIG_DIR) { $env:GICC_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\gpt-in-claude-code' }
 $binDir = Get-AbsoluteInstallDirectory $requestedBinDir 'GICC_BIN_DIR'

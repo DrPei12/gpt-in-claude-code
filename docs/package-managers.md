@@ -1,8 +1,9 @@
 # Package channels
 
-Version 0.1.0 is distributed through verified GitHub release archives and the
-source repository. Homebrew, Scoop, WinGet, and npm packages are not published
-yet. Do not use an unrelated package with the same `gicc` command name.
+The current stable version is distributed through verified GitHub release
+archives and the source repository. Homebrew, Scoop, WinGet, and npm packages
+are not published yet. Do not use an unrelated package with the same `gicc`
+command name.
 
 Use the commands in the [installation guide](installation.md). Both platform
 bootstraps download the latest stable GitHub release, verify its SHA-256 entry

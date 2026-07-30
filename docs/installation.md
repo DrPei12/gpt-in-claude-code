@@ -47,7 +47,7 @@ irm https://raw.githubusercontent.com/DrPei12/gpt-in-claude-code/main/bootstrap.
 
 The bootstrap verifies the latest stable GitHub release before running its
 native installer. Homebrew, Scoop, WinGet, and npm packages are not published
-for version 0.1.0. See the [package channel status](package-managers.md).
+yet. See the [package channel status](package-managers.md).
 
 For the simplest verified source installation on macOS, Linux, or WSL:
 

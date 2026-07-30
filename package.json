@@ -1,6 +1,6 @@
 {
   "name": "gpt-in-claude-code",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Run GPT-5.6 Codex models inside Claude Code with isolated auth, persistent sessions, and reasoning continuation",
   "type": "module",

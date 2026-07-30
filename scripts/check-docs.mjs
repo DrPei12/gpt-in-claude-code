@@ -81,6 +81,16 @@ if (!unixTimeout || Number(unixTimeout[1]) < 60) {
   failures.push('.github/workflows/test.yml must allow at least 60 minutes for the full Unix matrix');
 }
 
+for (const bootstrapFile of ['bootstrap.sh', 'bootstrap.ps1']) {
+  const source = readFileSync(join(root, bootstrapFile), 'utf8');
+  if (source.includes('api.github.com')) {
+    failures.push(`${bootstrapFile} must not depend on the rate limited GitHub REST API`);
+  }
+  if (!source.includes('/releases/latest') || !source.includes('/releases/tag/')) {
+    failures.push(`${bootstrapFile} must resolve the stable tag through the repository scoped latest release redirect`);
+  }
+}
+
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
 if (!changelog.includes(`## [${manifest.version}] - `)) {

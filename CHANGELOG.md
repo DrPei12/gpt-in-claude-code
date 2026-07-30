@@ -4,6 +4,14 @@ All notable changes to this independent distribution are documented here.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-30
+
+### Fixed
+
+- The Windows public bootstrap now resolves the latest stable release through
+  the repository scoped GitHub redirect. It no longer depends on the
+  unauthenticated REST API limit shared by a public runner or network.
+
 ## [0.1.0] - 2026-07-29
 
 ### Added
@@ -39,5 +47,6 @@ All notable changes to this independent distribution are documented here.
 - Installers verify release and bridge assets before extraction or execution.
 - Normal `claude` and `codex` profiles are not modified.
 
-[Unreleased]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DrPei12/gpt-in-claude-code/releases/tag/v0.1.0

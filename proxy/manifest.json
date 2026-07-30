@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "bridgeVersion": "7.2.91-gicc.1",
-  "releaseTag": "v0.1.0",
+  "releaseTag": "v0.1.1",
   "upstream": {
     "repository": "router-for-me/CLIProxyAPI",
     "version": "7.2.91",
