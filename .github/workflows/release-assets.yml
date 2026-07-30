@@ -40,6 +40,16 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
 
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.26.0'
+          cache: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.14.0'
+          cache: npm
+
       - name: Validate stable annotated tag
         run: |
           [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
@@ -48,8 +58,16 @@ jobs:
           test "$(git cat-file -t "$RELEASE_TAG")" = tag
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
 
-      - name: Build reproducible type-safe assets
-        run: ./scripts/check-release-artifacts.sh
+      - name: Build reproducible wrapper and reasoning bridge assets
+        run: |
+          ./scripts/check-release-artifacts.sh
+          bash ./scripts/build-proxy-assets.sh
+          cp dist/proxy-assets/gicc-proxy_*.tar.gz dist/
+          cp dist/proxy-assets/gicc-proxy_*.zip dist/
+          cat dist/proxy-assets/SHA256SUMS.proxy >> dist/SHA256SUMS
+          sort -k2,2 -o dist/SHA256SUMS dist/SHA256SUMS
+          node scripts/check-proxy-assets.mjs dist
+          (cd dist && sha256sum -c SHA256SUMS)
 
       - name: Create or resume private draft
         run: |
@@ -72,24 +90,30 @@ jobs:
           ' CHANGELOG.md > "$notes"
           test -s "$notes"
           gh release create "$RELEASE_TAG" --verify-tag --draft --latest=false \
-            --title "Claudex $RELEASE_TAG" --notes-file "$notes"
+            --title "GICC $RELEASE_TAG" --notes-file "$notes"
 
       - name: Attach immutable asset set
         run: |
           version=${RELEASE_TAG#v}
           assets=(
-            "claudex-$version.tar.gz"
-            "claudex-$version-windows.zip"
+            "gicc-$version.tar.gz"
+            "gicc-$version-windows.zip"
+            gicc-proxy_7.2.91-gicc.1_darwin_aarch64.tar.gz
+            gicc-proxy_7.2.91-gicc.1_darwin_amd64.tar.gz
+            gicc-proxy_7.2.91-gicc.1_linux_aarch64.tar.gz
+            gicc-proxy_7.2.91-gicc.1_linux_amd64.tar.gz
+            gicc-proxy_7.2.91-gicc.1_windows_aarch64.zip
+            gicc-proxy_7.2.91-gicc.1_windows_amd64.zip
             SHA256SUMS
           )
           release=$(gh release view "$RELEASE_TAG" --json isDraft,assets)
           test "$(jq -r '.isDraft' <<<"$release")" = true
-          unexpected=$(jq -r --arg a "${assets[0]}" --arg b "${assets[1]}" --arg c "${assets[2]}" \
-            '.assets[] | select(.name != $a and .name != $b and .name != $c) | .name' <<<"$release")
-          test -z "$unexpected" || {
-            printf 'draft contains unexpected assets:\n%s\n' "$unexpected" >&2
-            exit 1
-          }
+          while IFS= read -r existing_asset; do
+            [[ " ${assets[*]} " == *" $existing_asset "* ]] || {
+              printf 'draft contains unexpected asset: %s\n' "$existing_asset" >&2
+              exit 1
+            }
+          done < <(jq -r '.assets[].name' <<<"$release")
 
           for asset in "${assets[@]}"; do
             path="dist/$asset"
@@ -115,8 +139,19 @@ jobs:
           version=${RELEASE_TAG#v}
           release=$(gh release view "$RELEASE_TAG" --json isDraft,assets)
           test "$(jq -r '.isDraft' <<<"$release")" = true
-          test "$(jq '.assets | length' <<<"$release")" -eq 3
-          for asset in "claudex-$version.tar.gz" "claudex-$version-windows.zip" SHA256SUMS; do
+          test "$(jq '.assets | length' <<<"$release")" -eq 9
+          assets=(
+            "gicc-$version.tar.gz"
+            "gicc-$version-windows.zip"
+            gicc-proxy_7.2.91-gicc.1_darwin_aarch64.tar.gz
+            gicc-proxy_7.2.91-gicc.1_darwin_amd64.tar.gz
+            gicc-proxy_7.2.91-gicc.1_linux_aarch64.tar.gz
+            gicc-proxy_7.2.91-gicc.1_linux_amd64.tar.gz
+            gicc-proxy_7.2.91-gicc.1_windows_aarch64.zip
+            gicc-proxy_7.2.91-gicc.1_windows_amd64.zip
+            SHA256SUMS
+          )
+          for asset in "${assets[@]}"; do
             local_digest="sha256:$(sha256sum "dist/$asset" | awk '{print $1}')"
             test "$(jq -r --arg name "$asset" '.assets[] | select(.name == $name) | .digest' <<<"$release")" = "$local_digest"
           done
@@ -124,9 +159,7 @@ jobs:
           downloaded="$RUNNER_TEMP/release-download"
           mkdir -p "$downloaded"
           gh release download "$RELEASE_TAG" --dir "$downloaded"
-          cmp "dist/claudex-$version.tar.gz" "$downloaded/claudex-$version.tar.gz"
-          cmp "dist/claudex-$version-windows.zip" "$downloaded/claudex-$version-windows.zip"
-          cmp dist/SHA256SUMS "$downloaded/SHA256SUMS"
+          for asset in "${assets[@]}"; do cmp "dist/$asset" "$downloaded/$asset"; done
           (cd "$downloaded" && sha256sum -c SHA256SUMS)
 
       - name: Publish complete release atomically
@@ -135,4 +168,4 @@ jobs:
           release=$(gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets)
           test "$(jq -r '.isDraft' <<<"$release")" = false
           test "$(jq -r '.isPrerelease' <<<"$release")" = false
-          test "$(jq '.assets | length' <<<"$release")" -eq 3
+          test "$(jq '.assets | length' <<<"$release")" -eq 9

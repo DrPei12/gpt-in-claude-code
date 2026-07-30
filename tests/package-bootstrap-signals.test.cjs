@@ -10,7 +10,7 @@ if (process.platform === 'win32') {
 }
 
 const root = path.resolve(__dirname, '..');
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'claudex-package-signals-'));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'gicc-package-signals-'));
 const fixture = path.join(temporary, 'fixture');
 const fixtureBin = path.join(fixture, 'bin');
 const configDir = path.join(temporary, 'config');
@@ -34,28 +34,28 @@ const ptyDriver = [
   '    os.read(ready_read, 1)',
   '    os.close(ready_read)',
   '    os.tcsetpgrp(0, wrapper_pid)',
-  "    with open(os.environ['CLAUDEX_TEST_WRAPPER_PID_FILE'], 'w') as output:",
+  "    with open(os.environ['GICC_TEST_WRAPPER_PID_FILE'], 'w') as output:",
   "        output.write(str(wrapper_pid) + '\\n')",
   '    for _ in range(500):',
-  "        if os.path.exists(os.environ['CLAUDEX_TEST_LAUNCHER_PID_FILE']) and os.path.exists(os.environ['CLAUDEX_TEST_DESCENDANT_PID_FILE']):",
+  "        if os.path.exists(os.environ['GICC_TEST_LAUNCHER_PID_FILE']) and os.path.exists(os.environ['GICC_TEST_DESCENDANT_PID_FILE']):",
   '            break',
   '        time.sleep(0.01)',
   '    else:',
   '        sys.exit(2)',
-  "    with open(os.environ['CLAUDEX_TEST_LAUNCHER_PID_FILE']) as source:",
+  "    with open(os.environ['GICC_TEST_LAUNCHER_PID_FILE']) as source:",
   '        launcher_pid = int(source.read().strip())',
-  "    with open(os.environ['CLAUDEX_TEST_DESCENDANT_PID_FILE']) as source:",
+  "    with open(os.environ['GICC_TEST_DESCENDANT_PID_FILE']) as source:",
   '        descendant_pid = int(source.read().strip())',
-  "    with open(os.environ['CLAUDEX_TEST_GROUP_FILE'], 'w') as output:",
+  "    with open(os.environ['GICC_TEST_GROUP_FILE'], 'w') as output:",
   "        output.write(f'{os.getpgid(wrapper_pid)} {os.getpgid(launcher_pid)} {os.getpgid(descendant_pid)}\\n')",
   '    while True:',
   '        _, wrapper_status = os.waitpid(wrapper_pid, os.WUNTRACED | os.WCONTINUED)',
   '        if os.WIFSTOPPED(wrapper_status):',
-  "            with open(os.environ['CLAUDEX_TEST_JOB_STATUS_FILE'], 'a') as output:",
+  "            with open(os.environ['GICC_TEST_JOB_STATUS_FILE'], 'a') as output:",
   "                output.write(f'STOP {os.WSTOPSIG(wrapper_status)}\\n')",
   '            continue',
   '        if os.WIFCONTINUED(wrapper_status):',
-  "            with open(os.environ['CLAUDEX_TEST_JOB_STATUS_FILE'], 'a') as output:",
+  "            with open(os.environ['GICC_TEST_JOB_STATUS_FILE'], 'a') as output:",
   "                output.write('CONT\\n')",
   '            continue',
   '        break',
@@ -147,11 +147,11 @@ function waitForExit(child, timeoutMs = 5_000) {
 }
 
 async function assertNormalExitStatus() {
-  const wrapper = spawn(process.execPath, [path.join(fixtureBin, 'claudex-package.mjs'), '--exit-test'], {
+  const wrapper = spawn(process.execPath, [path.join(fixtureBin, 'gicc-package.mjs'), '--exit-test'], {
     env: {
       ...process.env,
-      CLAUDEX_CONFIG_DIR: configDir,
-      CLAUDEX_INSTALL_METHOD: 'homebrew',
+      GICC_CONFIG_DIR: configDir,
+      GICC_INSTALL_METHOD: 'homebrew',
     },
     stdio: 'ignore',
   });
@@ -166,18 +166,18 @@ async function assertForwarded(signal, launcherIgnoresSignals = false) {
   const launcherPidFile = path.join(temporary, `${label}-launcher.pid`);
   const descendantPidFile = path.join(temporary, `${label}-descendant.pid`);
   const descendantReadyFile = path.join(temporary, `${label}-descendant.ready`);
-  const wrapper = spawn(process.execPath, [path.join(fixtureBin, 'claudex-package.mjs'), '--signal-test'], {
+  const wrapper = spawn(process.execPath, [path.join(fixtureBin, 'gicc-package.mjs'), '--signal-test'], {
     env: {
       ...process.env,
-      CLAUDEX_CONFIG_DIR: configDir,
-      CLAUDEX_INSTALL_METHOD: 'homebrew',
-      CLAUDEX_TEST_DESCENDANT_SCRIPT: descendantScript,
-      CLAUDEX_TEST_DESCENDANT_PID_FILE: descendantPidFile,
-      CLAUDEX_TEST_DESCENDANT_READY_FILE: descendantReadyFile,
-      CLAUDEX_TEST_DESCENDANT_IGNORES_SIGNALS: '1',
-      CLAUDEX_TEST_LAUNCHER_PID_FILE: launcherPidFile,
-      CLAUDEX_TEST_LAUNCHER_IGNORES_SIGNALS: launcherIgnoresSignals ? '1' : '0',
-      CLAUDEX_TEST_SIGNAL_LOG: path.join(temporary, `${label}-signals.log`),
+      GICC_CONFIG_DIR: configDir,
+      GICC_INSTALL_METHOD: 'homebrew',
+      GICC_TEST_DESCENDANT_SCRIPT: descendantScript,
+      GICC_TEST_DESCENDANT_PID_FILE: descendantPidFile,
+      GICC_TEST_DESCENDANT_READY_FILE: descendantReadyFile,
+      GICC_TEST_DESCENDANT_IGNORES_SIGNALS: '1',
+      GICC_TEST_LAUNCHER_PID_FILE: launcherPidFile,
+      GICC_TEST_LAUNCHER_IGNORES_SIGNALS: launcherIgnoresSignals ? '1' : '0',
+      GICC_TEST_SIGNAL_LOG: path.join(temporary, `${label}-signals.log`),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -219,24 +219,24 @@ async function assertInteractiveTerminalSemantics() {
     '-c',
     ptyDriver,
     process.execPath,
-    path.join(fixtureBin, 'claudex-package.mjs'),
+    path.join(fixtureBin, 'gicc-package.mjs'),
     '--signal-test',
   ], {
     env: {
       ...process.env,
-      CLAUDEX_CONFIG_DIR: configDir,
-      CLAUDEX_INSTALL_METHOD: 'homebrew',
-      CLAUDEX_TEST_DESCENDANT_SCRIPT: descendantScript,
-      CLAUDEX_TEST_DESCENDANT_PID_FILE: descendantPidFile,
-      CLAUDEX_TEST_DESCENDANT_READY_FILE: descendantReadyFile,
-      CLAUDEX_TEST_DESCENDANT_IGNORES_SIGNALS: '0',
-      CLAUDEX_TEST_HEARTBEAT_FILE: heartbeatFile,
-      CLAUDEX_TEST_GROUP_FILE: groupFile,
-      CLAUDEX_TEST_JOB_STATUS_FILE: jobStatusFile,
-      CLAUDEX_TEST_LAUNCHER_PID_FILE: launcherPidFile,
-      CLAUDEX_TEST_LAUNCHER_IGNORES_SIGNALS: '0',
-      CLAUDEX_TEST_SIGNAL_LOG: signalLog,
-      CLAUDEX_TEST_WRAPPER_PID_FILE: wrapperPidFile,
+      GICC_CONFIG_DIR: configDir,
+      GICC_INSTALL_METHOD: 'homebrew',
+      GICC_TEST_DESCENDANT_SCRIPT: descendantScript,
+      GICC_TEST_DESCENDANT_PID_FILE: descendantPidFile,
+      GICC_TEST_DESCENDANT_READY_FILE: descendantReadyFile,
+      GICC_TEST_DESCENDANT_IGNORES_SIGNALS: '0',
+      GICC_TEST_HEARTBEAT_FILE: heartbeatFile,
+      GICC_TEST_GROUP_FILE: groupFile,
+      GICC_TEST_JOB_STATUS_FILE: jobStatusFile,
+      GICC_TEST_LAUNCHER_PID_FILE: launcherPidFile,
+      GICC_TEST_LAUNCHER_IGNORES_SIGNALS: '0',
+      GICC_TEST_SIGNAL_LOG: signalLog,
+      GICC_TEST_WRAPPER_PID_FILE: wrapperPidFile,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -311,23 +311,23 @@ async function assertInteractiveTargetedCleanup() {
     '-c',
     ptyDriver,
     process.execPath,
-    path.join(fixtureBin, 'claudex-package.mjs'),
+    path.join(fixtureBin, 'gicc-package.mjs'),
     '--signal-test',
   ], {
     env: {
       ...process.env,
-      CLAUDEX_CONFIG_DIR: configDir,
-      CLAUDEX_INSTALL_METHOD: 'homebrew',
-      CLAUDEX_TEST_DESCENDANT_SCRIPT: descendantScript,
-      CLAUDEX_TEST_DESCENDANT_PID_FILE: descendantPidFile,
-      CLAUDEX_TEST_DESCENDANT_READY_FILE: descendantReadyFile,
-      CLAUDEX_TEST_DESCENDANT_IGNORES_SIGNALS: '1',
-      CLAUDEX_TEST_LAUNCHER_PID_FILE: launcherPidFile,
-      CLAUDEX_TEST_LAUNCHER_IGNORES_SIGNALS: '1',
-      CLAUDEX_TEST_SIGNAL_LOG: path.join(temporary, 'interactive-targeted-signals.log'),
-      CLAUDEX_TEST_WRAPPER_PID_FILE: wrapperPidFile,
-      CLAUDEX_TEST_GROUP_FILE: groupFile,
-      CLAUDEX_TEST_JOB_STATUS_FILE: jobStatusFile,
+      GICC_CONFIG_DIR: configDir,
+      GICC_INSTALL_METHOD: 'homebrew',
+      GICC_TEST_DESCENDANT_SCRIPT: descendantScript,
+      GICC_TEST_DESCENDANT_PID_FILE: descendantPidFile,
+      GICC_TEST_DESCENDANT_READY_FILE: descendantReadyFile,
+      GICC_TEST_DESCENDANT_IGNORES_SIGNALS: '1',
+      GICC_TEST_LAUNCHER_PID_FILE: launcherPidFile,
+      GICC_TEST_LAUNCHER_IGNORES_SIGNALS: '1',
+      GICC_TEST_SIGNAL_LOG: path.join(temporary, 'interactive-targeted-signals.log'),
+      GICC_TEST_WRAPPER_PID_FILE: wrapperPidFile,
+      GICC_TEST_GROUP_FILE: groupFile,
+      GICC_TEST_JOB_STATUS_FILE: jobStatusFile,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -367,38 +367,38 @@ async function assertInteractiveTargetedCleanup() {
 
 (async () => {
   fs.mkdirSync(fixtureBin, { recursive: true });
-  fs.copyFileSync(path.join(root, 'bin', 'claudex-package.mjs'), path.join(fixtureBin, 'claudex-package.mjs'));
+  fs.copyFileSync(path.join(root, 'bin', 'gicc-package.mjs'), path.join(fixtureBin, 'gicc-package.mjs'));
   fs.copyFileSync(path.join(root, 'bin', 'package-setup-lock.mjs'), path.join(fixtureBin, 'package-setup-lock.mjs'));
   writeFile(path.join(fixture, 'package.json'), `${JSON.stringify({
-    name: 'claudex-package-signal-test',
+    name: 'gicc-package-signal-test',
     version: '9.9.9',
     type: 'module',
   })}\n`);
 
   writeFile(descendantScript, [
     "const fs = require('node:fs');",
-    "if (process.env.CLAUDEX_TEST_DESCENDANT_IGNORES_SIGNALS === '1') {",
+    "if (process.env.GICC_TEST_DESCENDANT_IGNORES_SIGNALS === '1') {",
     "  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT']) process.on(signal, () => {});",
     '}',
-    "fs.writeFileSync(process.env.CLAUDEX_TEST_DESCENDANT_READY_FILE, 'ready\\n');",
-    "if (process.env.CLAUDEX_TEST_HEARTBEAT_FILE) {",
-    "  setInterval(() => fs.appendFileSync(process.env.CLAUDEX_TEST_HEARTBEAT_FILE, 'beat\\n'), 50);",
+    "fs.writeFileSync(process.env.GICC_TEST_DESCENDANT_READY_FILE, 'ready\\n');",
+    "if (process.env.GICC_TEST_HEARTBEAT_FILE) {",
+    "  setInterval(() => fs.appendFileSync(process.env.GICC_TEST_HEARTBEAT_FILE, 'beat\\n'), 50);",
     '} else {',
     '  setInterval(() => {}, 1_000);',
     '}',
     '',
   ].join('\n'));
-  writeFile(path.join(managedBin, 'claudex'), [
+  writeFile(path.join(managedBin, 'gicc'), [
     '#!/usr/bin/env bash',
     'set -euo pipefail',
     'if [[ "${1:-}" == --exit-test ]]; then exit 37; fi',
-    'printf \'%s\\n\' "$$" > "$CLAUDEX_TEST_LAUNCHER_PID_FILE"',
-    'node "$CLAUDEX_TEST_DESCENDANT_SCRIPT" &',
+    'printf \'%s\\n\' "$$" > "$GICC_TEST_LAUNCHER_PID_FILE"',
+    'node "$GICC_TEST_DESCENDANT_SCRIPT" &',
     'descendant=$!',
-    'printf \'%s\\n\' "$descendant" > "$CLAUDEX_TEST_DESCENDANT_PID_FILE"',
-    "trap 'printf \'WINCH\\n\' >> \"$CLAUDEX_TEST_SIGNAL_LOG\"' WINCH",
-    "trap 'printf \'CONT\\n\' >> \"$CLAUDEX_TEST_SIGNAL_LOG\"' CONT",
-    'if [[ "$CLAUDEX_TEST_LAUNCHER_IGNORES_SIGNALS" == 1 ]]; then',
+    'printf \'%s\\n\' "$descendant" > "$GICC_TEST_DESCENDANT_PID_FILE"',
+    "trap 'printf \'WINCH\\n\' >> \"$GICC_TEST_SIGNAL_LOG\"' WINCH",
+    "trap 'printf \'CONT\\n\' >> \"$GICC_TEST_SIGNAL_LOG\"' CONT",
+    'if [[ "$GICC_TEST_LAUNCHER_IGNORES_SIGNALS" == 1 ]]; then',
     "  trap '' TERM INT HUP QUIT",
     '  while kill -0 "$descendant" 2>/dev/null; do wait "$descendant" || true; done',
     'else',
@@ -422,7 +422,7 @@ async function assertInteractiveTargetedCleanup() {
   ];
   for (const managedFile of managedFiles) writeFile(path.join(configDir, managedFile), '\n');
   writeFile(path.join(configDir, 'package-manager.json'), `${JSON.stringify({
-    package: 'claudex-package-signal-test',
+    package: 'gicc-package-signal-test',
     version: '9.9.9',
     method: 'homebrew',
   })}\n`);

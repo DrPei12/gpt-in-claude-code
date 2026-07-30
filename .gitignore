@@ -15,9 +15,10 @@ coverage/
 .pytest_cache/
 node_modules/
 dist/
+/Microsoft/
 .claude/
 .codex/
-.config/claudex/
+.config/gpt-in-claude-code/
 auth.json
 codex-*.json
 cliproxyapi.yaml

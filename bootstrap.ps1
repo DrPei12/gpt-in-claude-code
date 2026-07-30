@@ -5,23 +5,23 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-$repositoryUrl = 'https://github.com/BeamoINT/Claudex'
-$apiUrl = 'https://api.github.com/repos/BeamoINT/Claudex/releases/latest'
-$temporary = Join-Path ([IO.Path]::GetTempPath()) ('claudex-bootstrap-' + [guid]::NewGuid().ToString('N'))
+$repositoryUrl = 'https://github.com/DrPei12/gpt-in-claude-code'
+$apiUrl = 'https://api.github.com/repos/DrPei12/gpt-in-claude-code/releases/latest'
+$temporary = Join-Path ([IO.Path]::GetTempPath()) ('gicc-bootstrap-' + [guid]::NewGuid().ToString('N'))
 
 function Fail([string] $Message) {
-    [Console]::Error.WriteLine("Claudex bootstrap: $Message")
+    [Console]::Error.WriteLine("GICC bootstrap: $Message")
     exit 1
 }
 
 try {
     [IO.Directory]::CreateDirectory($temporary) | Out-Null
-    $headers = @{ 'User-Agent' = 'Claudex-Installer' }
+    $headers = @{ 'User-Agent' = 'GICC-Installer' }
     $release = Invoke-RestMethod -UseBasicParsing -Headers $headers -Uri $apiUrl -TimeoutSec 60
     $tag = [string] $release.tag_name
     if ($tag -notmatch '^v(\d+)\.(\d+)\.(\d+)$') { Fail "the latest release tag is invalid: $tag" }
     $version = $tag.Substring(1)
-    $archiveName = "claudex-$version-windows.zip"
+    $archiveName = "gicc-$version-windows.zip"
     $downloadBase = "$repositoryUrl/releases/download/$tag"
     $archive = Join-Path $temporary $archiveName
     $checksums = Join-Path $temporary 'SHA256SUMS'
@@ -39,7 +39,7 @@ try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [IO.Compression.ZipFile]::OpenRead($archive)
     try {
-        $archiveRoot = "claudex-$version"
+        $archiveRoot = "gicc-$version"
         foreach ($entry in $zip.Entries) {
             $name = $entry.FullName.Replace('\', '/')
             if (-not $name -or $name.StartsWith('/') -or $name -match '(^|/)\.\.?(?:/|$)' -or
@@ -55,19 +55,19 @@ try {
     } finally { $zip.Dispose() }
 
     [IO.Compression.ZipFile]::ExtractToDirectory($archive, $temporary)
-    $sourceRoot = Join-Path $temporary "claudex-$version"
-    foreach ($required in @('package.json', 'install.ps1', 'claudex.ps1', 'codex-session.ps1', 'settings.json')) {
+    $sourceRoot = Join-Path $temporary "gicc-$version"
+    foreach ($required in @('package.json', 'install.ps1', 'gicc.ps1', 'codex-session.ps1', 'settings.json')) {
         if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $required) -PathType Leaf)) { Fail "release archive is missing $required" }
     }
     $manifest = Get-Content -LiteralPath (Join-Path $sourceRoot 'package.json') -Raw | ConvertFrom-Json
     if ([string] $manifest.version -ne $version) { Fail "archive version $($manifest.version) does not match release $version" }
 
-    [Console]::WriteLine("Installing Claudex $version from its verified GitHub release...")
-    $env:CLAUDEX_INSTALL_METHOD = 'archive'
+    [Console]::WriteLine("Installing GICC $version from its verified GitHub release...")
+    $env:GICC_INSTALL_METHOD = 'archive'
     $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $sourceRoot 'install.ps1'))
     if ($Login) { $arguments += '-Login' }
     & powershell.exe @arguments
-    if ($LASTEXITCODE -ne 0) { Fail "Claudex installer failed with exit code $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { Fail "GICC installer failed with exit code $LASTEXITCODE" }
 } finally {
     if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue }
 }

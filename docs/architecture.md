@@ -1,6 +1,6 @@
 # Architecture
 
-Claudex is a launcher and compatibility layer. It does not fork or patch the
+GICC is a launcher and compatibility layer. It does not fork or patch the
 signed Claude Code executable.
 
 ## Request flow
@@ -9,12 +9,12 @@ signed Claude Code executable.
 User
   |
   |-- managed GPT route
-  |     claudex -> isolated Claude Code profile
+  |     gicc -> isolated Claude Code profile
   |             -> CLIProxyAPI on 127.0.0.1:8318
   |             -> authenticated Codex account
   |
   |-- native Claude route
-  |     claudex -> scrub managed routing and credentials
+  |     gicc -> scrub managed routing and credentials
   |             -> caller owned Claude Code profile with requested model
   |             -> caller owned Anthropic authentication
   |
@@ -28,7 +28,7 @@ Each running process belongs to one provider route. Native Claude and managed
 GPT processes can run concurrently, but their provider environments,
 credentials, profiles, sessions, and billing contexts are never combined.
 
-The preload module runs inside Claude Code's JavaScript runtime only for Claudex
+The preload module runs inside Claude Code's JavaScript runtime only for GICC
 sessions backed by GPT models. It translates the exact `/model solplan` input alias
 and performs one width preserving replacement of Claude Code's hardcoded
 startup billing field with the account bound ChatGPT plan label. The native
@@ -39,7 +39,7 @@ sessions do not receive that preload or the GPT proxy environment.
 Native model shortcuts (`--fable`, `--opus`, `--sonnet`, and `--haiku`) and
 `--claude-model` enter the native route before the managed environment is
 loaded. They are argument conveniences, not model remaps. The explicit
-`claudex claude --model ...` route reaches the same boundary with complete
+`gicc claude --model ...` route reaches the same boundary with complete
 native argument control.
 
 Fableplan enters a small coordinator before either provider starts. It launches
@@ -54,7 +54,7 @@ the plan file and workspace after completion or interruption.
 
 | Component | Unix | Windows | Responsibility |
 | --- | --- | --- | --- |
-| Launcher | `claudex` | `claudex.ps1`, `claudex.cmd` | Parse Claudex flags, negotiate Claude capabilities, configure the session, and launch Claude Code |
+| Launcher | `gicc` | `gicc.ps1`, `gicc.cmd` | Parse GICC flags, negotiate Claude capabilities, configure the session, and launch Claude Code |
 | Installer | `install.sh` | `install.ps1` | Install dependencies, private config, launchers, and verified compatibility binary |
 | Auth bridge | `codex-session` | `codex-session.ps1` | Validate Codex login and atomically synchronize the minimum credential fields |
 | Usage helper | `usage-limit` | `usage-limit.ps1` | Fetch, sanitize, cache, and display usage limits |
@@ -66,20 +66,20 @@ the plan file and workspace after completion or interruption.
 ## Authentication lifecycle
 
 1. Codex owns the user facing login flow.
-2. Claudex verifies `codex login status`.
+2. GICC verifies `codex login status`.
 3. A file backed ChatGPT session is read from the standard Codex location.
 4. The minimum fields needed by CLIProxyAPI are written atomically into
-   Claudex's private credential directory with restrictive permissions.
+   GICC's private credential directory with restrictive permissions.
 5. A newer source refresh, different account, disabled bridge, or expired
    bridge causes a replacement.
-6. While a proxied Claudex session is open, a lightweight watcher fingerprints
+6. While a proxied GICC session is open, a lightweight watcher fingerprints
    the standard Codex credential file. A Codex Desktop or CLI account change is
    synchronized atomically without exposing token contents.
 7. An account change clears the explicit usage account selection and sanitized
    quota cache so data from the previous account cannot appear in the footer.
 8. Logout always removes the bridge, even if the upstream logout command fails.
 
-Claudex never places an OAuth token in process arguments or intended terminal
+GICC never places an OAuth token in process arguments or intended terminal
 output. The repository contains no credentials.
 
 ## Usage limit flow
@@ -103,13 +103,13 @@ showing a false zero.
 The installer performs a best effort Claude Code update. The launcher checks
 again on a configurable interval without blocking startup, recovers stale lock
 directories, and avoids racing explicit update commands. At every launch,
-Claudex reads `claude --help` and injects optional switches only when supported.
+GICC reads `claude --help` and injects optional switches only when supported.
 Unknown arguments are forwarded exactly.
 
 Before an ordinary GPT backed launch, the shared skill bridge discovers native
 Claude personal skills, Codex personal and project skills, legacy locations,
 admin skills, and enabled plugin skills. It creates immutable, content hashed
-snapshots under the private Claudex configuration and injects standalone skills
+snapshots under the private GICC configuration and injects standalone skills
 with `--add-dir`. Validated plugin skills are rebuilt as inert generated
 plugins and injected with `--plugin-dir`; the original plugin's hooks, MCP
 servers, agents, and other executable components are not loaded. A separate

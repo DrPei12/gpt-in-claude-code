@@ -35,8 +35,8 @@ for (const identity of ["'S-1-5-18'", "'S-1-5-32-544'", '$currentSid.Value']) {
 }
 assert.match(acl, /FileSystemRights\]::FullControl/,
   'private ACL principals must retain full control');
-assert.match(acl, /Set-Acl -LiteralPath \$Path -AclObject \$security/,
-  'private ACL must be applied to the literal path');
+assert.match(acl, /Get-Item -LiteralPath \$Path -Force\)\.SetAccessControl\(\$security\)/,
+  'private ACL must be applied without rewriting the system audit ACL');
 
 for (const directory of [
   '$configDir',
@@ -65,7 +65,7 @@ const existingRepair = section('foreach ($existingPrivateManagedPath in $install
 assert(existingRepair.includes('Protect-PrivatePath $existingPrivateManagedPath $false'),
   'an upgrade does not repair ACLs on existing managed files before reading or backing them up');
 
-const atomicWrite = section('function Write-TextAtomic', 'function ConvertFrom-ClaudexEnvValue');
+const atomicWrite = section('function Write-TextAtomic', 'function ConvertFrom-GICCEnvValue');
 for (const operation of [
   'Ensure-PrivateDirectory $parent',
   'Protect-PrivatePath $temporary $false',

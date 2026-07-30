@@ -6,16 +6,16 @@ set -euo pipefail
 # runtime so a moved/deleted project directory does not make even maintenance
 # commands unusable.
 if ! pwd -P >/dev/null 2>&1; then
-  claudex_recovery_dir="${HOME:-/}"
-  [[ -d "$claudex_recovery_dir" ]] || claudex_recovery_dir=/
-  cd -P -- "$claudex_recovery_dir"
-  printf 'claudex: the previous working directory no longer exists; continuing from %s.\n' "$PWD" >&2
+  gicc_recovery_dir="${HOME:-/}"
+  [[ -d "$gicc_recovery_dir" ]] || gicc_recovery_dir=/
+  cd -P -- "$gicc_recovery_dir"
+  printf 'gicc: the previous working directory no longer exists; continuing from %s.\n' "$PWD" >&2
 fi
 
-readonly claudex_config_dir="${CLAUDEX_CONFIG_DIR:-$HOME/.config/claudex}"
-readonly config_file="$claudex_config_dir/env"
-readonly curl_bin="${CLAUDEX_CURL_BIN:-curl}"
-readonly inherited_managed_session="${CLAUDEX_MANAGED_SESSION:-0}"
+readonly gicc_config_dir="${GICC_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}"
+readonly config_file="$gicc_config_dir/env"
+readonly curl_bin="${GICC_CURL_BIN:-curl}"
+readonly inherited_managed_session="${GICC_MANAGED_SESSION:-0}"
 caller_subagent_model_set=0
 caller_subagent_model=""
 if [[ -n "${CLAUDE_CODE_SUBAGENT_MODEL+x}" ]]; then
@@ -23,7 +23,7 @@ if [[ -n "${CLAUDE_CODE_SUBAGENT_MODEL+x}" ]]; then
   caller_subagent_model="$CLAUDE_CODE_SUBAGENT_MODEL"
 fi
 
-claudex_is_maintenance_command() {
+gicc_is_maintenance_command() {
   case "$1" in
     --help|-h|--version|-v|agents|attach|auth|auto-mode|doctor|gateway|install|kill|logs|mcp|plugin|plugins|project|remote-control|respawn|rm|self-update|setup-token|skills|stop|ultrareview|update|upgrade) return 0 ;;
     *) return 1 ;;
@@ -159,7 +159,7 @@ classify_claude_argv() {
       --tmux=*) index=$((index + 1)); continue ;;
       -*) return 0 ;;
       *)
-        if (( ! positional_seen )) && claudex_is_maintenance_command "$token"; then
+        if (( ! positional_seen )) && gicc_is_maintenance_command "$token"; then
           claude_maintenance_command="$token"
           case "$token" in remote-control|ultrareview) claude_first_party_route=1 ;; esac
           return 0
@@ -172,7 +172,7 @@ classify_claude_argv() {
 }
 
 strip_managed_bun_preload() {
-  local options="${BUN_OPTIONS:-}" preload="--preload ${claudex_config_dir// /\\ }/preload.cjs"
+  local options="${BUN_OPTIONS:-}" preload="--preload ${gicc_config_dir// /\\ }/preload.cjs"
   while [[ "$options" == "$preload" || "$options" == "$preload "* ]]; do
     options="${options#"$preload"}"
     options="${options# }"
@@ -181,8 +181,8 @@ strip_managed_bun_preload() {
 }
 
 scrub_managed_session_environment() {
-  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN CLAUDEX_CHATGPT_PLAN_LABEL CLAUDEX_MANAGED_SESSION
-  unset CLAUDEX_PROXY_URL CLAUDEX_PROXY_CONFIG CLAUDEX_PROXY_BIN CLAUDEX_CODEX_AUTH_DIR CLAUDEX_CODEX_AUTH_FILE CLAUDEX_CODEX_SOURCE_AUTH_FILE
+  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN GICC_CHATGPT_PLAN_LABEL GICC_MANAGED_SESSION
+  unset GICC_PROXY_URL GICC_PROXY_CONFIG GICC_PROXY_BIN GICC_CODEX_AUTH_DIR GICC_CODEX_AUTH_FILE GICC_CODEX_SOURCE_AUTH_FILE
   unset CLAUDE_CONFIG_DIR
   unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
   unset ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ANTHROPIC_DEFAULT_FABLE_MODEL_NAME ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME
@@ -191,26 +191,26 @@ scrub_managed_session_environment() {
   unset ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES
   unset CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_ALWAYS_ENABLE_EFFORT
   unset CLAUDE_CODE_SUBAGENT_MODEL
-  unset CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY CLAUDE_CODE_MAX_RETRIES CLAUDE_CODE_MAX_CONTEXT_TOKENS CLAUDE_CODE_AUTO_COMPACT_WINDOW
-  unset CLAUDE_CODE_DISABLE_1M_CONTEXT CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD CLAUDEX_NO_SESSION_PERSISTENCE
-  unset CLAUDEX_MODEL_MODE CLAUDEX_SESSION_MODE CLAUDEX_INTERACTIVE_TUI CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_NO_FLICKER CLAUDE_CODE_ACCESSIBILITY
+  unset CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY CLAUDE_CODE_MAX_RETRIES CLAUDE_CODE_MAX_OUTPUT_TOKENS CLAUDE_CODE_MAX_CONTEXT_TOKENS CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  unset CLAUDE_CODE_DISABLE_1M_CONTEXT CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD GICC_NO_SESSION_PERSISTENCE
+  unset GICC_MODEL_MODE GICC_SESSION_MODE GICC_INTERACTIVE_TUI CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_NO_FLICKER CLAUDE_CODE_ACCESSIBILITY
   strip_managed_bun_preload
   if (( caller_subagent_model_set )); then export CLAUDE_CODE_SUBAGENT_MODEL="$caller_subagent_model"; fi
 }
 
 scrub_third_party_claude_routing() {
   scrub_competing_provider_routing
-  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN CLAUDEX_CHATGPT_PLAN_LABEL CLAUDEX_MANAGED_SESSION
-  unset CLAUDEX_PROXY_URL CLAUDEX_PROXY_CONFIG CLAUDEX_PROXY_BIN CLAUDEX_CODEX_AUTH_DIR CLAUDEX_CODEX_AUTH_FILE CLAUDEX_CODEX_SOURCE_AUTH_FILE
+  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN GICC_CHATGPT_PLAN_LABEL GICC_MANAGED_SESSION
+  unset GICC_PROXY_URL GICC_PROXY_CONFIG GICC_PROXY_BIN GICC_CODEX_AUTH_DIR GICC_CODEX_AUTH_FILE GICC_CODEX_SOURCE_AUTH_FILE
   unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_FABLE_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
   unset ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ANTHROPIC_DEFAULT_FABLE_MODEL_NAME ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME
   unset ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION
   unset ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES
   unset ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES
   unset CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_ALWAYS_ENABLE_EFFORT CLAUDE_CODE_SUBAGENT_MODEL
-  unset CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY CLAUDE_CODE_MAX_RETRIES CLAUDE_CODE_MAX_CONTEXT_TOKENS CLAUDE_CODE_AUTO_COMPACT_WINDOW
-  unset CLAUDE_CODE_DISABLE_1M_CONTEXT CLAUDEX_NO_SESSION_PERSISTENCE
-  unset CLAUDEX_MODEL_MODE CLAUDEX_SESSION_MODE CLAUDEX_INTERACTIVE_TUI CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_NO_FLICKER CLAUDE_CODE_ACCESSIBILITY
+  unset CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY CLAUDE_CODE_MAX_RETRIES CLAUDE_CODE_MAX_OUTPUT_TOKENS CLAUDE_CODE_MAX_CONTEXT_TOKENS CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  unset CLAUDE_CODE_DISABLE_1M_CONTEXT GICC_NO_SESSION_PERSISTENCE
+  unset GICC_MODEL_MODE GICC_SESSION_MODE GICC_INTERACTIVE_TUI CLAUDE_CODE_EFFORT_LEVEL CLAUDE_CODE_NO_FLICKER CLAUDE_CODE_ACCESSIBILITY
   strip_managed_bun_preload
 }
 
@@ -224,34 +224,34 @@ scrub_competing_provider_routing() {
 }
 
 exec_native_codex() {
-  unset CLAUDEX_PROXY_TOKEN
+  unset GICC_PROXY_TOKEN
   if [[ "$inherited_managed_session" == 1 ]]; then scrub_managed_session_environment; fi
   local native_codex
   native_codex=$(command -v codex 2>/dev/null || true)
-  [[ -n "$native_codex" ]] || { printf '%s\n' 'claudex: Codex CLI was not found. Install Codex and retry.' >&2; exit 1; }
+  [[ -n "$native_codex" ]] || { printf '%s\n' 'gicc: Codex CLI was not found. Install Codex and retry.' >&2; exit 1; }
   exec "$native_codex" "$@"
 }
 
 exec_native_claude() {
   local boundary_mode="$1"
   shift
-  unset CLAUDEX_PROXY_TOKEN
+  unset GICC_PROXY_TOKEN
   if [[ "$inherited_managed_session" == 1 ]]; then scrub_managed_session_environment; fi
   if [[ "$boundary_mode" == first-party ]]; then scrub_third_party_claude_routing; fi
-  if [[ -n "${CLAUDEX_CLAUDE_CONFIG_DIR:-}" ]]; then export CLAUDE_CONFIG_DIR="$CLAUDEX_CLAUDE_CONFIG_DIR"; fi
+  if [[ -n "${GICC_CLAUDE_CONFIG_DIR:-}" ]]; then export CLAUDE_CONFIG_DIR="$GICC_CLAUDE_CONFIG_DIR"; fi
   local native_claude
   native_claude=$(command -v claude 2>/dev/null || true)
-  [[ -n "$native_claude" ]] || { printf '%s\n' 'claudex: Claude Code was not found. Install Claude Code and retry.' >&2; exit 1; }
+  [[ -n "$native_claude" ]] || { printf '%s\n' 'gicc: Claude Code was not found. Install Claude Code and retry.' >&2; exit 1; }
   exec "$native_claude" "$@"
 }
 
 run_fableplan() {
   [[ $# -eq 1 && -n "$1" ]] || {
-    printf '%s\n' 'Usage: claudex --fableplan <single task string>' >&2
+    printf '%s\n' 'Usage: gicc --fableplan <single task string>' >&2
     exit 2
   }
   [[ -r "$config_file" ]] || {
-    printf '%s\n' "claudex: missing $config_file; reinstall or restore the Claudex configuration." >&2
+    printf '%s\n' "gicc: missing $config_file; reinstall or restore the GICC configuration." >&2
     exit 1
   }
 
@@ -260,8 +260,8 @@ run_fableplan() {
   local -r max_plan_bytes=1048576
   self_path="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
   umask 077
-  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/claudex-fableplan.XXXXXXXX") || {
-    printf '%s\n' 'claudex: could not create the private Fableplan workspace.' >&2
+  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/gicc-fableplan.XXXXXXXX") || {
+    printf '%s\n' 'gicc: could not create the private Fableplan workspace.' >&2
     exit 1
   }
   plan_file="$temp_dir/plan.txt"
@@ -282,27 +282,27 @@ run_fableplan() {
   planner_status=("${PIPESTATUS[@]}")
   set -e
   if (( $(LC_ALL=C wc -c < "$plan_file") > max_plan_bytes )); then
-    printf 'claudex: Fable planner output exceeded the %s byte limit; Terra was not started.\n' "$max_plan_bytes" >&2
+    printf 'gicc: Fable planner output exceeded the %s byte limit; Terra was not started.\n' "$max_plan_bytes" >&2
     exit 1
   fi
   if (( planner_status[0] != 0 )); then
-    printf 'claudex: Fable planner failed with exit code %s; Terra was not started.\n' "${planner_status[0]}" >&2
+    printf 'gicc: Fable planner failed with exit code %s; Terra was not started.\n' "${planner_status[0]}" >&2
     exit "${planner_status[0]}"
   fi
   if (( planner_status[1] != 0 )); then
-    printf '%s\n' 'claudex: could not capture the Fable plan; Terra was not started.' >&2
+    printf '%s\n' 'gicc: could not capture the Fable plan; Terra was not started.' >&2
     exit 1
   fi
   if [[ ! -s "$plan_file" ]]; then
-    printf '%s\n' 'claudex: Fable planner returned an empty plan; Terra was not started.' >&2
+    printf '%s\n' 'gicc: Fable planner returned an empty plan; Terra was not started.' >&2
     exit 1
   fi
   if ! iconv -f UTF-8 -t UTF-8 "$plan_file" >/dev/null 2>&1; then
-    printf '%s\n' 'claudex: Fable planner returned invalid UTF-8; Terra was not started.' >&2
+    printf '%s\n' 'gicc: Fable planner returned invalid UTF-8; Terra was not started.' >&2
     exit 1
   fi
   if ! LC_ALL=C tr -d '\000' < "$plan_file" | cmp -s - "$plan_file"; then
-    printf '%s\n' 'claudex: Fable planner returned a NUL byte; Terra was not started.' >&2
+    printf '%s\n' 'gicc: Fable planner returned a NUL byte; Terra was not started.' >&2
     exit 1
   fi
 
@@ -315,7 +315,7 @@ run_fableplan() {
   (
     scrub_managed_session_environment
     scrub_third_party_claude_routing
-    unset CLAUDE_CONFIG_DIR CLAUDEX_CLAUDE_CONFIG_DIR
+    unset CLAUDE_CONFIG_DIR GICC_CLAUDE_CONFIG_DIR
     exec "$self_path" --terra --add-dir "$temp_dir" -- "$implementer_prompt"
   )
   implementation_status=$?
@@ -326,7 +326,7 @@ run_fableplan() {
 }
 
 # Native harness routes are a hard environment boundary. In particular, never
-# source the managed env file or prepend Claudex's bundled runtime first.
+# source the managed env file or prepend GICC's bundled runtime first.
 case "${1:-}" in
   codex) shift; exec_native_codex "$@" ;;
   claude) shift; exec_native_claude preserve "$@" ;;
@@ -339,7 +339,7 @@ case "${1:-}" in
   --claude-model)
     shift
     if (( $# == 0 )) || [[ -z "$1" ]]; then
-      printf '%s\n' 'claudex: --claude-model requires a nonempty Claude model ID.' >&2
+      printf '%s\n' 'gicc: --claude-model requires a nonempty Claude model ID.' >&2
       exit 1
     fi
     native_claude_model="$1"
@@ -362,39 +362,39 @@ for early_argument in "$@"; do
 done
 
 if [[ ! -r "$config_file" ]] && (( ! early_runtime_bypass )); then
-  printf '%s\n' "claudex: missing $config_file; reinstall or restore the Claudex configuration." >&2
+  printf '%s\n' "gicc: missing $config_file; reinstall or restore the GICC configuration." >&2
   exit 1
 fi
 
 if [[ -r "$config_file" ]]; then source "$config_file"; fi
-if [[ -x "$claudex_config_dir/node/bin/node" ]]; then export PATH="$claudex_config_dir/node/bin:$PATH"; fi
+if [[ -x "$gicc_config_dir/node/bin/node" ]]; then export PATH="$gicc_config_dir/node/bin:$PATH"; fi
 
 activate_managed_node() {
-  [[ -n "${CLAUDEX_NODE_BIN:-}" ]] || return 0
-  case "$CLAUDEX_NODE_BIN" in
+  [[ -n "${GICC_NODE_BIN:-}" ]] || return 0
+  case "$GICC_NODE_BIN" in
     /*) ;;
-    *) printf '%s\n' 'claudex: CLAUDEX_NODE_BIN must be an absolute directory containing Node.js 18 or newer.' >&2; exit 2 ;;
+    *) printf '%s\n' 'gicc: GICC_NODE_BIN must be an absolute directory containing Node.js 18 or newer.' >&2; exit 2 ;;
   esac
-  [[ -x "$CLAUDEX_NODE_BIN/node" ]] || {
-    printf 'claudex: CLAUDEX_NODE_BIN does not contain an executable node: %s/node\n' "$CLAUDEX_NODE_BIN" >&2
+  [[ -x "$GICC_NODE_BIN/node" ]] || {
+    printf 'gicc: GICC_NODE_BIN does not contain an executable node: %s/node\n' "$GICC_NODE_BIN" >&2
     exit 2
   }
-  if ! "$CLAUDEX_NODE_BIN/node" -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(Number.isInteger(major) && major >= 18 ? 0 : 1)' \
+  if ! "$GICC_NODE_BIN/node" -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(Number.isInteger(major) && major >= 18 ? 0 : 1)' \
       >/dev/null 2>&1; then
-    printf '%s\n' 'claudex: CLAUDEX_NODE_BIN must provide Node.js 18 or newer.' >&2
+    printf '%s\n' 'gicc: GICC_NODE_BIN must provide Node.js 18 or newer.' >&2
     exit 2
   fi
-  export PATH="$CLAUDEX_NODE_BIN:$PATH"
+  export PATH="$GICC_NODE_BIN:$PATH"
 }
-readonly settings_file="${CLAUDEX_SETTINGS_FILE:-$claudex_config_dir/settings.json}"
-readonly codex_session_helper="${CLAUDEX_CODEX_SESSION_HELPER:-$claudex_config_dir/codex-session}"
-readonly self_update_helper="${CLAUDEX_SELF_UPDATE_HELPER:-$claudex_config_dir/self-update}"
-readonly skill_bridge_helper="${CLAUDEX_SKILL_BRIDGE_HELPER:-$claudex_config_dir/skill-bridge.cjs}"
-export CLAUDEX_CODEX_AUTH_DIR CLAUDEX_CODEX_SOURCE_AUTH_FILE CLAUDEX_CODEX_AUTH_FILE
+readonly settings_file="${GICC_SETTINGS_FILE:-$gicc_config_dir/settings.json}"
+readonly codex_session_helper="${GICC_CODEX_SESSION_HELPER:-$gicc_config_dir/codex-session}"
+readonly self_update_helper="${GICC_SELF_UPDATE_HELPER:-$gicc_config_dir/self-update}"
+readonly skill_bridge_helper="${GICC_SKILL_BRIDGE_HELPER:-$gicc_config_dir/skill-bridge.cjs}"
+export GICC_CODEX_AUTH_DIR GICC_CODEX_SOURCE_AUTH_FILE GICC_CODEX_AUTH_FILE
 
 if [[ "${1:-}" == self-update ]]; then
   shift
-  [[ -x "$self_update_helper" ]] || { printf '%s\n' 'claudex: self-update helper is missing; rerun the installer.' >&2; exit 1; }
+  [[ -x "$self_update_helper" ]] || { printf '%s\n' 'gicc: self-update helper is missing; rerun the installer.' >&2; exit 1; }
   exec "$self_update_helper" "$@"
 fi
 
@@ -403,7 +403,7 @@ fi
 case "${1:-}" in
   --login|--logout|--auth-status)
     [[ -x "$codex_session_helper" ]] || {
-      printf '%s\n' 'claudex: authentication helper is missing; reinstall Claudex.' >&2
+      printf '%s\n' 'gicc: authentication helper is missing; reinstall GICC.' >&2
       exit 1
     }
     case "$1" in
@@ -415,43 +415,44 @@ case "${1:-}" in
 esac
 
 if (( ! early_runtime_bypass )) && [[ ! -r "$settings_file" ]]; then
-  printf '%s\n' "claudex: missing $settings_file; reinstall or restore the Claudex settings." >&2
+  printf '%s\n' "gicc: missing $settings_file; reinstall or restore the GICC settings." >&2
   exit 1
 fi
 
 if (( ! early_runtime_bypass )) && ! command -v jq >/dev/null 2>&1; then
-  printf '%s\n' "claudex: jq is required but was not found in PATH." >&2
+  printf '%s\n' "gicc: jq is required but was not found in PATH." >&2
   exit 1
 fi
 
-: "${CLAUDEX_PROXY_TOKEN:=}"
-: "${CLAUDEX_PROXY_URL:=http://127.0.0.1:8318}"
-: "${CLAUDEX_ALLOW_REMOTE_PROXY:=0}"
-: "${CLAUDEX_MODEL:=gpt-5.6-sol}"
-: "${CLAUDEX_PERMISSION_MODE:=auto}"
-: "${CLAUDEX_AUTO_MODE_MODEL:=gpt-5.6-terra}"
-: "${CLAUDEX_BACKGROUND_MODEL:=gpt-5.6-luna}"
-: "${CLAUDEX_MAX_TOOL_USE_CONCURRENCY:=3}"
-: "${CLAUDEX_MAX_AGENT_CONCURRENCY:=3}"
-: "${CLAUDEX_MAX_RETRIES:=15}"
-: "${CLAUDEX_CONTEXT_WINDOW:=400000}"
-: "${CLAUDEX_AUTO_COMPACT_WINDOW:=280000}"
-: "${CLAUDEX_MOUSE_POINTER_SHAPE:=pointer}"
-: "${CLAUDEX_USAGE_DISPLAY:=on}"
-: "${CLAUDEX_USAGE_REFRESH_SECONDS:=300}"
-: "${CLAUDEX_USAGE_TIMEOUT_SECONDS:=8}"
-: "${CLAUDEX_USAGE_MAX_STALE_SECONDS:=86400}"
-: "${CLAUDEX_USAGE_SOURCE:=auto}"
-: "${CLAUDEX_USAGE_ALERT_PERCENT:=20}"
-: "${CLAUDEX_CLAUDE_AUTO_UPDATE:=on}"
-: "${CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS:=86400}"
-: "${CLAUDEX_AUTO_UPDATE:=on}"
-: "${CLAUDEX_UPDATE_INTERVAL_SECONDS:=86400}"
-: "${CLAUDEX_PLAN_MODE_POLICY:=conservative}"
-: "${CLAUDEX_SKILL_BRIDGE:=on}"
-: "${CLAUDEX_INSTRUCTION_BRIDGE:=on}"
-: "${CLAUDEX_SKILL_PLUGINS:=on}"
-: "${CLAUDEX_SKILL_DOLLAR_REFERENCES:=on}"
+: "${GICC_PROXY_TOKEN:=}"
+: "${GICC_PROXY_URL:=http://127.0.0.1:8318}"
+: "${GICC_ALLOW_REMOTE_PROXY:=0}"
+: "${GICC_MODEL:=gpt-5.6-sol}"
+: "${GICC_PERMISSION_MODE:=auto}"
+: "${GICC_AUTO_MODE_MODEL:=gpt-5.6-terra}"
+: "${GICC_BACKGROUND_MODEL:=gpt-5.6-luna}"
+: "${GICC_MAX_TOOL_USE_CONCURRENCY:=1}"
+: "${GICC_MAX_AGENT_CONCURRENCY:=1}"
+: "${GICC_MAX_RETRIES:=4}"
+: "${GICC_MAX_OUTPUT_TOKENS:=128000}"
+: "${GICC_CONTEXT_WINDOW:=400000}"
+: "${GICC_AUTO_COMPACT_WINDOW:=280000}"
+: "${GICC_MOUSE_POINTER_SHAPE:=pointer}"
+: "${GICC_USAGE_DISPLAY:=on}"
+: "${GICC_USAGE_REFRESH_SECONDS:=300}"
+: "${GICC_USAGE_TIMEOUT_SECONDS:=8}"
+: "${GICC_USAGE_MAX_STALE_SECONDS:=86400}"
+: "${GICC_USAGE_SOURCE:=auto}"
+: "${GICC_USAGE_ALERT_PERCENT:=20}"
+: "${GICC_CLAUDE_AUTO_UPDATE:=on}"
+: "${GICC_CLAUDE_UPDATE_INTERVAL_SECONDS:=86400}"
+: "${GICC_AUTO_UPDATE:=on}"
+: "${GICC_UPDATE_INTERVAL_SECONDS:=86400}"
+: "${GICC_PLAN_MODE_POLICY:=conservative}"
+: "${GICC_SKILL_BRIDGE:=on}"
+: "${GICC_INSTRUCTION_BRIDGE:=on}"
+: "${GICC_SKILL_PLUGINS:=on}"
+: "${GICC_SKILL_DOLLAR_REFERENCES:=on}"
 
 proxy_url_is_loopback() {
   local normalized="${1%/}" port=""
@@ -474,163 +475,168 @@ proxy_url_is_secure_remote() {
   esac
 }
 
-claudex_remote_proxy=0
+gicc_remote_proxy=0
 if (( ! early_runtime_bypass )); then
-  case "$CLAUDEX_ALLOW_REMOTE_PROXY" in 0|1) ;;
-    *) printf '%s\n' 'claudex: CLAUDEX_ALLOW_REMOTE_PROXY must be 0 or 1.' >&2; exit 2 ;;
+  case "$GICC_ALLOW_REMOTE_PROXY" in 0|1) ;;
+    *) printf '%s\n' 'gicc: GICC_ALLOW_REMOTE_PROXY must be 0 or 1.' >&2; exit 2 ;;
   esac
-  if proxy_url_is_loopback "$CLAUDEX_PROXY_URL"; then
+  if proxy_url_is_loopback "$GICC_PROXY_URL"; then
     :
-  elif [[ "$CLAUDEX_ALLOW_REMOTE_PROXY" == 1 ]] && proxy_url_is_secure_remote "$CLAUDEX_PROXY_URL"; then
-    claudex_remote_proxy=1
+  elif [[ "$GICC_ALLOW_REMOTE_PROXY" == 1 ]] && proxy_url_is_secure_remote "$GICC_PROXY_URL"; then
+    gicc_remote_proxy=1
   else
-    printf '%s\n' 'claudex: refusing to send the proxy credential to a non-loopback URL.' >&2
-    printf '%s\n' 'claudex: use a loopback HTTP(S) URL, or set CLAUDEX_ALLOW_REMOTE_PROXY=1 with an HTTPS URL after reviewing the remote endpoint.' >&2
+    printf '%s\n' 'gicc: refusing to send the proxy credential to a non-loopback URL.' >&2
+    printf '%s\n' 'gicc: use a loopback HTTP(S) URL, or set GICC_ALLOW_REMOTE_PROXY=1 with an HTTPS URL after reviewing the remote endpoint.' >&2
     exit 2
   fi
 fi
 
-if (( ! early_runtime_bypass )) && [[ -z "$CLAUDEX_PROXY_TOKEN" ]]; then
-  printf '%s\n' 'claudex: CLAUDEX_PROXY_TOKEN is not configured' >&2
+if (( ! early_runtime_bypass )) && [[ -z "$GICC_PROXY_TOKEN" ]]; then
+  printf '%s\n' 'gicc: GICC_PROXY_TOKEN is not configured' >&2
   exit 1
 fi
 
-if (( ! early_runtime_bypass )); then case "$CLAUDEX_PROXY_TOKEN" in
+if (( ! early_runtime_bypass )); then case "$GICC_PROXY_TOKEN" in
   *$'\n'*|*$'\r'*)
-    printf '%s\n' "claudex: CLAUDEX_PROXY_TOKEN contains an unsupported newline." >&2
+    printf '%s\n' "gicc: GICC_PROXY_TOKEN contains an unsupported newline." >&2
     exit 2
     ;;
 esac; fi
 
-if (( ! early_runtime_bypass )); then case "$CLAUDEX_MODEL" in
+if (( ! early_runtime_bypass )); then case "$GICC_MODEL" in
   gpt-5.6-sol|gpt-5.6-terra|gpt-5.6-luna) ;;
   *)
-    printf '%s\n' "claudex: CLAUDEX_MODEL must be a managed Codex model (gpt-5.6-sol, gpt-5.6-terra, or gpt-5.6-luna)." >&2
+    printf '%s\n' "gicc: GICC_MODEL must be a managed Codex model (gpt-5.6-sol, gpt-5.6-terra, or gpt-5.6-luna)." >&2
     exit 2
     ;;
 esac; fi
 
-if (( ! early_runtime_bypass )); then case "$CLAUDEX_PERMISSION_MODE" in
+if (( ! early_runtime_bypass )); then case "$GICC_PERMISSION_MODE" in
   manual|auto|acceptEdits|dontAsk|plan) ;;
   *)
-    printf '%s\n' "claudex: invalid CLAUDEX_PERMISSION_MODE '$CLAUDEX_PERMISSION_MODE'." >&2
-    printf '%s\n' "claudex: expected manual, auto, acceptEdits, dontAsk, or plan." >&2
+    printf '%s\n' "gicc: invalid GICC_PERMISSION_MODE '$GICC_PERMISSION_MODE'." >&2
+    printf '%s\n' "gicc: expected manual, auto, acceptEdits, dontAsk, or plan." >&2
     exit 2
     ;;
 esac; fi
 
-if (( ! early_runtime_bypass )); then for codex_model_setting in CLAUDEX_AUTO_MODE_MODEL CLAUDEX_BACKGROUND_MODEL; do
+if (( ! early_runtime_bypass )); then for codex_model_setting in GICC_AUTO_MODE_MODEL GICC_BACKGROUND_MODEL; do
   codex_model_value="${!codex_model_setting}"
   case "$codex_model_value" in
     gpt-5.6-sol|gpt-5.6-terra|gpt-5.6-luna) ;;
     *)
-      printf 'claudex: %s must be a managed Codex model (gpt-5.6-sol, gpt-5.6-terra, or gpt-5.6-luna).\n' "$codex_model_setting" >&2
+      printf 'gicc: %s must be a managed Codex model (gpt-5.6-sol, gpt-5.6-terra, or gpt-5.6-luna).\n' "$codex_model_setting" >&2
       exit 2
       ;;
   esac
 done; fi
 
 if (( ! early_runtime_bypass )); then
-if [[ ! "$CLAUDEX_MAX_TOOL_USE_CONCURRENCY" =~ ^[0-9]+$ ]] || (( CLAUDEX_MAX_TOOL_USE_CONCURRENCY < 1 )); then
-  printf '%s\n' "claudex: CLAUDEX_MAX_TOOL_USE_CONCURRENCY must be a positive integer." >&2
+if [[ ! "$GICC_MAX_TOOL_USE_CONCURRENCY" =~ ^[0-9]+$ ]] || (( GICC_MAX_TOOL_USE_CONCURRENCY < 1 )); then
+  printf '%s\n' "gicc: GICC_MAX_TOOL_USE_CONCURRENCY must be a positive integer." >&2
   exit 2
 fi
 
-if [[ ! "$CLAUDEX_MAX_AGENT_CONCURRENCY" =~ ^[0-9]+$ ]] || (( CLAUDEX_MAX_AGENT_CONCURRENCY < 1 )); then
-  printf '%s\n' "claudex: CLAUDEX_MAX_AGENT_CONCURRENCY must be a positive integer." >&2
+if [[ ! "$GICC_MAX_AGENT_CONCURRENCY" =~ ^[0-9]+$ ]] || (( GICC_MAX_AGENT_CONCURRENCY < 1 )); then
+  printf '%s\n' "gicc: GICC_MAX_AGENT_CONCURRENCY must be a positive integer." >&2
   exit 2
 fi
 
-if [[ ! "$CLAUDEX_MAX_RETRIES" =~ ^[0-9]+$ ]] || (( CLAUDEX_MAX_RETRIES > 15 )); then
-  printf '%s\n' "claudex: CLAUDEX_MAX_RETRIES must be an integer from 0 to 15." >&2
+if [[ ! "$GICC_MAX_RETRIES" =~ ^[0-9]+$ ]] || (( GICC_MAX_RETRIES > 15 )); then
+  printf '%s\n' "gicc: GICC_MAX_RETRIES must be an integer from 0 to 15." >&2
   exit 2
 fi
 
-if [[ ! "$CLAUDEX_CONTEXT_WINDOW" =~ ^[0-9]+$ ]] || (( CLAUDEX_CONTEXT_WINDOW < 100000 || CLAUDEX_CONTEXT_WINDOW > 1000000 )); then
-  printf '%s\n' "claudex: CLAUDEX_CONTEXT_WINDOW must be an integer from 100000 to 1000000." >&2
+if [[ ! "$GICC_MAX_OUTPUT_TOKENS" =~ ^[0-9]+$ ]] || (( GICC_MAX_OUTPUT_TOKENS < 1024 || GICC_MAX_OUTPUT_TOKENS > 128000 )); then
+  printf '%s\n' "gicc: GICC_MAX_OUTPUT_TOKENS must be an integer from 1024 to 128000." >&2
   exit 2
 fi
 
-if [[ ! "$CLAUDEX_AUTO_COMPACT_WINDOW" =~ ^[0-9]+$ ]] || (( CLAUDEX_AUTO_COMPACT_WINDOW < 100000 || CLAUDEX_AUTO_COMPACT_WINDOW > CLAUDEX_CONTEXT_WINDOW )); then
-  printf '%s\n' "claudex: CLAUDEX_AUTO_COMPACT_WINDOW must be an integer from 100000 through CLAUDEX_CONTEXT_WINDOW." >&2
+if [[ ! "$GICC_CONTEXT_WINDOW" =~ ^[0-9]+$ ]] || (( GICC_CONTEXT_WINDOW < 100000 || GICC_CONTEXT_WINDOW > 1000000 )); then
+  printf '%s\n' "gicc: GICC_CONTEXT_WINDOW must be an integer from 100000 to 1000000." >&2
   exit 2
 fi
 
-case "$CLAUDEX_MOUSE_POINTER_SHAPE" in
+if [[ ! "$GICC_AUTO_COMPACT_WINDOW" =~ ^[0-9]+$ ]] || (( GICC_AUTO_COMPACT_WINDOW < 100000 || GICC_AUTO_COMPACT_WINDOW > GICC_CONTEXT_WINDOW )); then
+  printf '%s\n' "gicc: GICC_AUTO_COMPACT_WINDOW must be an integer from 100000 through GICC_CONTEXT_WINDOW." >&2
+  exit 2
+fi
+
+case "$GICC_MOUSE_POINTER_SHAPE" in
   pointer|default|off) ;;
   *)
-    printf '%s\n' "claudex: CLAUDEX_MOUSE_POINTER_SHAPE must be pointer, default, or off." >&2
+    printf '%s\n' "gicc: GICC_MOUSE_POINTER_SHAPE must be pointer, default, or off." >&2
     exit 2
     ;;
 esac
 
-case "$CLAUDEX_USAGE_DISPLAY" in
+case "$GICC_USAGE_DISPLAY" in
   on|off) ;;
   *)
-    printf '%s\n' "claudex: CLAUDEX_USAGE_DISPLAY must be on or off." >&2
+    printf '%s\n' "gicc: GICC_USAGE_DISPLAY must be on or off." >&2
     exit 2
     ;;
 esac
 
-if [[ ! "$CLAUDEX_USAGE_REFRESH_SECONDS" =~ ^[0-9]+$ ]] || (( CLAUDEX_USAGE_REFRESH_SECONDS < 60 || CLAUDEX_USAGE_REFRESH_SECONDS > 3600 )); then
-  printf '%s\n' "claudex: CLAUDEX_USAGE_REFRESH_SECONDS must be an integer from 60 to 3600." >&2
+if [[ ! "$GICC_USAGE_REFRESH_SECONDS" =~ ^[0-9]+$ ]] || (( GICC_USAGE_REFRESH_SECONDS < 60 || GICC_USAGE_REFRESH_SECONDS > 3600 )); then
+  printf '%s\n' "gicc: GICC_USAGE_REFRESH_SECONDS must be an integer from 60 to 3600." >&2
   exit 2
 fi
 
-if [[ ! "$CLAUDEX_USAGE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( CLAUDEX_USAGE_TIMEOUT_SECONDS < 1 || CLAUDEX_USAGE_TIMEOUT_SECONDS > 30 )); then
-  printf '%s\n' "claudex: CLAUDEX_USAGE_TIMEOUT_SECONDS must be an integer from 1 to 30." >&2
+if [[ ! "$GICC_USAGE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( GICC_USAGE_TIMEOUT_SECONDS < 1 || GICC_USAGE_TIMEOUT_SECONDS > 30 )); then
+  printf '%s\n' "gicc: GICC_USAGE_TIMEOUT_SECONDS must be an integer from 1 to 30." >&2
   exit 2
 fi
 
-if [[ ! "$CLAUDEX_USAGE_MAX_STALE_SECONDS" =~ ^[0-9]+$ ]] || (( CLAUDEX_USAGE_MAX_STALE_SECONDS < CLAUDEX_USAGE_REFRESH_SECONDS || CLAUDEX_USAGE_MAX_STALE_SECONDS > 604800 )); then
-  printf '%s\n' "claudex: CLAUDEX_USAGE_MAX_STALE_SECONDS must be between the refresh interval and 604800." >&2
+if [[ ! "$GICC_USAGE_MAX_STALE_SECONDS" =~ ^[0-9]+$ ]] || (( GICC_USAGE_MAX_STALE_SECONDS < GICC_USAGE_REFRESH_SECONDS || GICC_USAGE_MAX_STALE_SECONDS > 604800 )); then
+  printf '%s\n' "gicc: GICC_USAGE_MAX_STALE_SECONDS must be between the refresh interval and 604800." >&2
   exit 2
 fi
-case "$CLAUDEX_USAGE_SOURCE" in auto|web|app-server) ;;
-  *) printf '%s\n' 'claudex: CLAUDEX_USAGE_SOURCE must be auto, web, or app-server.' >&2; exit 2 ;;
+case "$GICC_USAGE_SOURCE" in auto|web|app-server) ;;
+  *) printf '%s\n' 'gicc: GICC_USAGE_SOURCE must be auto, web, or app-server.' >&2; exit 2 ;;
 esac
-if [[ ! "$CLAUDEX_USAGE_ALERT_PERCENT" =~ ^[0-9]+$ ]] || (( CLAUDEX_USAGE_ALERT_PERCENT < 0 || CLAUDEX_USAGE_ALERT_PERCENT > 100 )); then
-  printf '%s\n' 'claudex: CLAUDEX_USAGE_ALERT_PERCENT must be an integer from 0 to 100.' >&2
+if [[ ! "$GICC_USAGE_ALERT_PERCENT" =~ ^[0-9]+$ ]] || (( GICC_USAGE_ALERT_PERCENT < 0 || GICC_USAGE_ALERT_PERCENT > 100 )); then
+  printf '%s\n' 'gicc: GICC_USAGE_ALERT_PERCENT must be an integer from 0 to 100.' >&2
   exit 2
 fi
-case "$CLAUDEX_CLAUDE_AUTO_UPDATE" in on|off) ;;
-  *) printf '%s\n' 'claudex: CLAUDEX_CLAUDE_AUTO_UPDATE must be on or off.' >&2; exit 2 ;;
+case "$GICC_CLAUDE_AUTO_UPDATE" in on|off) ;;
+  *) printf '%s\n' 'gicc: GICC_CLAUDE_AUTO_UPDATE must be on or off.' >&2; exit 2 ;;
 esac
-case "$CLAUDEX_AUTO_UPDATE" in on|notify|off) ;;
-  *) printf '%s\n' 'claudex: CLAUDEX_AUTO_UPDATE must be on, notify, or off.' >&2; exit 2 ;;
+case "$GICC_AUTO_UPDATE" in on|notify|off) ;;
+  *) printf '%s\n' 'gicc: GICC_AUTO_UPDATE must be on, notify, or off.' >&2; exit 2 ;;
 esac
-if [[ ! "$CLAUDEX_UPDATE_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || (( CLAUDEX_UPDATE_INTERVAL_SECONDS < 3600 || CLAUDEX_UPDATE_INTERVAL_SECONDS > 2592000 )); then
-  printf '%s\n' 'claudex: CLAUDEX_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000.' >&2
+if [[ ! "$GICC_UPDATE_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || (( GICC_UPDATE_INTERVAL_SECONDS < 3600 || GICC_UPDATE_INTERVAL_SECONDS > 2592000 )); then
+  printf '%s\n' 'gicc: GICC_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000.' >&2
   exit 2
 fi
-if [[ ! "$CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || (( CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS < 3600 || CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS > 2592000 )); then
-  printf '%s\n' 'claudex: CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000.' >&2
+if [[ ! "$GICC_CLAUDE_UPDATE_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || (( GICC_CLAUDE_UPDATE_INTERVAL_SECONDS < 3600 || GICC_CLAUDE_UPDATE_INTERVAL_SECONDS > 2592000 )); then
+  printf '%s\n' 'gicc: GICC_CLAUDE_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000.' >&2
   exit 2
 fi
-case "$CLAUDEX_PLAN_MODE_POLICY" in conservative|normal) ;;
-  *) printf '%s\n' 'claudex: CLAUDEX_PLAN_MODE_POLICY must be conservative or normal.' >&2; exit 2 ;;
+case "$GICC_PLAN_MODE_POLICY" in conservative|normal) ;;
+  *) printf '%s\n' 'gicc: GICC_PLAN_MODE_POLICY must be conservative or normal.' >&2; exit 2 ;;
 esac
-case "$CLAUDEX_SKILL_BRIDGE" in on|off) ;;
-  *) printf '%s\n' 'claudex: CLAUDEX_SKILL_BRIDGE must be on or off.' >&2; exit 2 ;;
+case "$GICC_SKILL_BRIDGE" in on|off) ;;
+  *) printf '%s\n' 'gicc: GICC_SKILL_BRIDGE must be on or off.' >&2; exit 2 ;;
 esac
-case "$CLAUDEX_INSTRUCTION_BRIDGE" in on|off) ;;
-  *) printf '%s\n' 'claudex: CLAUDEX_INSTRUCTION_BRIDGE must be on or off.' >&2; exit 2 ;;
+case "$GICC_INSTRUCTION_BRIDGE" in on|off) ;;
+  *) printf '%s\n' 'gicc: GICC_INSTRUCTION_BRIDGE must be on or off.' >&2; exit 2 ;;
 esac
-case "$CLAUDEX_SKILL_PLUGINS" in on|off) ;;
-  *) printf '%s\n' 'claudex: CLAUDEX_SKILL_PLUGINS must be on or off.' >&2; exit 2 ;;
+case "$GICC_SKILL_PLUGINS" in on|off) ;;
+  *) printf '%s\n' 'gicc: GICC_SKILL_PLUGINS must be on or off.' >&2; exit 2 ;;
 esac
-case "$CLAUDEX_SKILL_DOLLAR_REFERENCES" in on|off) ;;
-  *) printf '%s\n' 'claudex: CLAUDEX_SKILL_DOLLAR_REFERENCES must be on or off.' >&2; exit 2 ;;
+case "$GICC_SKILL_DOLLAR_REFERENCES" in on|off) ;;
+  *) printf '%s\n' 'gicc: GICC_SKILL_DOLLAR_REFERENCES must be on or off.' >&2; exit 2 ;;
 esac
 fi
 
-export CLAUDEX_USAGE_DISPLAY CLAUDEX_USAGE_REFRESH_SECONDS CLAUDEX_USAGE_TIMEOUT_SECONDS CLAUDEX_USAGE_MAX_STALE_SECONDS
-export CLAUDEX_USAGE_SOURCE CLAUDEX_USAGE_ALERT_PERCENT
-export CLAUDEX_SKILL_BRIDGE CLAUDEX_INSTRUCTION_BRIDGE CLAUDEX_SKILL_PLUGINS CLAUDEX_SKILL_DOLLAR_REFERENCES
-export CLAUDEX_CLAUDE_CONFIG_DIR CLAUDEX_CLAUDE_MANAGED_SETTINGS_FILE CLAUDEX_SKILL_EXTRA_DIRS CLAUDEX_CODEX_ADMIN_SKILLS_DIR CODEX_HOME
+export GICC_USAGE_DISPLAY GICC_USAGE_REFRESH_SECONDS GICC_USAGE_TIMEOUT_SECONDS GICC_USAGE_MAX_STALE_SECONDS
+export GICC_USAGE_SOURCE GICC_USAGE_ALERT_PERCENT
+export GICC_SKILL_BRIDGE GICC_INSTRUCTION_BRIDGE GICC_SKILL_PLUGINS GICC_SKILL_DOLLAR_REFERENCES
+export GICC_CLAUDE_CONFIG_DIR GICC_CLAUDE_MANAGED_SETTINGS_FILE GICC_SKILL_EXTRA_DIRS GICC_CODEX_ADMIN_SKILLS_DIR CODEX_HOME
 
-# Keep Claudex model choices, sessions, and preferences isolated from normal Claude Code.
-export CLAUDE_CONFIG_DIR="$claudex_config_dir"
+# Keep GICC model choices, sessions, and preferences isolated from normal Claude Code.
+export CLAUDE_CONFIG_DIR="$gicc_config_dir"
 
 node_supports_skill_bridge() {
   command -v node >/dev/null 2>&1 || return 1
@@ -640,10 +646,10 @@ node_supports_skill_bridge() {
 
 if [[ "${1:-}" == skills ]]; then
   activate_managed_node
-  node_supports_skill_bridge || { printf '%s\n' 'claudex: Node.js 18 or newer is required for skill compatibility.' >&2; exit 1; }
-  [[ -r "$skill_bridge_helper" ]] || { printf '%s\n' 'claudex: skill bridge helper is missing; reinstall Claudex.' >&2; exit 1; }
+  node_supports_skill_bridge || { printf '%s\n' 'gicc: Node.js 18 or newer is required for skill compatibility.' >&2; exit 1; }
+  [[ -r "$skill_bridge_helper" ]] || { printf '%s\n' 'gicc: skill bridge helper is missing; reinstall GICC.' >&2; exit 1; }
   shift
-  [[ $# -eq 0 ]] || { printf '%s\n' 'Usage: claudex skills' >&2; exit 2; }
+  [[ $# -eq 0 ]] || { printf '%s\n' 'Usage: gicc skills' >&2; exit 2; }
   exec node "$skill_bridge_helper" list --project "$PWD"
 fi
 
@@ -651,13 +657,13 @@ current_shell_pid() {
   local destination="$1"
   # Bash 3.2 does not expose BASHPID. A short-lived child reports the real PID
   # of whichever launcher or detached worker directly spawned it.
-  sh -c 'printf "%s\n" "$PPID" > "$1"' claudex-pid "$destination"
+  sh -c 'printf "%s\n" "$PPID" > "$1"' gicc-pid "$destination"
 }
 
 process_identity() {
   local pid="$1" identity="" stat_line=""
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_PROCESS_IDENTITY:-}" ]]; then
-    printf '%s\n' "$CLAUDEX_TEST_PROCESS_IDENTITY"
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_PROCESS_IDENTITY:-}" ]]; then
+    printf '%s\n' "$GICC_TEST_PROCESS_IDENTITY"
     return 0
   fi
   # Linux exposes a boot-relative process start tick even when ps is missing or
@@ -723,10 +729,10 @@ lock_barrier_exists() {
 
 lock_test_pause() {
   local stage="$1" lock_dir="$2" ready_variable continue_variable ready_file continue_file
-  [[ "${CLAUDEX_TEST_MODE:-0}" == 1 ]] || return 0
-  [[ -z "${CLAUDEX_TEST_LOCK_MATCH:-}" || "$lock_dir" == *"$CLAUDEX_TEST_LOCK_MATCH"* ]] || return 0
-  ready_variable="CLAUDEX_TEST_LOCK_${stage}_READY"
-  continue_variable="CLAUDEX_TEST_LOCK_${stage}_CONTINUE"
+  [[ "${GICC_TEST_MODE:-0}" == 1 ]] || return 0
+  [[ -z "${GICC_TEST_LOCK_MATCH:-}" || "$lock_dir" == *"$GICC_TEST_LOCK_MATCH"* ]] || return 0
+  ready_variable="GICC_TEST_LOCK_${stage}_READY"
+  continue_variable="GICC_TEST_LOCK_${stage}_CONTINUE"
   ready_file="${!ready_variable:-}"
   continue_file="${!continue_variable:-}"
   [[ -n "$ready_file" && -n "$continue_file" ]] || return 0
@@ -793,13 +799,13 @@ remove_legacy_lock_directory_files() {
 
 publish_lock_file() {
   local source="$1" destination="$2"
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && "${CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE:-0}" == 1 ]]; then
-    if [[ -z "${CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE_MATCH:-}" \
-        || "$destination" == *"$CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE_MATCH"* ]]; then
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && "${GICC_TEST_FORCE_PUBLICATION_FAILURE:-0}" == 1 ]]; then
+    if [[ -z "${GICC_TEST_FORCE_PUBLICATION_FAILURE_MATCH:-}" \
+        || "$destination" == *"$GICC_TEST_FORCE_PUBLICATION_FAILURE_MATCH"* ]]; then
       return 1
     fi
   fi
-  if [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || "${CLAUDEX_TEST_FORCE_HARDLINK_FAILURE:-0}" != 1 ]]; then
+  if [[ "${GICC_TEST_MODE:-0}" != 1 || "${GICC_TEST_FORCE_HARDLINK_FAILURE:-0}" != 1 ]]; then
     ln "$source" "$destination" 2>/dev/null && return 0
   fi
   # FileMode CreateNew/O_EXCL is the portable fallback for filesystems that do
@@ -826,8 +832,8 @@ remove_incomplete_lock_directory() {
   [[ ! -s "$quarantine/owner" ]] || legacy_owner_text=1
   [[ ! -s "$quarantine/owner-pid" ]] || legacy_owner_text=1
   if [[ "$preserve_directory" == 1 ]]; then
-    if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_LOCK_PRESERVE_FILE:-}" ]]; then
-      : > "$CLAUDEX_TEST_LOCK_PRESERVE_FILE"
+    if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_LOCK_PRESERVE_FILE:-}" ]]; then
+      : > "$GICC_TEST_LOCK_PRESERVE_FILE"
     fi
     if [[ -n "$expected_nonce" && "$moved_nonce" == "$expected_nonce" ]]; then
       rm -f "$quarantine/generation" 2>/dev/null || true
@@ -963,8 +969,8 @@ recover_owned_lock_generation() {
   current_nonce=$(read_generation_nonce "$lock_dir")
   [[ -n "$current_nonce" ]] || current_nonce=$(read_lock_field "$lock_dir/owner" nonce)
   if [[ "$current_nonce" == "$expected_nonce" ]] && ! lock_barrier_exists "$lock_dir"; then
-    if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE:-}" ]]; then
-      : > "$CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE"
+    if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_LOCK_SELF_RECOVERED_FILE:-}" ]]; then
+      : > "$GICC_TEST_LOCK_SELF_RECOVERED_FILE"
     fi
     return 0
   fi
@@ -1081,8 +1087,8 @@ acquire_owned_lock() {
           sleep "$delay"
           continue
         fi
-        if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE:-}" ]]; then
-          : > "$CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE"
+        if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_LOCK_SELF_RECOVERED_FILE:-}" ]]; then
+          : > "$GICC_TEST_LOCK_SELF_RECOVERED_FILE"
         fi
         return 0
       fi
@@ -1254,7 +1260,7 @@ fi
 fetch_models() {
   local timeout_seconds="${1:-1}" response_file status_file request_pid timer_pid request_status=0
   local http_status status_output
-  local run_dir="$claudex_config_dir/run"
+  local run_dir="$gicc_config_dir/run"
   mkdir -p "$run_dir"
   response_file=$(mktemp "$run_dir/.proxy-health.XXXXXX")
   status_file=$(mktemp "$run_dir/.proxy-health-status.XXXXXX")
@@ -1263,9 +1269,9 @@ fetch_models() {
 
   "$curl_bin" --silent --show-error \
     --connect-timeout 0.5 --max-time "$timeout_seconds" \
-    --header @<(printf 'Authorization: Bearer %s\n' "$CLAUDEX_PROXY_TOKEN") \
+    --header @<(printf 'Authorization: Bearer %s\n' "$GICC_PROXY_TOKEN") \
     --output "$response_file" --write-out '%{http_code}' \
-    "${CLAUDEX_PROXY_URL%/}/v1/models" > "$status_file" &
+    "${GICC_PROXY_URL%/}/v1/models" > "$status_file" &
   request_pid=$!
   (
     sleep "$timeout_seconds"
@@ -1352,18 +1358,22 @@ launch_model_is_available() {
 }
 
 proxy_reachable() {
-  if [[ -n "${CLAUDEX_TEST_PROXY_REACHABLE_FILE:-}" ]]; then
-    [[ -e "$CLAUDEX_TEST_PROXY_REACHABLE_FILE" ]]
+  if [[ -n "${GICC_TEST_PROXY_REACHABLE_FILE:-}" ]]; then
+    [[ -e "$GICC_TEST_PROXY_REACHABLE_FILE" ]]
     return
   fi
   proxy_ready
 }
 
 proxy_executable() {
-  if [[ -n "${CLAUDEX_PROXY_BIN:-}" && -x "$CLAUDEX_PROXY_BIN" ]]; then
-    printf '%s\n' "$CLAUDEX_PROXY_BIN"
+  if [[ -n "${GICC_PROXY_BIN:-}" && -x "$GICC_PROXY_BIN" ]]; then
+    printf '%s\n' "$GICC_PROXY_BIN"
+  elif [[ -x "$CLAUDE_CONFIG_DIR/bin/gicc-proxy" ]]; then
+    printf '%s\n' "$CLAUDE_CONFIG_DIR/bin/gicc-proxy"
   elif [[ -x "$CLAUDE_CONFIG_DIR/bin/cliproxyapi" ]]; then
     printf '%s\n' "$CLAUDE_CONFIG_DIR/bin/cliproxyapi"
+  elif command -v gicc-proxy >/dev/null 2>&1; then
+    command -v gicc-proxy
   elif command -v cliproxyapi >/dev/null 2>&1; then
     command -v cliproxyapi
   elif command -v cli-proxy-api >/dev/null 2>&1; then
@@ -1374,17 +1384,17 @@ proxy_executable() {
 }
 
 start_auth_watcher() {
-  [[ "${CLAUDEX_SKIP_AUTH_WATCHER:-0}" != 1 ]] || return 0
+  [[ "${GICC_SKIP_AUTH_WATCHER:-0}" != 1 ]] || return 0
   local parent_identity
   parent_identity=$(process_identity "$$" 2>/dev/null || true)
   env \
     -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_API_KEY -u CLAUDE_CODE_OAUTH_TOKEN \
-    -u CLAUDEX_PROXY_TOKEN -u CLAUDEX_CODEX_AUTH_FILE \
+    -u GICC_PROXY_TOKEN -u GICC_CODEX_AUTH_FILE \
     "$codex_session_helper" watch "$$" "$parent_identity" "$parsed_background" \
     </dev/null >/dev/null 2>&1 &
   auth_watcher_pid=$!
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_AUTH_WATCH_PID_FILE:-}" ]]; then
-    (umask 077; printf '%s\n' "$auth_watcher_pid" > "$CLAUDEX_TEST_AUTH_WATCH_PID_FILE")
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_AUTH_WATCH_PID_FILE:-}" ]]; then
+    (umask 077; printf '%s\n' "$auth_watcher_pid" > "$GICC_TEST_AUTH_WATCH_PID_FILE")
   fi
   if (( parsed_background )); then disown "$auth_watcher_pid" 2>/dev/null || true; fi
 }
@@ -1416,11 +1426,11 @@ managed_background_registry_state() {
     -u ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES -u ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES \
     -u CLAUDE_CODE_AUTO_MODE_MODEL -u CLAUDE_CODE_BG_CLASSIFIER_MODEL -u CLAUDE_CODE_SUBAGENT_MODEL \
     -u CLAUDE_CODE_ALWAYS_ENABLE_EFFORT -u CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY -u CLAUDE_CODE_MAX_RETRIES \
-    -u CLAUDE_CODE_MAX_CONTEXT_TOKENS -u CLAUDE_CODE_AUTO_COMPACT_WINDOW -u CLAUDE_CODE_DISABLE_1M_CONTEXT \
-    -u CLAUDEX_PROXY_TOKEN -u CLAUDEX_PROXY_URL -u CLAUDEX_PROXY_CONFIG -u CLAUDEX_PROXY_BIN \
-    -u CLAUDEX_CODEX_AUTH_FILE -u CLAUDEX_CODEX_SOURCE_AUTH_FILE -u CLAUDEX_MANAGED_SESSION \
-    -u CLAUDEX_CHATGPT_PLAN_LABEL -u CLAUDEX_SESSION_MODE -u CLAUDEX_MODEL_MODE -u CLAUDEX_INTERACTIVE_TUI \
-    -u CLAUDEX_NO_SESSION_PERSISTENCE -u CLAUDEX_INSTRUCTION_BRIDGE -u CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD \
+    -u CLAUDE_CODE_MAX_OUTPUT_TOKENS -u CLAUDE_CODE_MAX_CONTEXT_TOKENS -u CLAUDE_CODE_AUTO_COMPACT_WINDOW -u CLAUDE_CODE_DISABLE_1M_CONTEXT \
+    -u GICC_PROXY_TOKEN -u GICC_PROXY_URL -u GICC_PROXY_CONFIG -u GICC_PROXY_BIN \
+    -u GICC_CODEX_AUTH_FILE -u GICC_CODEX_SOURCE_AUTH_FILE -u GICC_MANAGED_SESSION \
+    -u GICC_CHATGPT_PLAN_LABEL -u GICC_SESSION_MODE -u GICC_MODEL_MODE -u GICC_INTERACTIVE_TUI \
+    -u GICC_NO_SESSION_PERSISTENCE -u GICC_INSTRUCTION_BRIDGE -u CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD \
     -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDE_CODE_NO_FLICKER -u CLAUDE_CODE_ACCESSIBILITY \
     claude agents --json 2>/dev/null) || return 2
   printf '%s' "$registry" | jq -e 'type == "array"' >/dev/null 2>&1 || return 2
@@ -1429,7 +1439,7 @@ managed_background_registry_state() {
 }
 
 start_proxy_watcher() {
-  [[ "${CLAUDEX_SKIP_PROXY_WATCHER:-0}" != 1 ]] || return 0
+  [[ "${GICC_SKIP_PROXY_WATCHER:-0}" != 1 ]] || return 0
   local parent_pid=$$ parent_identity consecutive_failures=0
   parent_identity=$(process_identity "$parent_pid" 2>/dev/null || true)
   (
@@ -1463,13 +1473,13 @@ start_proxy_watcher() {
         fi
       fi
     done
-    if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_PROXY_WATCH_EXIT_FILE:-}" ]]; then
-      (umask 077; printf '%s\n' exited > "$CLAUDEX_TEST_PROXY_WATCH_EXIT_FILE")
+    if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_PROXY_WATCH_EXIT_FILE:-}" ]]; then
+      (umask 077; printf '%s\n' exited > "$GICC_TEST_PROXY_WATCH_EXIT_FILE")
     fi
   ) </dev/null >/dev/null 2>&1 &
   proxy_watcher_pid=$!
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_PROXY_WATCH_PID_FILE:-}" ]]; then
-    (umask 077; printf '%s\n' "$proxy_watcher_pid" > "$CLAUDEX_TEST_PROXY_WATCH_PID_FILE")
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_PROXY_WATCH_PID_FILE:-}" ]]; then
+    (umask 077; printf '%s\n' "$proxy_watcher_pid" > "$GICC_TEST_PROXY_WATCH_PID_FILE")
   fi
   if (( parsed_background )); then disown "$proxy_watcher_pid" 2>/dev/null || true; fi
 }
@@ -1551,27 +1561,27 @@ stop_unhealthy_managed_proxy() {
   record_proxy_recovery "stopped unresponsive managed proxy pid=$pid"
 }
 
-claudex_auth_sync_failed=0
-claudex_auth_sync_status=0
-claudex_interactive_login_attempted=0
+gicc_auth_sync_failed=0
+gicc_auth_sync_status=0
+gicc_interactive_login_attempted=0
 
 ensure_proxy() {
   local health_status=0
-  claudex_auth_sync_failed=0
-  claudex_auth_sync_status=0
+  gicc_auth_sync_failed=0
+  gicc_auth_sync_status=0
   if [[ ! -x "$codex_session_helper" ]]; then
     record_proxy_recovery "authentication helper is missing"
-    printf '%s\n' "claudex: authentication helper is missing: $codex_session_helper" >&2
-    printf '%s\n' 'claudex: reinstall Claudex to repair the installation.' >&2
+    printf '%s\n' "gicc: authentication helper is missing: $codex_session_helper" >&2
+    printf '%s\n' 'gicc: reinstall GICC to repair the installation.' >&2
     return 1
   fi
   local sync_status=0
-  if [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || "${CLAUDEX_TEST_SKIP_AUTH_SYNC:-0}" != 1 ]]; then
+  if [[ "${GICC_TEST_MODE:-0}" != 1 || "${GICC_TEST_SKIP_AUTH_SYNC:-0}" != 1 ]]; then
     "$codex_session_helper" sync || sync_status=$?
   fi
   if (( sync_status != 0 )); then
-    claudex_auth_sync_failed=1
-    claudex_auth_sync_status=$sync_status
+    gicc_auth_sync_failed=1
+    gicc_auth_sync_status=$sync_status
     record_proxy_recovery "authentication synchronization failed status=$sync_status"
     return "$sync_status"
   fi
@@ -1581,22 +1591,22 @@ ensure_proxy() {
   else
     health_status=$?
     if (( health_status == 41 )); then
-      if (( claudex_remote_proxy )) || ! managed_proxy_is_current; then
+      if (( gicc_remote_proxy )) || ! managed_proxy_is_current; then
         record_proxy_recovery "unmanaged proxy rejected the configured authentication token"
-        printf '%s\n' 'claudex: the proxy rejected its configured authentication token; refusing to restart a listener that is not proven Claudex-managed.' >&2
+        printf '%s\n' 'gicc: the proxy rejected its configured authentication token; refusing to restart a listener that is not proven GICC-managed.' >&2
         return 1
       fi
       record_proxy_recovery "tracked managed proxy rejected its configured authentication token; restarting it"
     fi
   fi
 
-  if (( claudex_remote_proxy )); then
+  if (( gicc_remote_proxy )); then
     record_proxy_recovery "remote proxy is unavailable; local recovery is disabled"
-    printf '%s\n' 'claudex: the configured remote proxy is unavailable; local proxy recovery is disabled for remote endpoints.' >&2
+    printf '%s\n' 'gicc: the configured remote proxy is unavailable; local proxy recovery is disabled for remote endpoints.' >&2
     return 1
   fi
 
-  # Concurrent Claudex tabs can notice a stopped bridge at the same time.
+  # Concurrent GICC tabs can notice a stopped bridge at the same time.
   # Serialize startup so only one process can bind the loopback port.
   local run_dir="$CLAUDE_CONFIG_DIR/run" lock_dir attempt
   local lock_acquired=0 owner_nonce
@@ -1608,13 +1618,13 @@ ensure_proxy() {
     if acquire_owned_lock "$lock_dir" 1 0 120; then
       owner_nonce="$owned_lock_nonce"
       lock_acquired=1
-      if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_PROXY_LOCK_ATTEMPT_FILE:-}" ]]; then
-        printf 'acquired %s\n' "$$" >> "$CLAUDEX_TEST_PROXY_LOCK_ATTEMPT_FILE"
+      if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_PROXY_LOCK_ATTEMPT_FILE:-}" ]]; then
+        printf 'acquired %s\n' "$$" >> "$GICC_TEST_PROXY_LOCK_ATTEMPT_FILE"
       fi
       break
     fi
-    if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_PROXY_LOCK_ATTEMPT_FILE:-}" ]]; then
-      printf 'blocked %s\n' "$$" >> "$CLAUDEX_TEST_PROXY_LOCK_ATTEMPT_FILE"
+    if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_PROXY_LOCK_ATTEMPT_FILE:-}" ]]; then
+      printf 'blocked %s\n' "$$" >> "$GICC_TEST_PROXY_LOCK_ATTEMPT_FILE"
     fi
     if proxy_ready; then return 0
     elif (( $? == 41 )) && ! managed_proxy_is_current; then
@@ -1625,7 +1635,7 @@ ensure_proxy() {
   done
   if (( ! lock_acquired )); then
     record_proxy_recovery "timed out after 30s waiting for startup lock"
-    printf '%s\n' "claudex: timed out waiting for another session to start the local proxy." >&2
+    printf '%s\n' "gicc: timed out waiting for another session to start the local proxy." >&2
     return 1
   fi
   record_proxy_recovery "proxy startup lock acquired"
@@ -1642,10 +1652,10 @@ ensure_proxy() {
     return 1
   fi
 
-  printf '%s\n' "claudex: starting the local CLIProxyAPI service..." >&2
+  printf '%s\n' "gicc: starting the local CLIProxyAPI service..." >&2
   record_proxy_recovery "starting authenticated proxy recovery"
   stop_unhealthy_managed_proxy
-  proxy_config="${CLAUDEX_PROXY_CONFIG:-$CLAUDE_CONFIG_DIR/cliproxyapi.yaml}"
+  proxy_config="${GICC_PROXY_CONFIG:-$CLAUDE_CONFIG_DIR/cliproxyapi.yaml}"
   homebrew_proxy_config=""
   if command -v brew >/dev/null 2>&1; then
     homebrew_proxy_config="$(brew --prefix)/etc/cliproxyapi.conf"
@@ -1662,7 +1672,7 @@ ensure_proxy() {
   else
     proxy_bin=$(proxy_executable) || {
       record_proxy_recovery "proxy executable is missing"
-      printf '%s\n' "claudex: CLIProxyAPI is not reachable and no proxy executable was found." >&2
+      printf '%s\n' "gicc: CLIProxyAPI is not reachable and no proxy executable was found." >&2
       release_proxy_lock "$lock_dir" "$owner_nonce"
       trap - EXIT
       return 1
@@ -1675,8 +1685,8 @@ ensure_proxy() {
       # credentials, model routing, and runtime preloads out of its environment.
       scrub_managed_session_environment
       scrub_competing_provider_routing
-      unset BUN_OPTIONS CLAUDE_CODE_SUBAGENT_MODEL CLAUDEX_PROXY_TOKEN
-      unset CLAUDEX_CONFIG_DIR CLAUDEX_CLAUDE_CONFIG_DIR CLAUDEX_INSTRUCTION_BRIDGE
+      unset BUN_OPTIONS CLAUDE_CODE_SUBAGENT_MODEL GICC_PROXY_TOKEN
+      unset GICC_CONFIG_DIR GICC_CLAUDE_CONFIG_DIR GICC_INSTRUCTION_BRIDGE
       if [[ -r "$proxy_config" ]]; then
         exec nohup "$proxy_bin" -config "$proxy_config"
       else
@@ -1721,18 +1731,18 @@ ensure_proxy() {
   release_proxy_lock "$lock_dir" "$owner_nonce"
   trap - EXIT
 
-  printf '%s\n' "claudex: local proxy did not become healthy. Run: claudex --doctor" >&2
+  printf '%s\n' "gicc: local proxy did not become healthy. Run: gicc --doctor" >&2
   return 1
 }
 
 interactive_codex_login_allowed() {
-  [[ "${CLAUDEX_DISABLE_INTERACTIVE_LOGIN:-0}" != 1 ]] || return 1
+  [[ "${GICC_DISABLE_INTERACTIVE_LOGIN:-0}" != 1 ]] || return 1
   case "${CI:-}" in
     ''|0|false|FALSE|no|NO) ;;
     *) return 1 ;;
   esac
   { [[ -t 0 && -t 1 ]] \
-      || { [[ "${CLAUDEX_TEST_TTY_INPUT:-0}" == 1 ]] && [[ "${CLAUDEX_TEST_TTY_OUTPUT:-0}" == 1 ]]; }; }
+      || { [[ "${GICC_TEST_TTY_INPUT:-0}" == 1 ]] && [[ "${GICC_TEST_TTY_OUTPUT:-0}" == 1 ]]; }; }
 }
 
 # Only the foreground launcher may open Codex's browser sign-in. The proxy and
@@ -1741,28 +1751,28 @@ interactive_codex_login_allowed() {
 ensure_proxy_for_launch() {
   local required_model="${1:-}" ensure_status=0 login_status=0
   if ensure_proxy; then return 0; else ensure_status=$?; fi
-  if (( claudex_auth_sync_failed != 1 )); then return "$ensure_status"; fi
-  case "$claudex_auth_sync_status" in
+  if (( gicc_auth_sync_failed != 1 )); then return "$ensure_status"; fi
+  case "$gicc_auth_sync_status" in
     11|13|14) ;;
     *) return "$ensure_status" ;;
   esac
 
-  if (( claudex_interactive_login_attempted )); then
-    printf '%s\n' 'claudex: Codex authentication is still unavailable after the sign-in attempt. Run `claudex --login` to retry.' >&2
+  if (( gicc_interactive_login_attempted )); then
+    printf '%s\n' 'gicc: Codex authentication is still unavailable after the sign-in attempt. Run `gicc --login` to retry.' >&2
     return "$ensure_status"
   fi
   if ! interactive_codex_login_allowed; then
-    printf '%s\n' 'claudex: Codex sign-in is required. Run `claudex --login` in an interactive terminal, then retry.' >&2
+    printf '%s\n' 'gicc: Codex sign-in is required. Run `gicc --login` in an interactive terminal, then retry.' >&2
     return "$ensure_status"
   fi
 
-  claudex_interactive_login_attempted=1
-  printf '%s\n' 'claudex: Codex sign-in is required. Opening the official Codex browser login...' >&2
+  gicc_interactive_login_attempted=1
+  printf '%s\n' 'gicc: Codex sign-in is required. Opening the official Codex browser login...' >&2
   record_proxy_recovery 'foreground startup requested official Codex browser login'
   "$codex_session_helper" login || login_status=$?
   if (( login_status != 0 )); then
     record_proxy_recovery "foreground Codex browser login failed status=$login_status"
-    printf '%s\n' 'claudex: Codex sign-in did not complete. Run `claudex --login` to retry.' >&2
+    printf '%s\n' 'gicc: Codex sign-in did not complete. Run `gicc --login` to retry.' >&2
     return "$login_status"
   fi
 
@@ -1773,7 +1783,7 @@ ensure_proxy_for_launch() {
     ensure_proxy || ensure_status=$?
   fi
   if (( ensure_status != 0 )); then
-    printf '%s\n' 'claudex: Codex authentication is still unavailable after sign-in. Run `claudex --login` to retry.' >&2
+    printf '%s\n' 'gicc: Codex authentication is still unavailable after sign-in. Run `gicc --login` to retry.' >&2
     return "$ensure_status"
   fi
   record_proxy_recovery 'foreground Codex browser login synchronized successfully'
@@ -1792,12 +1802,12 @@ run_claude_update_worker() {
   # The worker publishes its own PID and process-start identity. A launcher
   # exiting between spawn and ownership publication can therefore leave only a
   # short ownerless generation, never a misleading parent-owned lock.
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_UPDATE_WORKER_ATTEMPT_FILE:-}" ]]; then
-    printf 'start %s\n' "$$" >> "$CLAUDEX_TEST_UPDATE_WORKER_ATTEMPT_FILE"
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE:-}" ]]; then
+    printf 'start %s\n' "$$" >> "$GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE"
   fi
   if ! acquire_owned_lock "$lock_dir" 5 0.02 3600; then
-    if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_UPDATE_WORKER_ATTEMPT_FILE:-}" ]]; then
-      printf 'blocked %s\n' "$$" >> "$CLAUDEX_TEST_UPDATE_WORKER_ATTEMPT_FILE"
+    if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE:-}" ]]; then
+      printf 'blocked %s\n' "$$" >> "$GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE"
     fi
     return 0
   fi
@@ -1820,7 +1830,7 @@ run_claude_update_worker() {
 
   # Claude's updater is a first-party maintenance route. Never project proxy,
   # provider, session, or credential state into the detached process.
-  unset CLAUDEX_PROXY_TOKEN
+  unset GICC_PROXY_TOKEN
   scrub_managed_session_environment
   scrub_competing_provider_routing
   unset CLAUDE_CODE_SUBAGENT_MODEL
@@ -1836,19 +1846,19 @@ run_claude_update_worker() {
 }
 
 maybe_update_claude() {
-  [[ "$CLAUDEX_CLAUDE_AUTO_UPDATE" == on ]] || return 0
-  [[ "${CLAUDEX_SKIP_AUTO_UPDATE:-0}" != 1 ]] || return 0
+  [[ "$GICC_CLAUDE_AUTO_UPDATE" == on ]] || return 0
+  [[ "${GICC_SKIP_AUTO_UPDATE:-0}" != 1 ]] || return 0
   command -v claude >/dev/null 2>&1 || return 0
 
   # Direct Chrome intentionally unsets CLAUDE_CONFIG_DIR. Update bookkeeping
-  # always belongs to Claudex's stable private config root.
-  local update_dir="$claudex_config_dir/update" stamp="$claudex_config_dir/update/last-success" now last=0
+  # always belongs to GICC's stable private config root.
+  local update_dir="$gicc_config_dir/update" stamp="$gicc_config_dir/update/last-success" now last=0
   now=$(date +%s)
   if [[ -r "$stamp" ]]; then
     read -r last < "$stamp" || last=0
   fi
   [[ "$last" =~ ^[0-9]+$ ]] || last=0
-  (( now - last >= CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS )) || return 0
+  (( now - last >= GICC_CLAUDE_UPDATE_INTERVAL_SECONDS )) || return 0
   mkdir -p "$update_dir"
   local claude_path
   claude_path=$(command -v claude)
@@ -1857,17 +1867,17 @@ maybe_update_claude() {
   (
     trap '' HUP
     run_claude_update_worker "$claude_path" "$update_dir" "$stamp" \
-      "$CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS"
+      "$GICC_CLAUDE_UPDATE_INTERVAL_SECONDS"
   ) </dev/null >"$update_dir/claude-update.log" 2>&1 &
 }
 
 maybe_self_update() {
-  [[ "$CLAUDEX_AUTO_UPDATE" != off && -x "$self_update_helper" ]] || return 0
-  [[ "${CLAUDEX_SKIP_AUTO_UPDATE:-0}" != 1 ]] || return 0
-  local action=--check log_dir="$claudex_config_dir/update/claudex"
-  [[ "$CLAUDEX_AUTO_UPDATE" == on ]] && action=--apply
+  [[ "$GICC_AUTO_UPDATE" != off && -x "$self_update_helper" ]] || return 0
+  [[ "${GICC_SKIP_AUTO_UPDATE:-0}" != 1 ]] || return 0
+  local action=--check log_dir="$gicc_config_dir/update/gicc"
+  [[ "$GICC_AUTO_UPDATE" == on ]] && action=--apply
   mkdir -p "$log_dir"
-  CLAUDEX_UPDATE_BACKGROUND=1 CLAUDEX_UPDATE_INTERVAL_SECONDS="$CLAUDEX_UPDATE_INTERVAL_SECONDS" \
+  GICC_UPDATE_BACKGROUND=1 GICC_UPDATE_INTERVAL_SECONDS="$GICC_UPDATE_INTERVAL_SECONDS" \
     nohup "$self_update_helper" "$action" --background </dev/null >"$log_dir/background.log" 2>&1 &
 }
 
@@ -1892,29 +1902,29 @@ claude_supports() {
 
 load_claude_capabilities() {
   command -v claude >/dev/null 2>&1 || {
-    printf '%s\n' 'claudex: Claude Code was not found. Install Claude Code and retry.' >&2
+    printf '%s\n' 'gicc: Claude Code was not found. Install Claude Code and retry.' >&2
     return 1
   }
   claude_help_cache=$(claude --help 2>/dev/null || true)
   [[ -n "$claude_help_cache" ]] || {
-    printf '%s\n' 'claudex: Claude Code did not return its capability list.' >&2
+    printf '%s\n' 'gicc: Claude Code did not return its capability list.' >&2
     return 1
   }
   if ! claude_supports '--model'; then
-    printf '%s\n' 'claudex: this Claude Code build does not support custom models; run `claude update`.' >&2
+    printf '%s\n' 'gicc: this Claude Code build does not support custom models; run `claude update`.' >&2
     return 1
   fi
 }
 
 ensure_auto_mode_rules() {
   # Claude Code replaces an autoMode array when settings provide that key.
-  # Recompose from the current binary's defaults so Claudex's scoped additions
+  # Recompose from the current binary's defaults so GICC's scoped additions
   # never discard new or existing upstream safety rules after an update.
-  [[ "$settings_file" == "$claudex_config_dir/settings.json" ]] || return 0
+  [[ "$settings_file" == "$gicc_config_dir/settings.json" ]] || return 0
   local defaults_json previous_defaults='{}' tmp_file snapshot_file snapshot_tmp defaults_are_fresh=0
-  local lock_dir="$claudex_config_dir/run/auto-mode.lock"
+  local lock_dir="$gicc_config_dir/run/auto-mode.lock"
   acquire_state_lock "$lock_dir" || return 0
-  snapshot_file="$claudex_config_dir/auto-mode-defaults.json"
+  snapshot_file="$gicc_config_dir/auto-mode-defaults.json"
   if [[ -s "$snapshot_file" ]] && jq -e '
     (.allow | type == "array") and
     (.environment | type == "array") and
@@ -1933,13 +1943,13 @@ ensure_auto_mode_rules() {
   elif [[ "$previous_defaults" != '{}' ]]; then
     defaults_json="$previous_defaults"
   else
-    # Older Claudex releases shipped only the managed allow/environment
+    # Older GICC releases shipped only the managed allow/environment
     # additions. Because Claude Code replaces a configured array wholesale,
     # leaving those partial arrays active after an upstream-defaults failure
     # would discard every upstream exception and make auto mode fail closed in
     # surprising ways. Remove only that recognizable legacy seed; never erase
     # user-authored rules when their provenance cannot be established.
-    tmp_file=$(mktemp "$claudex_config_dir/settings.json.tmp.XXXXXX")
+    tmp_file=$(mktemp "$gicc_config_dir/settings.json.tmp.XXXXXX")
     if jq '
       def managed_allow:
         startswith("Explicit Action Approval:") or startswith("Requested Agent Configuration:");
@@ -1961,13 +1971,13 @@ ensure_auto_mode_rules() {
       return 0
     fi
     rm -f "$tmp_file"
-    printf '%s\n' 'claudex: Claude Code auto mode defaults are unavailable; preserving custom rules and refusing an unsafe partial composition.' >&2
-    printf '%s\n' 'claudex: update Claude Code or restore the auto mode defaults snapshot, then retry.' >&2
+    printf '%s\n' 'gicc: Claude Code auto mode defaults are unavailable; preserving custom rules and refusing an unsafe partial composition.' >&2
+    printf '%s\n' 'gicc: update Claude Code or restore the auto mode defaults snapshot, then retry.' >&2
     release_state_lock "$lock_dir"
     return 1
   fi
 
-  tmp_file=$(mktemp "$claudex_config_dir/settings.json.tmp.XXXXXX")
+  tmp_file=$(mktemp "$gicc_config_dir/settings.json.tmp.XXXXXX")
   if jq --argjson defaults "$defaults_json" \
       --argjson previous "$previous_defaults" \
       --arg approval 'Explicit Action Approval: A user message that explicitly approves a specific action and target, including reissuing it after a denial or unambiguously referring to the immediately preceding blocked action with language such as approve that, go ahead, or proceed, satisfies named and specific consent for matching SOFT BLOCK rules. Do not force the user to restate the command, ask for duplicate confirmation, or treat the prior denial as permanent. This does not override HARD BLOCK rules or authorize a broader action.' \
@@ -1975,7 +1985,7 @@ ensure_auto_mode_rules() {
       --arg task_boundary 'User designated task boundary: A repository, cloud project, host, bucket, service, or destination that the user explicitly identifies in their own message as owned or controlled infrastructure and as the intended target is trusted for the specifically requested operation and data flow only. Merely naming a target does not establish trust; do not infer trust for agent selected destinations, unrelated resources, or broader scopes.' \
       --arg approved_transfer 'Explicitly approved development transfer: When the user explicitly approves an exact transfer of only the source required for the task from the current trusted repository to an explicitly named private build or deployment host controlled by the user, treat that source and destination as inside the task trust boundary for that transfer only. Approval may unambiguously refer to the immediately preceding blocked command without repeating it. This never covers a public destination, credentials or secrets, unrelated files, a broader source tree, an agent selected target, or a different host.' \
       --arg transfer_soft 'Approved Private Development Transfer [named+specifics: must name the current source repository, the private build or deployment host controlled by the user, and the requested transfer]: Transferring only the source required for the task from the current trusted repository to that exact named private host requires the user to request or explicitly approve that transfer. Approval may unambiguously refer to the immediately preceding denied transfer. This consent never clears credentials or secrets, a public destination, unrelated files, a broader source tree, an agent selected target, or a different host.' \
-      --arg hard_exception $'\n  - Claudex scoped private development transfer exception: Notwithstanding the bulk scale treatment above, an exact transfer of only the source required for the task from the current trusted repository to an explicitly named private build or deployment host controlled by the user is not HARD Data Exfiltration when the user requested or explicitly approved that exact source, destination, and transfer. Evaluate it under Approved Private Development Transfer as named and specific SOFT consent. The exception never covers credentials or secrets, a public destination, unrelated files, a broader source tree, an agent selected target, or a different host; if any condition is missing, the HARD rule remains in force.' '
+      --arg hard_exception $'\n  - GICC scoped private development transfer exception: Notwithstanding the bulk scale treatment above, an exact transfer of only the source required for the task from the current trusted repository to an explicitly named private build or deployment host controlled by the user is not HARD Data Exfiltration when the user requested or explicitly approved that exact source, destination, and transfer. Evaluate it under Approved Private Development Transfer as named and specific SOFT consent. The exception never covers credentials or secrets, a public destination, unrelated files, a broader source tree, an agent selected target, or a different host; if any condition is missing, the HARD rule remains in force.' '
         def stable_unique:
           reduce .[] as $item ([]; if index($item) == null then . + [$item] else . end);
         .autoMode = (.autoMode // {})
@@ -1996,7 +2006,7 @@ ensure_auto_mode_rules() {
             and (($previous_soft_deny | index($rule)) == null)
           ))) as $custom_soft_deny
         | ((.autoMode.hard_deny // []) | map(. as $rule | select(
-            (contains("Claudex scoped private development transfer exception:") | not)
+            (contains("GICC scoped private development transfer exception:") | not)
             and (($previous_hard_deny | index($rule)) == null)
           ))) as $custom_hard_deny
         | ($defaults.hard_deny | map(
@@ -2020,7 +2030,7 @@ ensure_auto_mode_rules() {
   fi
 
   if (( defaults_are_fresh )); then
-    snapshot_tmp=$(mktemp "$claudex_config_dir/.auto-mode-defaults.XXXXXX")
+    snapshot_tmp=$(mktemp "$gicc_config_dir/.auto-mode-defaults.XXXXXX")
     printf '%s\n' "$defaults_json" | jq '.' > "$snapshot_tmp"
     chmod 600 "$snapshot_tmp" 2>/dev/null || true
     mv -f "$snapshot_tmp" "$snapshot_file"
@@ -2059,33 +2069,34 @@ doctor() {
   printf '%s\n' "Claude Code: $(claude --version 2>/dev/null || printf unavailable)"
   printf '%s\n' "CLIProxyAPI: ${proxy_version}"
   "$codex_session_helper" status
-  printf '%s\n' "Proxy: healthy at ${CLAUDEX_PROXY_URL}"
+  printf '%s\n' "Proxy: healthy at ${GICC_PROXY_URL}"
   printf '%s\n' "Saved model: $(model_name "$saved_model") (${saved_model})"
-  printf '%s\n' "Default permission mode: ${CLAUDEX_PERMISSION_MODE}"
-  printf '%s\n' "Auto mode classifier: ${CLAUDEX_AUTO_MODE_MODEL} (only used when auto mode is selected)"
+  printf '%s\n' "Default permission mode: ${GICC_PERMISSION_MODE}"
+  printf '%s\n' "Auto mode classifier: ${GICC_AUTO_MODE_MODEL} (only used when auto mode is selected)"
   printf '%s\n' "Auto mode provider: Codex/OpenAI through the authenticated loopback bridge"
   printf '%s\n' 'Delegated models: native routing for each agent (Sol is reserved for the leader)'
   printf '%s\n' 'Managed agents: Terra (high), Luna (medium)'
-  printf '%s\n' "Tool concurrency: ${CLAUDEX_MAX_TOOL_USE_CONCURRENCY}"
-  printf '%s\n' "Agent concurrency: ${CLAUDEX_MAX_AGENT_CONCURRENCY}"
+  printf '%s\n' "Tool concurrency: ${GICC_MAX_TOOL_USE_CONCURRENCY}"
+  printf '%s\n' "Agent concurrency: ${GICC_MAX_AGENT_CONCURRENCY}"
   printf '%s\n' "Task lifecycle: owned by Sol with final response reconciliation"
-  printf '%s\n' "API retries: ${CLAUDEX_MAX_RETRIES}"
-  printf '%s\n' "Context window: ${CLAUDEX_CONTEXT_WINDOW} tokens"
-  printf '%s\n' "Automatic compaction window: ${CLAUDEX_AUTO_COMPACT_WINDOW} tokens (precompute enabled)"
+  printf '%s\n' "API retries: ${GICC_MAX_RETRIES}"
+  printf '%s\n' "Claude output budget: ${GICC_MAX_OUTPUT_TOKENS} tokens (reasoning continuation enabled)"
+  printf '%s\n' "Context window: ${GICC_CONTEXT_WINDOW} tokens"
+  printf '%s\n' "Automatic compaction window: ${GICC_AUTO_COMPACT_WINDOW} tokens (precompute enabled)"
   printf '%s\n' "Context status: stable session (transient zero suppressed)"
-  printf '%s\n' "Codex usage: status line refresh every ${CLAUDEX_USAGE_REFRESH_SECONDS}s; inspect with /usage-limit or claudex --usage-limit"
-  printf '%s\n' "Usage source: ${CLAUDEX_USAGE_SOURCE} (documented Codex app-server fallback enabled in auto mode)"
-  printf '%s\n' "Low quota alert: ${CLAUDEX_USAGE_ALERT_PERCENT}% remaining (0 disables)"
+  printf '%s\n' "Codex usage: status line refresh every ${GICC_USAGE_REFRESH_SECONDS}s; inspect with /usage-limit or gicc --usage-limit"
+  printf '%s\n' "Usage source: ${GICC_USAGE_SOURCE} (documented Codex app-server fallback enabled in auto mode)"
+  printf '%s\n' "Low quota alert: ${GICC_USAGE_ALERT_PERCENT}% remaining (0 disables)"
   printf '%s\n' 'Effort shortcuts: --max-effort and --ultracode (xhigh plus dynamic workflows)'
   printf '%s\n' 'Claude in Chrome: use --claude-chrome for the direct Anthropic profile required by the extension'
-  printf '%s\n' "Claude Code updates: ${CLAUDEX_CLAUDE_AUTO_UPDATE} (checked every ${CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS}s)"
-  printf '%s\n' "Claudex updates: ${CLAUDEX_AUTO_UPDATE} (checked every ${CLAUDEX_UPDATE_INTERVAL_SECONDS}s; inspect with claudex self-update --status)"
-  printf '%s\n' "Plan mode policy: ${CLAUDEX_PLAN_MODE_POLICY} (implementation first unless planning is genuinely required)"
+  printf '%s\n' "Claude Code updates: ${GICC_CLAUDE_AUTO_UPDATE} (checked every ${GICC_CLAUDE_UPDATE_INTERVAL_SECONDS}s)"
+  printf '%s\n' "GICC updates: ${GICC_AUTO_UPDATE} (checked every ${GICC_UPDATE_INTERVAL_SECONDS}s; inspect with gicc self-update --status)"
+  printf '%s\n' "Plan mode policy: ${GICC_PLAN_MODE_POLICY} (implementation first unless planning is genuinely required)"
   printf '%s\n' "Rendering: stable mode with native terminal cursor"
-  printf '%s\n' "Terminal UI: fullscreen (launch command hidden while Claudex is open)"
+  printf '%s\n' "Terminal UI: fullscreen (launch command hidden while GICC is open)"
   printf '%s\n' "Header model name: $(model_name "$saved_model")"
-  printf '%s\n' "Mouse pointer: ${CLAUDEX_MOUSE_POINTER_SHAPE}"
-  printf '%s\n' "Isolation: Claudex config at ${CLAUDE_CONFIG_DIR}; normal Claude config is untouched"
+  printf '%s\n' "Mouse pointer: ${GICC_MOUSE_POINTER_SHAPE}"
+  printf '%s\n' "Isolation: GICC config at ${CLAUDE_CONFIG_DIR}; normal Claude config is untouched"
 
   for model in gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna; do
     if printf '%s\n' "$models" | jq -e --arg model "$model" \
@@ -2109,7 +2120,7 @@ if [[ "${1:-}" == "--usage-limit" ]]; then
   shift
   usage_helper="$CLAUDE_CONFIG_DIR/usage-limit"
   [[ -x "$usage_helper" ]] || {
-    printf '%s\n' "claudex: usage-limit helper is missing; reinstall Claudex." >&2
+    printf '%s\n' "gicc: usage-limit helper is missing; reinstall GICC." >&2
     exit 1
   }
   exec "$usage_helper" "$@"
@@ -2118,7 +2129,7 @@ fi
 if [[ "${1:-}" == "--accounts" ]]; then
   usage_helper="$CLAUDE_CONFIG_DIR/usage-limit"
   [[ -x "$usage_helper" ]] || {
-    printf '%s\n' "claudex: usage-limit helper is missing; reinstall Claudex." >&2
+    printf '%s\n' "gicc: usage-limit helper is missing; reinstall GICC." >&2
     exit 1
   }
   exec "$usage_helper" --accounts
@@ -2127,21 +2138,21 @@ fi
 if [[ "${1:-}" == "--account" ]]; then
   shift
   [[ $# -eq 1 ]] || {
-    printf '%s\n' "Usage: claudex --account <number|email|filename|auto>" >&2
+    printf '%s\n' "Usage: gicc --account <number|email|filename|auto>" >&2
     exit 2
   }
   usage_helper="$CLAUDE_CONFIG_DIR/usage-limit"
   [[ -x "$usage_helper" ]] || {
-    printf '%s\n' "claudex: usage-limit helper is missing; reinstall Claudex." >&2
+    printf '%s\n' "gicc: usage-limit helper is missing; reinstall GICC." >&2
     exit 1
   }
   exec "$usage_helper" --account "$1"
 fi
 
-start_model="$CLAUDEX_MODEL"
+start_model="$GICC_MODEL"
 start_model_explicit=0
 effort_mode=""
-permission_mode="$CLAUDEX_PERMISSION_MODE"
+permission_mode="$GICC_PERMISSION_MODE"
 direct_chrome=0
 forwarded_args=()
 while (( $# > 0 )); do
@@ -2155,14 +2166,14 @@ while (( $# > 0 )); do
     --accept-edits) permission_mode="acceptEdits" ;;
     --ultracode)
       [[ -z "$effort_mode" || "$effort_mode" == ultracode ]] || {
-        printf '%s\n' 'claudex: --ultracode and --max-effort cannot be combined.' >&2
+        printf '%s\n' 'gicc: --ultracode and --max-effort cannot be combined.' >&2
         exit 2
       }
       effort_mode=ultracode
       ;;
     --max-effort)
       [[ -z "$effort_mode" || "$effort_mode" == max ]] || {
-        printf '%s\n' 'claudex: --ultracode and --max-effort cannot be combined.' >&2
+        printf '%s\n' 'gicc: --ultracode and --max-effort cannot be combined.' >&2
         exit 2
       }
       effort_mode=max
@@ -2175,7 +2186,7 @@ while (( $# > 0 )); do
       break
       ;;
     *)
-      # Claudex-only options form a leading prefix. Once Claude's own
+      # GICC-only options form a leading prefix. Once Claude's own
       # arguments begin, preserve every remaining token byte-for-byte so a
       # prompt or option value such as "--terra" is never consumed by us.
       forwarded_args+=("$@")
@@ -2197,7 +2208,7 @@ if [[ -n "$claude_maintenance_command" ]]; then
   inject_leader_guard=0
   inject_permission=0
   inject_skills=0
-  unset CLAUDEX_PROXY_TOKEN
+  unset GICC_PROXY_TOKEN
   if [[ "$inherited_managed_session" == 1 ]]; then scrub_managed_session_environment; fi
 fi
 if (( parsed_safe_mode )); then
@@ -2215,11 +2226,11 @@ if (( parsed_lifecycle_tools_restricted )); then
 fi
 if (( parsed_permission_option )); then inject_permission=0; fi
 if [[ -n "$effort_mode" ]] && (( parsed_effort_option || parsed_settings_option )); then
-  printf '%s\n' 'claudex: Claude Code --effort/--settings cannot be combined with the selected Claudex effort shortcut.' >&2
+  printf '%s\n' 'gicc: Claude Code --effort/--settings cannot be combined with the selected GICC effort shortcut.' >&2
   exit 2
 fi
 
-# Claude's explicit model option wins over the Claudex default. Normalize the
+# Claude's explicit model option wins over the GICC default. Normalize the
 # aliases that the compatibility bridge registers so readiness checks validate
 # the model Claude Code will actually launch rather than an unused default.
 forwarded_model="$parsed_model_value"
@@ -2228,13 +2239,13 @@ forwarded_fallback_model="$parsed_fallback_model_value"
 forwarded_fallback_model_specified="$parsed_fallback_model_option"
 no_session_persistence="$parsed_no_session_persistence"
 if (( forwarded_model_specified && start_model_explicit )); then
-  printf '%s\n' 'claudex: a Claudex model shortcut cannot be combined with Claude Code --model.' >&2
+  printf '%s\n' 'gicc: a GICC model shortcut cannot be combined with Claude Code --model.' >&2
   exit 2
 fi
 
 if (( direct_chrome )); then
   (( ! start_model_explicit )) || {
-    printf '%s\n' 'claudex: --sol, --terra, --luna, and --solplan cannot be combined with --claude-chrome because Chrome requires a first-party Anthropic model.' >&2
+    printf '%s\n' 'gicc: --sol, --terra, --luna, and --solplan cannot be combined with --claude-chrome because Chrome requires a first-party Anthropic model.' >&2
     exit 2
   }
   use_proxy=0
@@ -2242,21 +2253,21 @@ if (( direct_chrome )); then
   inject_leader_guard=0
   inject_permission=0
   inject_skills=0
-  unset CLAUDEX_PROXY_TOKEN
+  unset GICC_PROXY_TOKEN
   if [[ "$inherited_managed_session" == 1 ]]; then scrub_managed_session_environment; fi
-  if [[ -n "${CLAUDEX_CHROME_CONFIG_DIR:-}" ]]; then
-    export CLAUDE_CONFIG_DIR="$CLAUDEX_CHROME_CONFIG_DIR"
+  if [[ -n "${GICC_CHROME_CONFIG_DIR:-}" ]]; then
+    export CLAUDE_CONFIG_DIR="$GICC_CHROME_CONFIG_DIR"
   else
     unset CLAUDE_CONFIG_DIR
   fi
   scrub_third_party_claude_routing
-  unset CLAUDEX_CHATGPT_PLAN_LABEL
+  unset GICC_CHATGPT_PLAN_LABEL
   unset ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION
   unset ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES
   unset ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES
   unset CLAUDE_CODE_AUTO_MODE_MODEL CLAUDE_CODE_BG_CLASSIFIER_MODEL CLAUDE_CODE_ALWAYS_ENABLE_EFFORT
-  unset CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY CLAUDE_CODE_MAX_RETRIES CLAUDE_CODE_MAX_CONTEXT_TOKENS CLAUDE_CODE_AUTO_COMPACT_WINDOW
-  unset CLAUDE_CODE_DISABLE_1M_CONTEXT CLAUDEX_MODEL_MODE CLAUDEX_SESSION_MODE CLAUDE_CODE_EFFORT_LEVEL
+  unset CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY CLAUDE_CODE_MAX_RETRIES CLAUDE_CODE_MAX_OUTPUT_TOKENS CLAUDE_CODE_MAX_CONTEXT_TOKENS CLAUDE_CODE_AUTO_COMPACT_WINDOW
+  unset CLAUDE_CODE_DISABLE_1M_CONTEXT GICC_MODEL_MODE GICC_SESSION_MODE CLAUDE_CODE_EFFORT_LEVEL
   start_model=""
   # Bash 3.2 (the system Bash on macOS) treats an empty array expansion as an
   # unbound variable under `set -u`; use its compatible conditional expansion.
@@ -2264,11 +2275,11 @@ if (( direct_chrome )); then
 fi
 
 if (( forwarded_model_specified )) && [[ -z "$forwarded_model" ]]; then
-  printf '%s\n' 'claudex: --model requires a model value.' >&2
+  printf '%s\n' 'gicc: --model requires a model value.' >&2
   exit 2
 fi
 if (( forwarded_fallback_model_specified )) && [[ -z "$forwarded_fallback_model" ]]; then
-  printf '%s\n' 'claudex: --fallback-model requires a model value.' >&2
+  printf '%s\n' 'gicc: --fallback-model requires a model value.' >&2
   exit 2
 fi
 if (( use_proxy )) && (( forwarded_model_specified )); then
@@ -2278,17 +2289,17 @@ if (( use_proxy )) && (( forwarded_model_specified )); then
     gpt-5.6-luna|haiku) start_model="gpt-5.6-luna" ;;
     opusplan) start_model="opusplan" ;;
     *)
-      printf 'claudex: --model must select a managed Codex model or alias; got %s.\n' "$forwarded_model" >&2
+      printf 'gicc: --model must select a managed Codex model or alias; got %s.\n' "$forwarded_model" >&2
       exit 2
       ;;
   esac
 fi
-if (( no_session_persistence )); then export CLAUDEX_NO_SESSION_PERSISTENCE=1
-else unset CLAUDEX_NO_SESSION_PERSISTENCE
+if (( no_session_persistence )); then export GICC_NO_SESSION_PERSISTENCE=1
+else unset GICC_NO_SESSION_PERSISTENCE
 fi
 
 chatgpt_plan_label_from_cache() {
-  local cache_file="$claudex_config_dir/usage-cache/limits.json"
+  local cache_file="$gicc_config_dir/usage-cache/limits.json"
   local plan normalized
   [[ -r "$cache_file" ]] || return 1
   plan=$(jq -r '.plan_type // empty' "$cache_file" 2>/dev/null) || return 1
@@ -2309,10 +2320,10 @@ chatgpt_plan_label_from_cache() {
 }
 
 prepare_chatgpt_plan_label() {
-  local usage_helper="$claudex_config_dir/usage-limit"
+  local usage_helper="$gicc_config_dir/usage-limit"
   local plan_label=""
-  unset CLAUDEX_CHATGPT_PLAN_LABEL
-  [[ "${CLAUDEX_INTERACTIVE_TUI:-0}" == 1 ]] || return 0
+  unset GICC_CHATGPT_PLAN_LABEL
+  [[ "${GICC_INTERACTIVE_TUI:-0}" == 1 ]] || return 0
   if ! plan_label=$(chatgpt_plan_label_from_cache); then
     # A stale or malformed snapshot is no more useful than a missing one.
     # Refresh once on startup so a repaired login/account tier is reflected
@@ -2322,24 +2333,24 @@ prepare_chatgpt_plan_label() {
       plan_label=$(chatgpt_plan_label_from_cache 2>/dev/null || true)
     fi
   fi
-  export CLAUDEX_CHATGPT_PLAN_LABEL="${plan_label:-ChatGPT}"
+  export GICC_CHATGPT_PLAN_LABEL="${plan_label:-ChatGPT}"
 }
 
 # The preload provides GPT-specific input aliases and a one-shot welcome label.
 # Never inject it into first-party Claude/Chrome or maintenance commands.
 if (( use_proxy )); then scrub_competing_provider_routing; fi
-readonly claudex_preload="$claudex_config_dir/preload.cjs"
+readonly gicc_preload="$gicc_config_dir/preload.cjs"
 inherited_bun_options="${BUN_OPTIONS:-}"
-escaped_claudex_preload="${claudex_preload// /\\ }"
-managed_preload_option="--preload $escaped_claudex_preload"
+escaped_gicc_preload="${gicc_preload// /\\ }"
+managed_preload_option="--preload $escaped_gicc_preload"
 while [[ "$inherited_bun_options" == "$managed_preload_option" || "$inherited_bun_options" == "$managed_preload_option "* ]]; do
   inherited_bun_options="${inherited_bun_options#"$managed_preload_option"}"
   inherited_bun_options="${inherited_bun_options# }"
 done
-if (( use_proxy )) && [[ -r "$claudex_preload" ]]; then
+if (( use_proxy )) && [[ -r "$gicc_preload" ]]; then
   export BUN_OPTIONS="$managed_preload_option${inherited_bun_options:+ $inherited_bun_options}"
-  if { [[ -t 0 && -t 1 ]] || [[ "${CLAUDEX_TEST_TTY_OUTPUT:-0}" == 1 ]]; }; then export CLAUDEX_INTERACTIVE_TUI=1
-  else unset CLAUDEX_INTERACTIVE_TUI
+  if { [[ -t 0 && -t 1 ]] || [[ "${GICC_TEST_TTY_OUTPUT:-0}" == 1 ]]; }; then export GICC_INTERACTIVE_TUI=1
+  else unset GICC_INTERACTIVE_TUI
   fi
 elif [[ -n "$inherited_bun_options" ]]; then
   export BUN_OPTIONS="$inherited_bun_options"
@@ -2351,7 +2362,7 @@ if (( use_proxy )) || [[ -n "$effort_mode" ]]; then
   load_claude_capabilities
 else
   command -v claude >/dev/null 2>&1 || {
-    printf '%s\n' 'claudex: Claude Code was not found. Install Claude Code and retry.' >&2
+    printf '%s\n' 'gicc: Claude Code was not found. Install Claude Code and retry.' >&2
     exit 1
   }
   claude_help_cache=""
@@ -2359,7 +2370,7 @@ fi
 
 emit_skill_bridge_warnings() {
   local bridge_json="$1" warning_lines warning_count warning_digest
-  local run_dir="$claudex_config_dir/run" state_file
+  local run_dir="$gicc_config_dir/run" state_file
   local now last_time=0 last_digest="" temporary=""
   state_file="$run_dir/skill-warning-state"
   warning_lines=$(printf '%s\n' "$bridge_json" | jq -r '
@@ -2384,9 +2395,9 @@ emit_skill_bridge_warnings() {
       && [[ "$last_digest" == "$warning_digest" ]]; then
     return 0
   fi
-  printf '%s\n' "$warning_lines" | sed -n '1,5{s/^/claudex: skill bridge warning: /;p;}' >&2
+  printf '%s\n' "$warning_lines" | sed -n '1,5{s/^/gicc: skill bridge warning: /;p;}' >&2
   if (( warning_count > 5 )); then
-    printf 'claudex: skill bridge warning: %s additional unique warnings omitted.\n' "$(( warning_count - 5 ))" >&2
+    printf 'gicc: skill bridge warning: %s additional unique warnings omitted.\n' "$(( warning_count - 5 ))" >&2
   fi
   if mkdir -p "$run_dir" 2>/dev/null; then
     temporary=$(mktemp "$run_dir/.skill-warning-state.XXXXXX" 2>/dev/null || true)
@@ -2400,15 +2411,15 @@ emit_skill_bridge_warnings() {
 
 skill_bridge_add_dirs=()
 skill_bridge_plugin_dirs=()
-if (( inject_skills )) && [[ "$CLAUDEX_SKILL_BRIDGE" == on ]]; then
+if (( inject_skills )) && [[ "$GICC_SKILL_BRIDGE" == on ]]; then
   activate_managed_node
-  node_supports_skill_bridge || { printf '%s\n' 'claudex: Node.js 18 or newer is required for Claude and Codex skill compatibility.' >&2; exit 1; }
-  [[ -r "$skill_bridge_helper" ]] || { printf '%s\n' 'claudex: skill bridge helper is missing; reinstall Claudex.' >&2; exit 1; }
+  node_supports_skill_bridge || { printf '%s\n' 'gicc: Node.js 18 or newer is required for Claude and Codex skill compatibility.' >&2; exit 1; }
+  [[ -r "$skill_bridge_helper" ]] || { printf '%s\n' 'gicc: skill bridge helper is missing; reinstall GICC.' >&2; exit 1; }
   skill_bridge_scope_args=()
   if (( parsed_worktree )); then skill_bridge_scope_args+=(--global-only); fi
   skill_bridge_json=$(node "$skill_bridge_helper" sync --project "$PWD" \
     ${skill_bridge_scope_args[@]+"${skill_bridge_scope_args[@]}"}) || {
-    printf '%s\n' 'claudex: skill discovery failed; run `claudex skills` for details.' >&2
+    printf '%s\n' 'gicc: skill discovery failed; run `gicc skills` for details.' >&2
     exit 1
   }
   if ! printf '%s\n' "$skill_bridge_json" | jq -e '
@@ -2418,7 +2429,7 @@ if (( inject_skills )) && [[ "$CLAUDEX_SKILL_BRIDGE" == on ]]; then
       and ((.instructions // []) | type == "array")
       and ((.warnings // []) | type == "array")
     ' >/dev/null 2>&1; then
-    printf '%s\n' 'claudex: skill discovery returned an invalid response; run `claudex skills` for details.' >&2
+    printf '%s\n' 'gicc: skill discovery returned an invalid response; run `gicc skills` for details.' >&2
     exit 1
   fi
   emit_skill_bridge_warnings "$skill_bridge_json"
@@ -2434,11 +2445,11 @@ if (( inject_skills )) && [[ "$CLAUDEX_SKILL_BRIDGE" == on ]]; then
     export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
   fi
   if (( ${#skill_bridge_add_dirs[@]} > 0 )) && ! claude_supports '--add-dir'; then
-    printf '%s\n' 'claudex: this Claude Code build lacks --add-dir, which is required for installed Codex skills; run `claude update`.' >&2
+    printf '%s\n' 'gicc: this Claude Code build lacks --add-dir, which is required for installed Codex skills; run `claude update`.' >&2
     exit 1
   fi
   if (( ${#skill_bridge_plugin_dirs[@]} > 0 )) && ! claude_supports '--plugin-dir'; then
-    printf '%s\n' 'claudex: this Claude Code build lacks --plugin-dir, which is required for installed plugin skills; run `claude update`.' >&2
+    printf '%s\n' 'gicc: this Claude Code build lacks --plugin-dir, which is required for installed plugin skills; run `claude update`.' >&2
     exit 1
   fi
 fi
@@ -2449,7 +2460,7 @@ case "${forwarded_args[0]:-}" in
 esac
 
 if (( use_proxy )); then
-  export CLAUDEX_MANAGED_SESSION=1
+  export GICC_MANAGED_SESSION=1
   ensure_proxy_for_launch "$start_model"
   selected_model_status=0
   launch_model_is_available "$start_model" "$forwarded_fallback_model" || selected_model_status=$?
@@ -2462,11 +2473,11 @@ if (( use_proxy )); then
   fi
   if (( selected_model_status != 0 )); then
     if (( selected_model_status == 44 )); then
-      printf '%s\n' "claudex: selected model '$start_model' and its managed fallbacks are not advertised by the authenticated Codex account." >&2
-      printf '%s\n' 'claudex: choose an available managed model/fallback or run `claudex --doctor` for the full catalog check.' >&2
+      printf '%s\n' "gicc: selected model '$start_model' and its managed fallbacks are not advertised by the authenticated Codex account." >&2
+      printf '%s\n' 'gicc: choose an available managed model/fallback or run `gicc --doctor` for the full catalog check.' >&2
     else
-      printf '%s\n' 'claudex: the local Codex bridge became unavailable while validating the selected model.' >&2
-      printf '%s\n' 'claudex: run `claudex --doctor` and retry.' >&2
+      printf '%s\n' 'gicc: the local Codex bridge became unavailable while validating the selected model.' >&2
+      printf '%s\n' 'gicc: run `gicc --doctor` and retry.' >&2
     fi
     exit 1
   fi
@@ -2477,8 +2488,8 @@ if (( use_proxy )); then
 
   prepare_chatgpt_plan_label
 
-  export ANTHROPIC_BASE_URL="$CLAUDEX_PROXY_URL"
-  export ANTHROPIC_AUTH_TOKEN="$CLAUDEX_PROXY_TOKEN"
+  export ANTHROPIC_BASE_URL="$GICC_PROXY_URL"
+  export ANTHROPIC_AUTH_TOKEN="$GICC_PROXY_TOKEN"
 
 # Map one Claude Code selector alias onto each GPT-5.6 model. Registering the
 # same model through Fable, Opus, and the custom slot creates duplicate rows.
@@ -2502,53 +2513,54 @@ if (( use_proxy )); then
   export ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES="$gpt56_capabilities"
 
 # Claude Code otherwise chooses Sonnet 5 for an external-provider auto mode classifier,
-# which Claudex maps to Terra. Pinning the classifier prevents misleading Terra outages.
-  export CLAUDE_CODE_AUTO_MODE_MODEL="$CLAUDEX_AUTO_MODE_MODEL"
-  export CLAUDE_CODE_BG_CLASSIFIER_MODEL="$CLAUDEX_BACKGROUND_MODEL"
+# which GICC maps to Terra. Pinning the classifier prevents misleading Terra outages.
+  export CLAUDE_CODE_AUTO_MODE_MODEL="$GICC_AUTO_MODE_MODEL"
+  export CLAUDE_CODE_BG_CLASSIFIER_MODEL="$GICC_BACKGROUND_MODEL"
   # Named managed agents carry their own model. Leave an explicit caller model
   # untouched so Claude Code's native routing remains available for every other
   # Agent invocation.
   export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=1
-  export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY="$CLAUDEX_MAX_TOOL_USE_CONCURRENCY"
-  export CLAUDE_CODE_MAX_RETRIES="$CLAUDEX_MAX_RETRIES"
+  export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY="$GICC_MAX_TOOL_USE_CONCURRENCY"
+  export CLAUDE_CODE_MAX_RETRIES="$GICC_MAX_RETRIES"
+  export CLAUDE_CODE_MAX_OUTPUT_TOKENS="$GICC_MAX_OUTPUT_TOKENS"
 
-# Claude Code assumes unknown custom models have a 200k context window. Claudex's
+# Claude Code assumes unknown custom models have a 200k context window. GICC's
 # GPT-5.6 backend supports a larger window, so make the meter accurate and force
 # client-side summarization before the session grows without bound.
-  export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$CLAUDEX_CONTEXT_WINDOW"
-  export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$CLAUDEX_AUTO_COMPACT_WINDOW"
+  export CLAUDE_CODE_MAX_CONTEXT_TOKENS="$GICC_CONTEXT_WINDOW"
+  export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$GICC_AUTO_COMPACT_WINDOW"
   # Claude Code's built-in 1M selector is an Anthropic model feature. Keeping
   # it visible on the Codex bridge can produce a misleading `/model opus 1m`
-  # entry even though Claudex manages its own explicit context window.
+  # entry even though GICC manages its own explicit context window.
   export CLAUDE_CODE_DISABLE_1M_CONTEXT=1
 else
-  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN CLAUDEX_PROXY_TOKEN CLAUDE_CODE_DISABLE_1M_CONTEXT CLAUDEX_CHATGPT_PLAN_LABEL
+  unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN GICC_PROXY_TOKEN CLAUDE_CODE_DISABLE_1M_CONTEXT GICC_CHATGPT_PLAN_LABEL
 fi
 
-export CLAUDEX_USAGE_DISPLAY CLAUDEX_USAGE_REFRESH_SECONDS CLAUDEX_USAGE_TIMEOUT_SECONDS CLAUDEX_USAGE_MAX_STALE_SECONDS
-export CLAUDEX_USAGE_SOURCE CLAUDEX_USAGE_ALERT_PERCENT
+export GICC_USAGE_DISPLAY GICC_USAGE_REFRESH_SECONDS GICC_USAGE_TIMEOUT_SECONDS GICC_USAGE_MAX_STALE_SECONDS
+export GICC_USAGE_SOURCE GICC_USAGE_ALERT_PERCENT
 export CLAUDE_CODE_NO_FLICKER=1
 export CLAUDE_CODE_ACCESSIBILITY=1
 
 # One proxy credential backs all three aliases. Custom agents must not recursively
 # spawn more agents, or a small parallel batch becomes a retry/429 storm.
 readonly no_nested_agents="Do not spawn or delegate to additional agents, or send intermediate progress messages to the parent. Unless you are a teammate in a native Agent Team that the user explicitly requested, do not create, claim, or update entries in a shared task list; ordinary Agent task lifecycle belongs to the Sol leader. Complete the assigned task yourself and return one final result through the normal agent result channel. If the provider reports a 429 or model cooldown, do not launch a replacement agent or start a retry loop."
-readonly claudex_agents="{\"Terra (high)\":{\"description\":\"Terra at high reasoning effort for delegated architecture, debugging, implementation, testing, security review, and other substantial engineering work.\",\"prompt\":\"You are GPT-5.6 Terra running at high reasoning effort. Investigate thoroughly, make robust focused progress, verify the result, and return concise findings backed by evidence. ${no_nested_agents}\",\"model\":\"gpt-5.6-terra\",\"effort\":\"high\"},\"Luna (medium)\":{\"description\":\"Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.\",\"prompt\":\"You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. ${no_nested_agents}\",\"model\":\"gpt-5.6-luna\",\"effort\":\"medium\"}}"
-readonly claudex_capacity_guard="Claudex capacity rule: keep at most ${CLAUDEX_MAX_AGENT_CONCURRENCY} delegated workers active at once across Agent tasks and native Agent Teams. For ordinary delegation, launch no more than ${CLAUDEX_MAX_AGENT_CONCURRENCY} named agents in a wave and wait for one to finish before starting another. Create a native Agent Team only when the user explicitly requests one, and keep its active teammates within the same ${CLAUDEX_MAX_AGENT_CONCURRENCY}-worker limit. Sol capacity is reserved for the leader; use the named Terra (high) or Luna (medium) agents for delegated work. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'. If a model reports a 429 or cooldown, do not launch replacement agents or create a retry storm; continue useful local work and retry at most once after active agents settle."
-readonly claudex_task_guard="Claudex task lifecycle rule: outside an explicitly requested native Agent Team, the Sol leader is the sole owner of the shared task list. Keep it compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while the leader or a currently active agent is working on it; queued or blocked work stays pending. After every agent result, immediately reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done."
-readonly claudex_codex_guard="Claudex Codex model rule: operate as a Codex coding agent inside Claude Code's interface. Treat the available Claude Code tools and their schemas as the authoritative execution protocol. Prefer direct implementation and verification for concrete change requests. Ask as few questions as possible: inspect available context first, make safe reasonable assumptions, and continue without confirmation for routine, reversible work inside the requested scope. Never repeat a question the user already answered. Ask only when the missing answer cannot be discovered and would materially change the result, authorize a meaningful scope expansion, or precede an irreversible action. Treat the user's explicit approval as decisive for the specifically named action and target: after a soft auto mode denial, ask for precise consent only when it is missing, then retry once when the user grants it instead of claiming the denial is permanent. Hard deny security boundaries still apply. Do not invent unsupported provider behavior, do not expose raw internal tool protocol, and keep progress updates concise and based on evidence."
-if [[ "$CLAUDEX_PLAN_MODE_POLICY" == conservative ]]; then
-  readonly claudex_plan_guard="Claudex plan mode rule: remain in the current execution mode by default. Do not call EnterPlanMode or switch into plan permission mode merely because work is large, complex, unfamiliar, or benefits from private reasoning. Enter plan mode only when the user explicitly asks for a planning or design only response, when a required user decision would materially change the implementation, or when the requested action is irreversible and needs approval before execution. For ordinary bug fixes and implementation requests, inspect, implement, test, and report directly."
+readonly gicc_agents="{\"Terra (high)\":{\"description\":\"Terra at high reasoning effort for delegated architecture, debugging, implementation, testing, security review, and other substantial engineering work.\",\"prompt\":\"You are GPT-5.6 Terra running at high reasoning effort. Investigate thoroughly, make robust focused progress, verify the result, and return concise findings backed by evidence. ${no_nested_agents}\",\"model\":\"gpt-5.6-terra\",\"effort\":\"high\"},\"Luna (medium)\":{\"description\":\"Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.\",\"prompt\":\"You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. ${no_nested_agents}\",\"model\":\"gpt-5.6-luna\",\"effort\":\"medium\"}}"
+readonly gicc_capacity_guard="GICC capacity rule: keep at most ${GICC_MAX_AGENT_CONCURRENCY} delegated workers active at once across Agent tasks and native Agent Teams. For ordinary delegation, launch no more than ${GICC_MAX_AGENT_CONCURRENCY} named agents in a wave and wait for one to finish before starting another. Create a native Agent Team only when the user explicitly requests one, and keep its active teammates within the same ${GICC_MAX_AGENT_CONCURRENCY}-worker limit. Sol capacity is reserved for the leader; use the named Terra (high) or Luna (medium) agents for delegated work. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'. If a model reports a 429 or cooldown, do not launch replacement agents or create a retry storm; continue useful local work and retry at most once after active agents settle."
+readonly gicc_task_guard="GICC task lifecycle rule: outside an explicitly requested native Agent Team, the Sol leader is the sole owner of the shared task list. Keep it compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while the leader or a currently active agent is working on it; queued or blocked work stays pending. After every agent result, immediately reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done."
+readonly gicc_codex_guard="GICC Codex model rule: operate as a Codex coding agent inside Claude Code's interface. Treat the available Claude Code tools and their schemas as the authoritative execution protocol. Prefer direct implementation and verification for concrete change requests. Ask as few questions as possible: inspect available context first, make safe reasonable assumptions, and continue without confirmation for routine, reversible work inside the requested scope. Never repeat a question the user already answered. Ask only when the missing answer cannot be discovered and would materially change the result, authorize a meaningful scope expansion, or precede an irreversible action. Treat the user's explicit approval as decisive for the specifically named action and target: after a soft auto mode denial, ask for precise consent only when it is missing, then retry once when the user grants it instead of claiming the denial is permanent. Hard deny security boundaries still apply. Do not invent unsupported provider behavior, do not expose raw internal tool protocol, and keep progress updates concise and based on evidence."
+if [[ "$GICC_PLAN_MODE_POLICY" == conservative ]]; then
+  readonly gicc_plan_guard="GICC plan mode rule: remain in the current execution mode by default. Do not call EnterPlanMode or switch into plan permission mode merely because work is large, complex, unfamiliar, or benefits from private reasoning. Enter plan mode only when the user explicitly asks for a planning or design only response, when a required user decision would materially change the implementation, or when the requested action is irreversible and needs approval before execution. For ordinary bug fixes and implementation requests, inspect, implement, test, and report directly."
 else
-  readonly claudex_plan_guard=""
+  readonly gicc_plan_guard=""
 fi
-readonly claudex_leader_guard="${claudex_capacity_guard}
+readonly gicc_leader_guard="${gicc_capacity_guard}
 
-${claudex_task_guard}
+${gicc_task_guard}
 
-${claudex_codex_guard}
+${gicc_codex_guard}
 
-${claudex_plan_guard}"
+${gicc_plan_guard}"
 
 claude_args=()
 for skill_directory in ${skill_bridge_add_dirs[@]+"${skill_bridge_add_dirs[@]}"}; do
@@ -2558,27 +2570,27 @@ for plugin_directory in ${skill_bridge_plugin_dirs[@]+"${skill_bridge_plugin_dir
   claude_args+=(--plugin-dir "$plugin_directory")
 done
 if (( inject_agents )) && claude_supports '--agents'; then
-  claude_args+=(--agents "$claudex_agents")
+  claude_args+=(--agents "$gicc_agents")
 fi
 if (( inject_leader_guard )) && claude_supports '--append-system-prompt'; then
-  claude_args+=(--append-system-prompt "$claudex_leader_guard")
+  claude_args+=(--append-system-prompt "$gicc_leader_guard")
 fi
 if (( inject_permission )) && claude_supports '--permission-mode'; then
   claude_args+=(--permission-mode "$permission_mode")
 fi
-if (( ! direct_chrome )) && [[ "$settings_file" != "$claudex_config_dir/settings.json" && "$effort_mode" != ultracode ]]; then
+if (( ! direct_chrome )) && [[ "$settings_file" != "$gicc_config_dir/settings.json" && "$effort_mode" != ultracode ]]; then
   claude_args+=(--settings "$settings_file")
 fi
 if (( use_proxy )) && [[ -n "$start_model" ]] && (( ! forwarded_model_specified )); then
   claude_args+=(--model "$start_model")
-  if [[ "$start_model" == opusplan ]]; then export CLAUDEX_MODEL_MODE=solplan; fi
+  if [[ "$start_model" == opusplan ]]; then export GICC_MODEL_MODE=solplan; fi
 elif (( use_proxy && forwarded_model_specified )) && [[ "$start_model" == opusplan ]]; then
-  export CLAUDEX_MODEL_MODE=solplan
+  export GICC_MODEL_MODE=solplan
 fi
 case "$effort_mode" in
   ultracode)
     claude_supports '--effort' || {
-      printf '%s\n' 'claudex: this Claude Code build lacks --effort; run `claude update`.' >&2
+      printf '%s\n' 'gicc: this Claude Code build lacks --effort; run `claude update`.' >&2
       exit 1
     }
     if (( direct_chrome )); then
@@ -2587,21 +2599,21 @@ case "$effort_mode" in
       ultracode_settings=$(jq -c '. + {ultracode: true, workflows: true}' "$settings_file")
     fi
     claude_args+=(--settings "$ultracode_settings" --effort xhigh)
-    export CLAUDEX_SESSION_MODE=ultracode CLAUDE_CODE_EFFORT_LEVEL=xhigh
+    export GICC_SESSION_MODE=ultracode CLAUDE_CODE_EFFORT_LEVEL=xhigh
     ;;
   max)
     claude_supports '--effort' || {
-      printf '%s\n' 'claudex: this Claude Code build lacks --effort; run `claude update`.' >&2
+      printf '%s\n' 'gicc: this Claude Code build lacks --effort; run `claude update`.' >&2
       exit 1
     }
     claude_args+=(--effort max)
-    export CLAUDEX_SESSION_MODE=max CLAUDE_CODE_EFFORT_LEVEL=max
+    export GICC_SESSION_MODE=max CLAUDE_CODE_EFFORT_LEVEL=max
     ;;
 esac
 
 emit_mouse_pointer_shape() {
   local shape="$1"
-  [[ "$CLAUDEX_MOUSE_POINTER_SHAPE" != "off" && -t 1 ]] || return 0
+  [[ "$GICC_MOUSE_POINTER_SHAPE" != "off" && -t 1 ]] || return 0
 
   # Ghostty implements OSC 22 application-controlled mouse pointer shapes.
   printf '\033]22;%s\033\\' "$shape"
@@ -2612,7 +2624,7 @@ claude_pid=""
 claude_signal_exit=0
 claude_signal_name=""
 claude_escalation_pid=""
-emit_mouse_pointer_shape "$CLAUDEX_MOUSE_POINTER_SHAPE"
+emit_mouse_pointer_shape "$GICC_MOUSE_POINTER_SHAPE"
 cleanup_session() {
   emit_mouse_pointer_shape default
   [[ -z "${resume_marker:-}" ]] || rm -f "$resume_marker"
@@ -2636,7 +2648,7 @@ cleanup_session() {
 trap cleanup_session EXIT
 
 rewrite_resume_footer=0
-if { [[ -t 0 && -t 1 ]] || [[ "${CLAUDEX_TEST_TTY_OUTPUT:-0}" == 1 ]]; }; then
+if { [[ -t 0 && -t 1 ]] || [[ "${GICC_TEST_TTY_OUTPUT:-0}" == 1 ]]; }; then
   rewrite_resume_footer=1
   if (( parsed_background )); then rewrite_resume_footer=0; fi
   for argument in ${forwarded_args[@]+"${forwarded_args[@]}"}; do
@@ -2646,7 +2658,7 @@ if { [[ -t 0 && -t 1 ]] || [[ "${CLAUDEX_TEST_TTY_OUTPUT:-0}" == 1 ]]; }; then
   done
 fi
 if (( rewrite_resume_footer )); then
-  resume_marker=$(mktemp "$claudex_config_dir/.resume-start.XXXXXX")
+  resume_marker=$(mktemp "$gicc_config_dir/.resume-start.XXXXXX")
 fi
 
 start_claude() {
@@ -2736,12 +2748,12 @@ if (( rewrite_resume_footer )); then
     session_id="${session_id%.jsonl}"
     if [[ "$session_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
       # Claude Code prints its hardcoded binary name after the JavaScript
-      # runtime has already shut down. Append the authenticated Claudex path;
+      # runtime has already shut down. Append the authenticated GICC path;
       # cursor-up erasure can corrupt wrapped or resized terminal output.
       if (( direct_chrome )); then
-        printf '\nResume this session with Claudex:\nclaudex --claude-chrome --resume %s\n' "$session_id"
+        printf '\nResume this session with GICC:\ngicc --claude-chrome --resume %s\n' "$session_id"
       else
-        printf '\nResume this session with Claudex:\nclaudex --resume %s\n' "$session_id"
+        printf '\nResume this session with GICC:\ngicc --resume %s\n' "$session_id"
       fi
     fi
   fi

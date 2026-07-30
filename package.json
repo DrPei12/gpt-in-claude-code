@@ -1,8 +1,8 @@
 {
-  "name": "claudex-codex",
-  "version": "1.6.2",
+  "name": "gpt-in-claude-code",
+  "version": "0.1.0",
   "private": true,
-  "description": "Cross platform compatibility layer for using Codex GPT and native Claude models through Claude Code",
+  "description": "Run GPT-5.6 Codex models inside Claude Code with isolated auth, persistent sessions, and reasoning continuation",
   "type": "module",
   "files": [
     "docs/",
@@ -14,15 +14,19 @@
     "MAINTAINERS.md",
     "LICENSE",
     "NOTICE.md",
+    "UPSTREAM.md",
+    "patches/",
+    "proxy/",
+    "third_party/",
     "README.md",
     "ROADMAP.md",
     "SECURITY.md",
     "SUPPORT.md",
     "bootstrap.ps1",
     "bootstrap.sh",
-    "claudex",
-    "claudex.cmd",
-    "claudex.ps1",
+    "gicc",
+    "gicc.cmd",
+    "gicc.ps1",
     "codex-session",
     "codex-session.ps1",
     "env.example",
@@ -45,7 +49,8 @@
     "check:skills": "node tests/skill-bridge.test.cjs && node tests/skill-contract.test.cjs && node tests/skill-security.test.cjs",
     "check:package-bootstrap": "node tests/package-bootstrap-signals.test.cjs",
     "check:package-setup-lock": "node tests/package-setup-lock.test.cjs",
-    "test": "npm run check:docs && npm run check:preload && npm run check:skills && npm run check:package-bootstrap && npm run check:package-setup-lock",
+    "check:public-tree": "node scripts/check-public-tree.mjs",
+    "test": "npm run check:docs && npm run check:preload && npm run check:skills && npm run check:package-bootstrap && npm run check:package-setup-lock && npm run check:public-tree",
     "test:all": "bash ./test.sh",
     "build:release": "bash ./scripts/build-release.sh"
   },
@@ -53,7 +58,7 @@
     "node": ">=18"
   },
   "keywords": [
-    "claudex",
+    "gicc",
     "claude-code",
     "codex",
     "openai",
@@ -64,11 +69,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/BeamoINT/Claudex.git"
+    "url": "git+https://github.com/DrPei12/gpt-in-claude-code.git"
   },
   "bugs": {
-    "url": "https://github.com/BeamoINT/Claudex/issues"
+    "url": "https://github.com/DrPei12/gpt-in-claude-code/issues"
   },
-  "homepage": "https://claudex.work",
+  "homepage": "https://github.com/DrPei12/gpt-in-claude-code",
   "license": "MIT"
 }

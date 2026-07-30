@@ -17,17 +17,17 @@ const fixedMtime = 946684800;
 const maximumArchiveBytes = 1024 * 1024 * 1024;
 const executablePaths = new Set([
   'bootstrap.sh',
-  'claudex',
+  'gicc',
   'codex-session',
   'install.sh',
   'install.zsh',
   'self-update',
   'statusline',
   'usage-limit',
-  'bin/claudex-package.mjs',
+  'bin/gicc-package.mjs',
 ]);
 
-if (!/^claudex-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(rootName)) {
+if (!/^gicc-(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(rootName)) {
   throw new Error(`staged release root has an invalid name: ${rootName}`);
 }
 

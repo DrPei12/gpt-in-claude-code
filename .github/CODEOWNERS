@@ -1,14 +1,14 @@
-# The maintainer reviews every change because Claudex touches authentication,
+# The maintainer reviews every change because GICC touches authentication,
 # local credentials, installers, release artifacts, and launchers for every platform.
-* @BeamoINT
+* @DrPei12
 
 # Keep especially sensitive surfaces explicit so future ownership additions do
 # not accidentally remove maintainer review from them.
-/.github/workflows/ @BeamoINT
-/bootstrap.* @BeamoINT
-/install.* @BeamoINT
-/codex-session* @BeamoINT
-/self-update* @BeamoINT
-/scripts/build-release.sh @BeamoINT
-/scripts/check-release-artifacts.sh @BeamoINT
-/SECURITY.md @BeamoINT
+/.github/workflows/ @DrPei12
+/bootstrap.* @DrPei12
+/install.* @DrPei12
+/codex-session* @DrPei12
+/self-update* @DrPei12
+/scripts/build-release.sh @DrPei12
+/scripts/check-release-artifacts.sh @DrPei12
+/SECURITY.md @DrPei12

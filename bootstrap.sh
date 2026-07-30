@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly repository_url="https://github.com/BeamoINT/Claudex"
+readonly repository_url="https://github.com/DrPei12/gpt-in-claude-code"
 readonly latest_url="$repository_url/releases/latest"
 temporary=""
 
 fail() {
-  printf 'Claudex bootstrap: %s\n' "$*" >&2
+  printf 'GICC bootstrap: %s\n' "$*" >&2
   exit 1
 }
 
@@ -15,8 +15,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-command -v curl >/dev/null 2>&1 || fail 'curl is required to download Claudex'
-command -v tar >/dev/null 2>&1 || fail 'tar is required to extract Claudex'
+command -v curl >/dev/null 2>&1 || fail 'curl is required to download GICC'
+command -v tar >/dev/null 2>&1 || fail 'tar is required to extract GICC'
 
 effective_url=$(curl --fail --silent --show-error --location \
   --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 \
@@ -26,10 +26,10 @@ tag=${effective_url##*/}
 [[ "$effective_url" == "$repository_url/releases/tag/$tag" ]] || fail 'the latest-release redirect did not stay on the expected GitHub repository'
 [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || fail "the latest release tag is invalid: $tag"
 version=${tag#v}
-archive_name="claudex-$version.tar.gz"
+archive_name="gicc-$version.tar.gz"
 download_base="$repository_url/releases/download/$tag"
 
-temporary=$(mktemp -d "${TMPDIR:-/tmp}/claudex-bootstrap.XXXXXX")
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/gicc-bootstrap.XXXXXX")
 archive="$temporary/$archive_name"
 checksums="$temporary/SHA256SUMS"
 
@@ -46,11 +46,11 @@ expected=$(awk -v name="$archive_name" '$2 == name && $1 ~ /^[0-9A-Fa-f]+$/ { pr
   fail "SHA256SUMS contains duplicate entries for $archive_name"
 if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$archive" | awk '{print tolower($1)}')
 elif command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$archive" | awk '{print tolower($1)}')
-else fail 'sha256sum or shasum is required to verify the Claudex release'
+else fail 'sha256sum or shasum is required to verify the GICC release'
 fi
 [[ "$actual" == "$expected" ]] || fail "checksum mismatch for $archive_name"
 
-archive_root="claudex-$version"
+archive_root="gicc-$version"
 while IFS= read -r entry; do
   [[ -n "$entry" ]] || continue
   [[ "$entry" != /* && "$entry" != *'\'* ]] || fail "unsafe archive path: $entry"
@@ -64,14 +64,14 @@ fi
 
 tar -xzf "$archive" -C "$temporary" --no-same-owner
 source_root="$temporary/$archive_root"
-for required in package.json install.sh claudex codex-session settings.json; do
+for required in package.json install.sh gicc codex-session settings.json; do
   [[ -f "$source_root/$required" ]] || fail "release archive is missing $required"
 done
 manifest_version=$(awk -F '"' '$2 == "version" { print $4; exit }' "$source_root/package.json")
 [[ "$manifest_version" == "$version" ]] || fail "archive version $manifest_version does not match release $version"
 
-printf 'Installing Claudex %s from its verified GitHub release...\n' "$version"
-if env CLAUDEX_INSTALL_METHOD=archive bash "$source_root/install.sh" "$@"; then status=0
+printf 'Installing GICC %s from its verified GitHub release...\n' "$version"
+if env GICC_INSTALL_METHOD=archive bash "$source_root/install.sh" "$@"; then status=0
 else status=$?
 fi
 exit "$status"

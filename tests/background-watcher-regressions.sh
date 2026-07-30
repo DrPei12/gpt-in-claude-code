@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/claudex-background-watch.XXXXXX")
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/gicc-background-watch.XXXXXX")
 cleanup() {
   local file pid
   for file in "$tmp/auth.pid" "$tmp/proxy.pid" "$tmp/direct.pid"; do
@@ -17,7 +17,7 @@ cleanup() {
 trap cleanup EXIT
 
 home="$tmp/home"
-config="$home/.config/claudex"
+config="$home/.config/gpt-in-claude-code"
 auth_dir="$home/.cli-proxy-api"
 codex_home="$home/.codex"
 bin="$tmp/bin"
@@ -29,9 +29,9 @@ cp "$root/usage-limit" "$config/usage-limit"
 cp "$root/codex-session" "$config/codex-session"
 chmod +x "$config/usage-limit" "$config/codex-session"
 printf '%s\n' \
-  'CLAUDEX_PROXY_TOKEN=background-secret-token' \
-  "CLAUDEX_CODEX_AUTH_DIR=$auth_dir" \
-  'CLAUDEX_SKILL_BRIDGE=off' \
+  'GICC_PROXY_TOKEN=background-secret-token' \
+  "GICC_CODEX_AUTH_DIR=$auth_dir" \
+  'GICC_SKILL_BRIDGE=off' \
   > "$config/env"
 printf '%s\n' '{"auth_mode":"chatgpt","tokens":{"access_token":"initial-access","refresh_token":"initial-refresh","account_id":"initial-account"}}' \
   > "$codex_home/auth.json"
@@ -65,7 +65,7 @@ case "${1:-}" in
   agents)
     [[ "${2:-}" == --json ]] || exit 2
     printf 'BASE=%s AUTH=%s PROXY=%s BEDROCK=%s MANTLE=%s VERTEX=%s FOUNDRY_RESOURCE=%s FOUNDRY_KEY=%s MODEL=%s\n' \
-      "${ANTHROPIC_BASE_URL:-}" "${ANTHROPIC_AUTH_TOKEN:-}" "${CLAUDEX_PROXY_TOKEN:-}" \
+      "${ANTHROPIC_BASE_URL:-}" "${ANTHROPIC_AUTH_TOKEN:-}" "${GICC_PROXY_TOKEN:-}" \
       "${CLAUDE_CODE_USE_BEDROCK:-}" "${ANTHROPIC_BEDROCK_MANTLE_BASE_URL:-}" \
       "${ANTHROPIC_VERTEX_PROJECT_ID:-}" "${ANTHROPIC_FOUNDRY_RESOURCE:-}" \
       "${ANTHROPIC_FOUNDRY_API_KEY:-}" "${ANTHROPIC_MODEL:-}" \
@@ -82,13 +82,13 @@ registry="$tmp/agents.json"
 registry_log="$tmp/agents.log"
 printf '%s\n' '[{"id":"managed-bg-test","state":"working"}]' > "$registry"
 
-HOME="$home" PATH="$bin:$PATH" CODEX_HOME="$codex_home" CLAUDEX_CONFIG_DIR="$config" \
-  CLAUDEX_CURL_BIN="$bin/curl" CLAUDEX_SKIP_AUTO_UPDATE=1 CLAUDEX_TEST_MODE=1 \
-  CLAUDEX_TEST_PROCESS_IDENTITY=background-parent-identity CLAUDEX_AUTH_WATCH_SECONDS=1 \
+HOME="$home" PATH="$bin:$PATH" CODEX_HOME="$codex_home" GICC_CONFIG_DIR="$config" \
+  GICC_CURL_BIN="$bin/curl" GICC_SKIP_AUTO_UPDATE=1 GICC_TEST_MODE=1 \
+  GICC_TEST_PROCESS_IDENTITY=background-parent-identity GICC_AUTH_WATCH_SECONDS=1 \
   FAKE_AGENT_REGISTRY_FILE="$registry" FAKE_AGENT_REGISTRY_LOG="$registry_log" \
-  CLAUDEX_TEST_AUTH_WATCH_PID_FILE="$tmp/auth.pid" CLAUDEX_TEST_PROXY_WATCH_PID_FILE="$tmp/proxy.pid" \
-  CLAUDEX_TEST_AUTH_WATCH_EXIT_FILE="$tmp/auth.exit" CLAUDEX_TEST_PROXY_WATCH_EXIT_FILE="$tmp/proxy.exit" \
-  "$root/claudex" --bg background-lifecycle-test >/dev/null
+  GICC_TEST_AUTH_WATCH_PID_FILE="$tmp/auth.pid" GICC_TEST_PROXY_WATCH_PID_FILE="$tmp/proxy.pid" \
+  GICC_TEST_AUTH_WATCH_EXIT_FILE="$tmp/auth.exit" GICC_TEST_PROXY_WATCH_EXIT_FILE="$tmp/proxy.exit" \
+  "$root/gicc" --bg background-lifecycle-test >/dev/null
 
 for _ in {1..120}; do
   [[ -s "$tmp/auth.pid" && -s "$tmp/proxy.pid" && -s "$registry_log" ]] && break
@@ -108,10 +108,10 @@ fi
 printf '%s\n' '{"auth_mode":"chatgpt","tokens":{"access_token":"background-access","refresh_token":"background-refresh","account_id":"background-account"}}' \
   > "$codex_home/auth.json"
 for _ in {1..120}; do
-  jq -e '.account_id == "background-account"' "$auth_dir/codex-claudex-managed.json" >/dev/null 2>&1 && break
+  jq -e '.account_id == "background-account"' "$auth_dir/codex-gicc-managed.json" >/dev/null 2>&1 && break
   sleep 0.05
 done
-jq -e '.account_id == "background-account"' "$auth_dir/codex-claudex-managed.json" >/dev/null
+jq -e '.account_id == "background-account"' "$auth_dir/codex-gicc-managed.json" >/dev/null
 
 # Session state names and optional metadata are not a discriminator. Every
 # record returned by the managed live-session registry keeps both watchers up.
@@ -142,12 +142,12 @@ done
 # must never route or authenticate the first-party registry query.
 direct_registry_log="$tmp/direct-agents.log"
 printf '%s\n' '[{"id":"direct-managed-session","state":"working"}]' > "$registry"
-CLAUDEX_TEST_MODE=1 CLAUDEX_TEST_PROCESS_IDENTITY=current-process-identity \
-  CLAUDEX_AUTH_WATCH_SECONDS=1 HOME="$home" PATH="$bin:$PATH" CODEX_HOME="$codex_home" \
-  CLAUDEX_CONFIG_DIR="$config" FAKE_AGENT_REGISTRY_FILE="$registry" \
+GICC_TEST_MODE=1 GICC_TEST_PROCESS_IDENTITY=current-process-identity \
+  GICC_AUTH_WATCH_SECONDS=1 HOME="$home" PATH="$bin:$PATH" CODEX_HOME="$codex_home" \
+  GICC_CONFIG_DIR="$config" FAKE_AGENT_REGISTRY_FILE="$registry" \
   FAKE_AGENT_REGISTRY_LOG="$direct_registry_log" CLAUDE_CODE_USE_BEDROCK=1 \
   ANTHROPIC_BASE_URL=https://private.invalid ANTHROPIC_AUTH_TOKEN=private-auth \
-  CLAUDEX_PROXY_TOKEN=private-proxy ANTHROPIC_BEDROCK_MANTLE_BASE_URL=https://mantle.invalid \
+  GICC_PROXY_TOKEN=private-proxy ANTHROPIC_BEDROCK_MANTLE_BASE_URL=https://mantle.invalid \
   ANTHROPIC_VERTEX_PROJECT_ID=private-vertex ANTHROPIC_FOUNDRY_RESOURCE=private-foundry \
   ANTHROPIC_FOUNDRY_API_KEY=private-foundry-key ANTHROPIC_MODEL=private-model \
   "$config/codex-session" watch "$$" stale-parent-identity 1 & direct_watcher=$!
@@ -165,10 +165,10 @@ rm -f "$tmp/direct.pid"
 # A live PID with the wrong start identity is not the launcher's process. The
 # foreground watcher must exit instead of following a reused PID indefinitely.
 printf '%s\n' '[]' > "$registry"
-CLAUDEX_TEST_MODE=1 CLAUDEX_TEST_PROCESS_IDENTITY=current-process-identity \
-  CLAUDEX_AUTH_WATCH_SECONDS=1 CLAUDEX_TEST_AUTH_WATCH_READY_FILE="$tmp/reuse.ready" \
-  CLAUDEX_TEST_AUTH_WATCH_EXIT_FILE="$tmp/reuse.exit" HOME="$home" PATH="$bin:$PATH" \
-  CODEX_HOME="$codex_home" CLAUDEX_CONFIG_DIR="$config" \
+GICC_TEST_MODE=1 GICC_TEST_PROCESS_IDENTITY=current-process-identity \
+  GICC_AUTH_WATCH_SECONDS=1 GICC_TEST_AUTH_WATCH_READY_FILE="$tmp/reuse.ready" \
+  GICC_TEST_AUTH_WATCH_EXIT_FILE="$tmp/reuse.exit" HOME="$home" PATH="$bin:$PATH" \
+  CODEX_HOME="$codex_home" GICC_CONFIG_DIR="$config" \
   "$config/codex-session" watch "$$" stale-parent-identity 0 & reuse_watcher=$!
 for _ in {1..80}; do [[ -e "$tmp/reuse.exit" ]] && break; sleep 0.05; done
 wait "$reuse_watcher"

@@ -1,69 +1,62 @@
-# Claudex
+# GPT in Claude Code (`gicc`)
 
-[![CI](https://github.com/BeamoINT/Claudex/actions/workflows/test.yml/badge.svg)](https://github.com/BeamoINT/Claudex/actions/workflows/test.yml)
-[![CodeQL](https://github.com/BeamoINT/Claudex/actions/workflows/codeql.yml/badge.svg)](https://github.com/BeamoINT/Claudex/actions/workflows/codeql.yml)
-[![Latest release](https://img.shields.io/github/v/release/BeamoINT/Claudex)](https://github.com/BeamoINT/Claudex/releases/latest)
+[![CI](https://github.com/DrPei12/gpt-in-claude-code/actions/workflows/test.yml/badge.svg)](https://github.com/DrPei12/gpt-in-claude-code/actions/workflows/test.yml)
+[![CodeQL](https://github.com/DrPei12/gpt-in-claude-code/actions/workflows/codeql.yml/badge.svg)](https://github.com/DrPei12/gpt-in-claude-code/actions/workflows/codeql.yml)
+[![Latest release](https://img.shields.io/github/v/release/DrPei12/gpt-in-claude-code)](https://github.com/DrPei12/gpt-in-claude-code/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-informational.svg)](docs/installation.md)
 
-Claudex is an open source compatibility layer for using Codex GPT models and
-native Claude models through the Claude Code interface. It reuses the Codex
-login already on your computer, configures the local bridge automatically, and
-keeps native Claude authentication separate. Supported Claude and GPT sessions
-can run at the same time in separate processes.
+GPT in Claude Code is an open source harness that runs GPT-5.6 Codex models
+inside the Claude Code interface. The installed command is `gicc`. It detects
+the official command line tools, guides or installs missing prerequisites,
+opens the official Codex browser login when needed, and keeps all managed state
+separate from normal `claude` and `codex` sessions.
 
 > [!IMPORTANT]
-> Claudex is an independent community project. It is not affiliated with, endorsed by, or supported by OpenAI or Anthropic. Its installer uses the official [Codex CLI](https://developers.openai.com/codex/cli/) npm package and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) installer when either prerequisite is missing. You remain responsible for the terms and usage limits of those services.
+> GICC is an independent community project. It is not affiliated with, endorsed by, or supported by OpenAI or Anthropic. Its installer uses the official [Codex CLI](https://developers.openai.com/codex/cli/) npm package and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) installer when either prerequisite is missing. You remain responsible for the terms and usage limits of those services.
 
 ## Quick start
 
-Install Claudex, then complete the official Codex browser sign in when prompted.
+Install GICC, then complete the official Codex browser sign in when prompted.
 
-### One command source installer
+### One command installer
 
 macOS, Linux, or WSL:
 
 ```bash
-curl -fsSL --proto '=https' --tlsv1.2 https://claudex.work/install.sh | bash
+curl -fsSL --proto '=https' --tlsv1.2 https://raw.githubusercontent.com/DrPei12/gpt-in-claude-code/main/bootstrap.sh | bash
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://claudex.work/install.ps1 | iex
+irm https://raw.githubusercontent.com/DrPei12/gpt-in-claude-code/main/bootstrap.ps1 | iex
 ```
 
-These small website bootstraps resolve the latest stable GitHub release,
+These small GitHub bootstraps resolve the latest stable release,
 validate its published SHA-256 digest and archive paths, and only then run the
-native Claudex installer. The longer download first commands below are useful
-when you want to inspect the bootstrap before running it.
+native installer. Use the longer download commands below if you want to inspect
+the bootstrap before running it.
 
-### Package managers
+During setup, the installer:
 
-```bash
-brew install BeamoINT/tap/claudex       # macOS or Linux
-```
-
-Windows users can also install from the BeamoINT Scoop bucket:
-
-```powershell
-scoop bucket add beamoint https://github.com/BeamoINT/scoop-bucket
-scoop install beamoint/claudex
-```
-
-Then run `claudex --login`. Package installs bootstrap their private managed
-configuration automatically on first use. See the
-[package manager guide](docs/package-managers.md) for upgrades and WinGet
-submission status; WinGet is not currently an installable channel.
+1. Checks Node.js, Claude Code, Codex CLI, and the platform tools used by the
+   harness.
+2. Uses the official Claude Code and Codex installers when a supported
+   prerequisite is missing. If automatic setup is unavailable, it prints the
+   exact missing requirement instead of changing another tool.
+3. Reuses a valid Codex login or opens the official Codex browser authorization
+   flow in an interactive terminal.
+4. Installs the checksum verified GICC reasoning bridge and runs `gicc --doctor`.
 
 ### macOS, Linux, or WSL
 
 ```bash
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-  --output /tmp/claudex-bootstrap.sh \
-  https://raw.githubusercontent.com/BeamoINT/Claudex/main/bootstrap.sh
-bash /tmp/claudex-bootstrap.sh
-claudex
+  --output /tmp/gicc-bootstrap.sh \
+  https://raw.githubusercontent.com/DrPei12/gpt-in-claude-code/main/bootstrap.sh
+bash /tmp/gicc-bootstrap.sh
+gicc
 ```
 
 The bootstrap verifies the latest release archive before running it. The installer
@@ -74,16 +67,16 @@ instruction printed by the installer.
 ### Windows
 
 ```powershell
-Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/BeamoINT/Claudex/main/bootstrap.ps1 -OutFile "$env:TEMP\claudex-bootstrap.ps1"
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\claudex-bootstrap.ps1"
-claudex
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/DrPei12/gpt-in-claude-code/main/bootstrap.ps1 -OutFile "$env:TEMP\gicc-bootstrap.ps1"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\gicc-bootstrap.ps1"
+gicc
 ```
 
-The installer adds the Claudex launcher directory to your user `PATH`. Open a new terminal if the `claudex` command is not immediately available.
+The installer adds the GICC launcher directory to your user `PATH`. Open a new terminal if the `gicc` command is not immediately available.
 
 For release downloads, system requirements, updating, and removal, see the [installation guide](docs/installation.md).
 
-## What Claudex adds
+## What GICC adds
 
 - Automatic authentication through the existing Codex desktop or CLI session,
   including live account switch detection and clear login/logout recovery.
@@ -96,12 +89,19 @@ For release downloads, system requirements, updating, and removal, see the [inst
 - Concurrent Claude and GPT sessions with separate provider environments and
   no shared credential process.
 - Auto, max effort, and Ultracode modes with explicit and separate behavior.
+- Transparent continuation when Codex consumes one output segment with
+  encrypted reasoning before it can produce a visible answer. This fixes the
+  repeated 32000, 64000, and 128000 `max_tokens` failures that a larger Claude
+  Code environment value alone cannot fix.
+- Conservative defaults of one active tool batch and one delegated Agent. The
+  Agent and dynamic workflow features remain available without the earlier
+  request storm behavior.
 - Stable context accounting and automatic compaction near 280k tokens.
 - Codex usage limit reporting in the status line and through `/usage-limit`.
 - Automatic, non destructive discovery of already installed Claude Code and
   Codex skills, including Codex bundled/system skills, project skills, legacy
   Claude commands, and enabled plugin skills, with native `/skill` execution
-  and Codex style `$skill` references inside Claudex.
+  and Codex style `$skill` references inside GICC.
 - The detected ChatGPT subscription tier in the startup banner instead of
   Claude Code's misleading API billing label.
 - Native agent activity labels that include model, reasoning effort, and task,
@@ -114,50 +114,50 @@ For release downloads, system requirements, updating, and removal, see the [inst
 - A clean full screen terminal experience without exposing launch commands or internal tool traffic unnecessarily.
 - An optional direct Claude profile for the officially supported Claude in Chrome path.
 
-Claudex keeps its generated configuration under `~/.config/claudex` and does not replace your normal Claude Code settings. It never commits or bundles your Codex tokens, Claude sessions, prompts, history, or usage data.
+GICC keeps its generated configuration under `~/.config/gpt-in-claude-code` and does not replace your normal Claude Code settings. It never commits or bundles your Codex tokens, Claude sessions, prompts, history, or usage data.
 
 ## Common commands
 
 ```text
-claudex                    Start with Sol and auto mode
-claudex --terra            Start with Terra
-claudex --luna             Start with Luna
-claudex --solplan          Use Sol for planning and Terra for implementation
-claudex --fable            Start native Claude Code with Fable
-claudex --opus             Start native Claude Code with Opus
-claudex --sonnet           Start native Claude Code with Sonnet
-claudex --haiku            Start native Claude Code with Haiku
-claudex --claude-model ID  Start native Claude Code with an alias or full model ID
-claudex --fableplan "TASK"  Let Fable plan read only, then let Terra implement
-claudex --max-effort       Use Claude Code's maximum reasoning effort
-claudex --ultracode        Enable the session-scoped Ultracode workflow
-claudex --manual           Disable automatic permissions for this launch
-claudex --usage-limit      Refresh and display Codex plan limits
-claudex skills             List Claude and Codex skills available in this project
-claudex --accounts         List locally available Codex usage accounts
-claudex --doctor           Check installation, authentication, and models
-claudex --login            Sign in through Codex and synchronize the session
-claudex --logout           Sign out and clear the managed bridge session
-claudex self-update --status  Inspect automatic update state
-claudex self-update --apply   Apply the latest stable release now
-claudex codex ...             Use the native Codex harness
-claudex claude ...            Use the native Claude harness
-claudex --remote-control      Use Claude Remote Control with the direct Anthropic profile
-claudex ultrareview ...       Use Claude Ultrareview with the direct Anthropic profile
-claudex --claude-chrome    Use the direct Claude profile with Chrome support
+gicc                    Start with Sol and auto mode
+gicc --terra            Start with Terra
+gicc --luna             Start with Luna
+gicc --solplan          Use Sol for planning and Terra for implementation
+gicc --fable            Start native Claude Code with Fable
+gicc --opus             Start native Claude Code with Opus
+gicc --sonnet           Start native Claude Code with Sonnet
+gicc --haiku            Start native Claude Code with Haiku
+gicc --claude-model ID  Start native Claude Code with an alias or full model ID
+gicc --fableplan "TASK"  Let Fable plan read only, then let Terra implement
+gicc --max-effort       Use Claude Code's maximum reasoning effort
+gicc --ultracode        Enable the session-scoped Ultracode workflow
+gicc --manual           Disable automatic permissions for this launch
+gicc --usage-limit      Refresh and display Codex plan limits
+gicc skills             List Claude and Codex skills available in this project
+gicc --accounts         List locally available Codex usage accounts
+gicc --doctor           Check installation, authentication, and models
+gicc --login            Sign in through Codex and synchronize the session
+gicc --logout           Sign out and clear the managed bridge session
+gicc self-update --status  Inspect automatic update state
+gicc self-update --apply   Apply the latest stable release now
+gicc codex ...             Use the native Codex harness
+gicc claude ...            Use the native Claude harness
+gicc --remote-control      Use Claude Remote Control with the direct Anthropic profile
+gicc ultrareview ...       Use Claude Ultrareview with the direct Anthropic profile
+gicc --claude-chrome    Use the direct Claude profile with Chrome support
 ```
 
-Inside Claudex, `/model solplan` selects Solplan and `/usage-limit` prints the detailed quota report. Existing Claude and Codex skills can be referenced with `/skill-name` or `$skill-name`; see the [skills guide](docs/skills.md) for discovery and collision behavior. Unknown options and supported Claude Code subcommands are passed through unchanged. See the [usage guide](docs/usage.md) for the complete command reference.
+Inside GICC, `/model solplan` selects Solplan and `/usage-limit` prints the detailed quota report. Existing Claude and Codex skills can be referenced with `/skill-name` or `$skill-name`; see the [skills guide](docs/skills.md) for discovery and collision behavior. Unknown options and supported Claude Code subcommands are passed through unchanged. See the [usage guide](docs/usage.md) for the complete command reference.
 
 The GPT model picker belongs to a managed Codex backed process. Native Claude
 selectors launch a separate first party Claude process and preserve the caller
 owned profile. For complete native argument control, use
-`claudex claude --model MODEL ...`. Open a Claude process and a GPT process in
-separate terminals to use both providers concurrently. Claudex never places
+`gicc claude --model MODEL ...`. Open a Claude process and a GPT process in
+separate terminals to use both providers concurrently. GICC never places
 both providers' credentials or routing variables in one process.
 
-Use `claudex codex ...` for complete native Codex harness access and
-`claudex claude ...` for complete native Claude harness access, subject to the
+Use `gicc codex ...` for complete native Codex harness access and
+`gicc claude ...` for complete native Claude harness access, subject to the
 installed CLI, caller owned provider configuration, account, platform, and
 service entitlements. The
 default GPT backed mode translates only the portable semantics documented in
@@ -186,7 +186,7 @@ requirements.
 | --- | --- |
 | [Documentation index](docs/README.md) | Find the right guide quickly |
 | [Installation](docs/installation.md) | Requirements, setup, updates, and removal |
-| [Package managers](docs/package-managers.md) | Homebrew and Scoop installation; WinGet submission status |
+| [Package channels](docs/package-managers.md) | Current and planned distribution channels |
 | [Usage](docs/usage.md) | Commands, model modes, Chrome, and pass through behavior |
 | [Configuration](docs/configuration.md) | Supported environment variables and settings |
 | [Skills](docs/skills.md) | Existing Claude Code and Codex skill discovery, aliases, and compatibility |
@@ -201,7 +201,7 @@ Project policies and history are in [CONTRIBUTING.md](CONTRIBUTING.md), [GOVERNA
 ## How it works
 
 ```text
-claudex command
+gicc command
     -> managed GPT route: validates Codex, refreshes the loopback bridge,
        and launches an isolated Claude Code profile
     -> native Claude route: removes managed routing and launches the normal
@@ -211,17 +211,24 @@ claudex command
     -> preserves supported Claude Code commands and options on each route
 ```
 
-The installer downloads a pinned [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) release, verifies its published SHA-256 digest, and binds it to `127.0.0.1` on a dedicated port with a generated local key. The dependency is not vendored into this repository and retains its own license. Read the [architecture guide](docs/architecture.md) and [third party notice](NOTICE.md) before changing authentication or proxy behavior.
+The installer downloads a GICC release asset built from pinned
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) source plus the
+public reasoning continuation patch. It verifies the SHA-256 digest and binds
+the service to `127.0.0.1` on a dedicated port with a generated local key. The
+source reference, patch, build inputs, licenses, and asset digests are public in
+the [upstream record](UPSTREAM.md), [patch directory](patches), and
+[bridge manifest](proxy/manifest.json). Read the [architecture guide](docs/architecture.md)
+and [third party notice](NOTICE.md) before changing authentication or proxy behavior.
 
 ## Contributing
 
 Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), which covers local setup, testing, cross platform expectations, pull requests, and the project's no CLA contribution terms. By participating, you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
-- Ask usage questions in [GitHub Discussions](https://github.com/BeamoINT/Claudex/discussions).
-- Report reproducible bugs or propose features with the [issue templates](https://github.com/BeamoINT/Claudex/issues/new/choose).
-- Find approachable work under [`good first issue`](https://github.com/BeamoINT/Claudex/labels/good%20first%20issue) and maintainer supported work under [`help wanted`](https://github.com/BeamoINT/Claudex/labels/help%20wanted).
+- Ask usage questions in [GitHub Discussions](https://github.com/DrPei12/gpt-in-claude-code/discussions).
+- Report reproducible bugs or propose features with the [issue templates](https://github.com/DrPei12/gpt-in-claude-code/issues/new/choose).
+- Find approachable work under [`good first issue`](https://github.com/DrPei12/gpt-in-claude-code/labels/good%20first%20issue) and maintainer supported work under [`help wanted`](https://github.com/DrPei12/gpt-in-claude-code/labels/help%20wanted).
 - Review the [roadmap](ROADMAP.md) before proposing a large change.
-- Report security vulnerabilities privately through [GitHub Security Advisories](https://github.com/BeamoINT/Claudex/security/advisories/new).
+- Report security vulnerabilities privately through [GitHub Security Advisories](https://github.com/DrPei12/gpt-in-claude-code/security/advisories/new).
 
 Run the complete local test suite before opening a pull request:
 
@@ -233,4 +240,4 @@ On Windows, run `./test.ps1` from PowerShell. GitHub Actions repeats the suite o
 
 ## License
 
-Claudex is available under the [MIT License](LICENSE). See [NOTICE.md](NOTICE.md) for project independence, trademark, and third party dependency notices.
+GICC is available under the [MIT License](LICENSE). See [NOTICE.md](NOTICE.md) for project independence, trademark, and third party dependency notices.

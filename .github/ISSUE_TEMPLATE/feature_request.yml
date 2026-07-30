@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a focused improvement to Claudex
+description: Propose a focused improvement to GICC
 title: "[Feature]: "
 labels:
   - enhancement
@@ -15,13 +15,13 @@ body:
       options:
         - label: I searched existing issues and discussions.
           required: true
-        - label: This request is about Claudex rather than an upstream provider entitlement.
+        - label: This request is about GICC rather than an upstream provider entitlement.
           required: true
   - type: textarea
     id: problem
     attributes:
       label: Problem
-      description: What user need or limitation should Claudex address?
+      description: What user need or limitation should GICC address?
     validations:
       required: true
   - type: textarea

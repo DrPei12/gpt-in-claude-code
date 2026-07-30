@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly config_dir="${CLAUDEX_CONFIG_DIR:-$HOME/.config/claudex}"
+readonly config_dir="${GICC_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}"
 readonly receipt_file="$config_dir/install.json"
-readonly update_dir="$config_dir/update/claudex"
+readonly update_dir="$config_dir/update/gicc"
 readonly state_file="$update_dir/state.json"
 readonly lock_dir="$update_dir/lock"
-readonly repository="BeamoINT/Claudex"
+readonly repository="DrPei12/gpt-in-claude-code"
 readonly api_url="https://api.github.com/repos/$repository/releases/latest"
-readonly curl_bin="${CLAUDEX_CURL_BIN:-curl}"
-readonly background="${CLAUDEX_UPDATE_BACKGROUND:-0}"
-readonly interval="${CLAUDEX_UPDATE_INTERVAL_SECONDS:-86400}"
+readonly curl_bin="${GICC_CURL_BIN:-curl}"
+readonly background="${GICC_UPDATE_BACKGROUND:-0}"
+readonly interval="${GICC_UPDATE_INTERVAL_SECONDS:-86400}"
 action="status"
 
-fail() { printf 'claudex self-update: %s\n' "$*" >&2; exit 1; }
+fail() { printf 'gicc self-update: %s\n' "$*" >&2; exit 1; }
 say() { (( background )) || printf '%s\n' "$*"; }
 usage() {
-  printf '%s\n' 'Usage: claudex self-update [--check|--apply|--status]'
+  printf '%s\n' 'Usage: gicc self-update [--check|--apply|--status]'
   printf '%s\n' '  --check   Check the stable release channel without installing.'
   printf '%s\n' '  --apply   Install the newest stable release when available.'
   printf '%s\n' '  --status  Show installed and available versions.'
@@ -35,9 +35,9 @@ while (( $# > 0 )); do
 done
 
 [[ "$interval" =~ ^[0-9]+$ ]] && (( interval >= 3600 && interval <= 2592000 )) || \
-  fail 'CLAUDEX_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000'
+  fail 'GICC_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000'
 command -v jq >/dev/null 2>&1 || fail 'jq is required'
-[[ -r "$receipt_file" ]] || fail "missing install receipt; rerun the Claudex installer: $receipt_file"
+[[ -r "$receipt_file" ]] || fail "missing install receipt; rerun the GICC installer: $receipt_file"
 
 current=$(jq -r 'if (.version | type) == "string" then .version else empty end' "$receipt_file")
 method=$(jq -r 'if (.method | type) == "string" then .method else empty end' "$receipt_file")
@@ -93,13 +93,13 @@ write_state() {
 
 current_shell_pid() {
   local destination="$1"
-  sh -c 'printf "%s\n" "$PPID" > "$1"' claudex-update-pid "$destination"
+  sh -c 'printf "%s\n" "$PPID" > "$1"' gicc-update-pid "$destination"
 }
 
 process_identity() {
   local pid="$1" identity="" stat_line=""
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_PROCESS_IDENTITY:-}" ]]; then
-    printf '%s\n' "$CLAUDEX_TEST_PROCESS_IDENTITY"
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_PROCESS_IDENTITY:-}" ]]; then
+    printf '%s\n' "$GICC_TEST_PROCESS_IDENTITY"
     return 0
   fi
   if [[ -r "/proc/$pid/stat" ]]; then
@@ -169,9 +169,9 @@ legacy_lock_owner_is_valid() {
 
 lock_test_pause() {
   local stage="$1" ready_variable continue_variable ready_file continue_file
-  [[ "${CLAUDEX_TEST_MODE:-0}" == 1 ]] || return 0
-  ready_variable="CLAUDEX_TEST_UPDATE_LOCK_${stage}_READY"
-  continue_variable="CLAUDEX_TEST_UPDATE_LOCK_${stage}_CONTINUE"
+  [[ "${GICC_TEST_MODE:-0}" == 1 ]] || return 0
+  ready_variable="GICC_TEST_UPDATE_LOCK_${stage}_READY"
+  continue_variable="GICC_TEST_UPDATE_LOCK_${stage}_CONTINUE"
   ready_file="${!ready_variable:-}"
   continue_file="${!continue_variable:-}"
   [[ -n "$ready_file" && -n "$continue_file" ]] || return 0
@@ -199,8 +199,8 @@ remove_lock_directory_files() {
 
 publish_lock_file() {
   local source="$1" destination="$2"
-  [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || "${CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE:-0}" != 1 ]] || return 1
-  if [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || "${CLAUDEX_TEST_FORCE_HARDLINK_FAILURE:-0}" != 1 ]]; then
+  [[ "${GICC_TEST_MODE:-0}" != 1 || "${GICC_TEST_FORCE_PUBLICATION_FAILURE:-0}" != 1 ]] || return 1
+  if [[ "${GICC_TEST_MODE:-0}" != 1 || "${GICC_TEST_FORCE_HARDLINK_FAILURE:-0}" != 1 ]]; then
     ln "$source" "$destination" 2>/dev/null && return 0
   fi
   (
@@ -296,7 +296,7 @@ recover_owned_lock_generation() {
   current_nonce=$(read_generation_nonce "$lock_dir")
   [[ -n "$current_nonce" ]] || current_nonce=$(read_lock_field "$lock_dir/owner" nonce)
   if [[ "$current_nonce" == "$expected_nonce" ]] && ! lock_barrier_exists "$lock_dir"; then
-    [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || -z "${CLAUDEX_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE:-}" ]] || : > "$CLAUDEX_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE"
+    [[ "${GICC_TEST_MODE:-0}" != 1 || -z "${GICC_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE:-}" ]] || : > "$GICC_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE"
     return 0
   fi
   if [[ "$current_nonce" == "$expected_nonce" ]]; then remove_owned_lock_generation "$expected_nonce" || true; fi
@@ -320,9 +320,9 @@ release_lock() {
 acquire_lock() {
   local attempt attempt_limit=100 owner_file="$lock_dir/owner" age observed_nonce pid_file owner_pid owner_identity
   local generation_nonce generation_tmp owner_tmp quarantine created_identity current_identity
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && "${CLAUDEX_TEST_UPDATE_LOCK_ATTEMPTS:-}" =~ ^[1-9][0-9]*$ ]] \
-      && (( CLAUDEX_TEST_UPDATE_LOCK_ATTEMPTS <= 100 )); then
-    attempt_limit="$CLAUDEX_TEST_UPDATE_LOCK_ATTEMPTS"
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && "${GICC_TEST_UPDATE_LOCK_ATTEMPTS:-}" =~ ^[1-9][0-9]*$ ]] \
+      && (( GICC_TEST_UPDATE_LOCK_ATTEMPTS <= 100 )); then
+    attempt_limit="$GICC_TEST_UPDATE_LOCK_ATTEMPTS"
   fi
   lock_nonce=""
   mkdir -p "$update_dir"
@@ -337,7 +337,7 @@ acquire_lock() {
     owner_tmp=$(mktemp "$update_dir/.lock-owner.XXXXXX")
     printf '%s\n' "$generation_nonce" > "$generation_tmp"
     # The numeric first line keeps this live owner visible to pre-generation
-    # Claudex releases while keyed fields protect current generation ownership.
+    # GICC releases while keyed fields protect current generation ownership.
     printf '%s\npid=%s\nidentity=%s\nnonce=%s\n' "$owner_pid" "$owner_pid" "$owner_identity" "$generation_nonce" > "$owner_tmp"
     chmod 600 "$generation_tmp" "$owner_tmp" 2>/dev/null || true
     if mkdir "$lock_dir" 2>/dev/null; then
@@ -409,7 +409,7 @@ record_failure() {
   available=""
   [[ -r "$state_file" ]] && available=$(jq -r '.availableVersion // ""' "$state_file" 2>/dev/null || true)
   write_state "$now" "$available" "$message" "$failures" "$next"
-  (( background )) || printf 'claudex self-update: %s\n' "$message" >&2
+  (( background )) || printf 'gicc self-update: %s\n' "$message" >&2
 }
 
 check_release() {
@@ -450,34 +450,34 @@ apply_manager_update() {
   local installed_version manager_wrapper="" candidate
   case "$method" in
     homebrew)
-      command -v brew >/dev/null 2>&1 || fail 'Homebrew is not available; run: brew upgrade claudex'
-      brew upgrade beamoint/tap/claudex
+      command -v brew >/dev/null 2>&1 || fail 'Homebrew is not available; run: brew upgrade gicc'
+      brew upgrade drpei12/tap/gicc
       ;;
     scoop)
-      command -v scoop >/dev/null 2>&1 || fail 'Scoop is not available; run: scoop update claudex'
-      scoop update claudex
+      command -v scoop >/dev/null 2>&1 || fail 'Scoop is not available; run: scoop update gicc'
+      scoop update gicc
       ;;
     winget)
       command -v winget >/dev/null 2>&1 || fail 'WinGet is not available'
-      winget upgrade --id BeamoINT.Claudex --exact --accept-package-agreements --accept-source-agreements
+      winget upgrade --id DrPei12.GICC --exact --accept-package-agreements --accept-source-agreements
       ;;
   esac
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] || continue
-    case "$candidate" in "$bin_dir/claudex"|"$config_dir/package-bin/claudex") continue ;; esac
+    case "$candidate" in "$bin_dir/gicc"|"$config_dir/package-bin/gicc") continue ;; esac
     manager_wrapper="$candidate"
     break
-  done < <(type -a -p claudex 2>/dev/null | awk '!seen[$0]++')
-  [[ -n "$manager_wrapper" ]] || fail 'package manager completed, but its public Claudex wrapper is not available'
+  done < <(type -a -p gicc 2>/dev/null | awk '!seen[$0]++')
+  [[ -n "$manager_wrapper" ]] || fail 'package manager completed, but its public GICC wrapper is not available'
   installed_version=$("$manager_wrapper" --package-version 2>/dev/null || true)
-  [[ "$installed_version" == "$latest" ]] || fail "package manager did not activate expected Claudex $latest; current managed installation was retained"
+  [[ "$installed_version" == "$latest" ]] || fail "package manager did not activate expected GICC $latest; current managed installation was retained"
   "$manager_wrapper" --package-setup
   [[ "$(jq -r '.version // empty' "$receipt_file" 2>/dev/null || true)" == "$latest" ]] || \
     fail 'package setup did not confirm the expected release; current managed installation was retained'
 }
 
 validate_archive() {
-  local archive="$1" expected_root="claudex-$latest/" entry type valid=1 names="$update_dir/names.$$" types="$update_dir/types.$$"
+  local archive="$1" expected_root="gicc-$latest/" entry type valid=1 names="$update_dir/names.$$" types="$update_dir/types.$$"
   tar -tzf "$archive" > "$names" || { rm -f "$names" "$types"; return 1; }
   tar -tvzf "$archive" | awk '{print substr($1,1,1)}' > "$types" || { rm -f "$names" "$types"; return 1; }
   while IFS= read -r entry; do
@@ -495,12 +495,12 @@ validate_archive() {
 backup_managed_files() {
   local destination="$1" path relative existed
   mkdir -p "$destination"
-  for path in "$bin_dir/claudex" "$config_dir/settings.json" "$config_dir/statusline" \
+  for path in "$bin_dir/gicc" "$config_dir/settings.json" "$config_dir/statusline" \
     "$config_dir/usage-limit" "$config_dir/codex-session" "$config_dir/preload.cjs" "$config_dir/skill-bridge.cjs" \
     "$config_dir/self-update" "$config_dir/skills/usage-limit/SKILL.md" "$config_dir/env" "$config_dir/cliproxyapi.yaml" \
     "$config_dir/install.json"; do
     relative=${path#"$config_dir"/}
-    [[ "$relative" != "$path" ]] || relative="launcher/claudex"
+    [[ "$relative" != "$path" ]] || relative="launcher/gicc"
     existed=0
     [[ -e "$path" ]] && existed=1
     printf '%s\t%s\n' "$existed" "$relative" >> "$destination/.manifest"
@@ -514,7 +514,7 @@ restore_managed_files() {
   local source="$1" existed relative target
   [[ -r "$source/.manifest" ]] || return 1
   while IFS=$'\t' read -r existed relative; do
-    if [[ "$relative" == launcher/claudex ]]; then target="$bin_dir/claudex"
+    if [[ "$relative" == launcher/gicc ]]; then target="$bin_dir/gicc"
     else target="$config_dir/$relative"; fi
     if [[ "$existed" == 1 ]]; then
       mkdir -p "$(dirname "$target")"
@@ -526,7 +526,7 @@ restore_managed_files() {
 }
 
 apply_archive_update() {
-  local asset="claudex-$latest.tar.gz" base archive sums expected actual stage backup staged_root shell_entrypoint
+  local asset="gicc-$latest.tar.gz" base archive sums expected actual stage backup staged_root shell_entrypoint
   base="https://github.com/$repository/releases/download/v$latest"
   archive="$update_dir/$asset.$$"; sums="$update_dir/SHA256SUMS.$$"; stage="$update_dir/stage.$$"; backup="$update_dir/rollback.$$"
   rm -rf "$archive" "$sums" "$stage" "$backup"
@@ -539,11 +539,11 @@ apply_archive_update() {
   [[ "$actual" == "$expected" ]] || { rm -f "$archive" "$sums"; fail 'release archive checksum mismatch; current installation was not changed'; }
   validate_archive "$archive" || { rm -f "$archive" "$sums"; fail 'release archive contains unsafe paths or file types'; }
   mkdir -p "$stage"; tar -xzf "$archive" -C "$stage"
-  staged_root="$stage/claudex-$latest"
+  staged_root="$stage/gicc-$latest"
   [[ -x "$staged_root/install.sh" ]] || { rm -rf "$archive" "$sums" "$stage"; fail 'release archive is missing its installer'; }
   [[ -r "$staged_root/skill-bridge.cjs" ]] || { rm -rf "$archive" "$sums" "$stage"; fail 'release archive is missing its skill bridge'; }
   [[ "$(jq -r '.version // empty' "$staged_root/package.json")" == "$latest" ]] || { rm -rf "$archive" "$sums" "$stage"; fail 'release archive version does not match its tag'; }
-  for shell_entrypoint in bootstrap.sh install.sh claudex codex-session self-update statusline usage-limit; do
+  for shell_entrypoint in bootstrap.sh install.sh gicc codex-session self-update statusline usage-limit; do
     [[ -f "$staged_root/$shell_entrypoint" ]] \
       && bash -n "$staged_root/$shell_entrypoint" \
       || { rm -rf "$archive" "$sums" "$stage"; fail "release shell entrypoint failed validation: $shell_entrypoint"; }
@@ -557,8 +557,8 @@ apply_archive_update() {
     fail 'release skill bridge failed Node.js syntax validation'
   fi
   backup_managed_files "$backup"
-  if ! CLAUDEX_INSTALL_METHOD=archive CLAUDEX_BIN_DIR="$bin_dir" CLAUDEX_SKIP_DEPENDENCY_INSTALL=1 \
-      CLAUDEX_SKIP_SERVICE_START=1 CLAUDEX_SKIP_CLAUDE_UPDATE=1 bash "$staged_root/install.sh"; then
+  if ! GICC_INSTALL_METHOD=archive GICC_BIN_DIR="$bin_dir" GICC_SKIP_DEPENDENCY_INSTALL=1 \
+      GICC_SKIP_SERVICE_START=1 GICC_SKIP_CLAUDE_UPDATE=1 bash "$staged_root/install.sh"; then
     restore_managed_files "$backup"
     rm -rf "$archive" "$sums" "$stage" "$backup"
     fail 'installer failed; restored the previous managed files'
@@ -577,15 +577,15 @@ case "$action" in
     if [[ -r "$state_file" ]]; then
       available=$(jq -r '.availableVersion // ""' "$state_file"); error=$(jq -r '.lastError // ""' "$state_file"); checked=$(jq -r '.lastCheckedAt // 0' "$state_file")
     fi
-    printf 'Claudex: %s\nInstall method: %s\n' "$current" "$method"
+    printf 'GICC: %s\nInstall method: %s\n' "$current" "$method"
     [[ -z "$available" ]] || printf 'Available: %s\n' "$available"
     (( checked == 0 )) || printf 'Last checked: %s\n' "$checked"
     [[ -z "$error" ]] || printf 'Last update error: %s\n' "$error"
     ;;
   check)
     if check_release; then
-      if [[ -n "${latest:-}" ]]; then say "Claudex $latest is available. Run: claudex self-update --apply"
-      else say "Claudex $current is up to date."; fi
+      if [[ -n "${latest:-}" ]]; then say "GICC $latest is available. Run: gicc self-update --apply"
+      else say "GICC $current is up to date."; fi
     else
       result=$?; (( result == 3 )) || exit "$result"
     fi
@@ -600,13 +600,13 @@ case "$action" in
       (( check_result == 3 )) && exit 0
       exit "$check_result"
     fi
-    state_available || { say "Claudex $current is up to date."; exit 0; }
+    state_available || { say "GICC $current is up to date."; exit 0; }
     case "$method" in
       homebrew|scoop|winget) apply_manager_update ;;
       archive|git) apply_archive_update ;;
     esac
     applied="$latest"; current="$latest"
     now=$(date +%s); write_state "$now" "" "" 0 $(( now + interval )) "$applied"
-    say "Updated Claudex to $applied. New sessions will use the updated release."
+    say "Updated GICC to $applied. New sessions will use the updated release."
     ;;
 esac

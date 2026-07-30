@@ -1,4 +1,4 @@
-# Claudex documentation
+# GICC documentation
 
 This directory contains the detailed documentation for users, contributors,
 and maintainers.

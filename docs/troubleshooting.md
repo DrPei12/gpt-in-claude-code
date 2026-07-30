@@ -3,14 +3,14 @@
 Start with:
 
 ```text
-claudex --auth-status
-claudex --doctor
+gicc --auth-status
+gicc --doctor
 ```
 
 Do not paste real credentials, `auth.json`, generated proxy keys, prompts,
 session IDs, or unsanitized private paths into an issue.
 
-## `claudex: missing .../env`
+## `gicc: missing .../env`
 
 The launcher is installed without its matching private configuration. Rerun the
 installer from the latest release. Do not create a token by hand unless you are
@@ -21,79 +21,79 @@ developing a controlled custom installation.
 Run:
 
 ```text
-claudex --login
+gicc --login
 ```
 
-Claudex uses Codex's official ChatGPT sign in. If `codex login status` succeeds
-but no standard `auth.json` exists, `claudex --login` requests file backed
-credential storage. Claudex does not scrape the OS keyring.
+GICC uses Codex's official ChatGPT sign in. If `codex login status` succeeds
+but no standard `auth.json` exists, `gicc --login` requests file backed
+credential storage. GICC does not scrape the OS keyring.
 
-When a normal interactive Claudex launch detects that this session is missing,
+When a normal interactive GICC launch detects that this session is missing,
 it explains the problem, opens Codex's official browser sign in once, and
 retries synchronization. CI, redirected/noninteractive launches, and background
-recovery watchers never open a browser; use `claudex --login` interactively
+recovery watchers never open a browser; use `gicc --login` interactively
 before rerunning those jobs.
 
-If the Codex CLI itself is missing, rerun the Claudex installer. It installs
+If the Codex CLI itself is missing, rerun the GICC installer. It installs
 Node.js/npm through a supported system package manager when necessary and then
 installs OpenAI's official `@openai/codex` package into the user launcher
 directory. Noninteractive installations never start a browser login; run
-`claudex --login` afterward.
+`gicc --login` afterward.
 
 ## Model is not advertised
 
-Run `claudex --doctor`. The signed in account must advertise Sol, Terra, and
-Luna. Sign into the intended Codex account, update Codex and Claudex, and try
-again. Claudex will not silently map an unavailable model to a different one.
+Run `gicc --doctor`. The signed in account must advertise Sol, Terra, and
+Luna. Sign into the intended Codex account, update Codex and GICC, and try
+again. GICC will not silently map an unavailable model to a different one.
 
-Temporary provider outages and cooldowns are upstream conditions. Claudex
+Temporary provider outages and cooldowns are upstream conditions. GICC
 bounds retries and agent concurrency to avoid turning them into retry storms.
 The managed bridge retries transient upstream 500/502/503/504 responses before
 Claude Code sees them, including failures before the first stream byte. A red
 API error that remains after those bounded retries is a persistent failure and
 is intentionally still shown.
 When Codex reports an exhausted model quota, run `/usage-limit` to inspect the
-reset window or select another signed in account. Claudex deliberately leaves
+reset window or select another signed in account. GICC deliberately leaves
 terminal and machine output byte for byte native, so the bridge's technical
 cooldown wording can remain visible for a genuine quota exhaustion. If you sign
-into another account in Codex Desktop or the Codex CLI, the running Claudex
+into another account in Codex Desktop or the Codex CLI, the running GICC
 session follows that account automatically; press Continue after the new
 sign in completes.
 
 ## Native Claude model is unavailable
 
 `--fable`, `--opus`, `--sonnet`, and `--haiku` use the installed Claude Code
-CLI and caller owned Claude profile. Check the direct route without Claudex model
+CLI and caller owned Claude profile. Check the direct route without GICC model
 translation:
 
 ```bash
-claudex claude --model fable --print "Reply with OK"
+gicc claude --model fable --print "Reply with OK"
 ```
 
 If the CLI rejects that alias or model ID, update Claude Code and verify the
-Anthropic sign in, plan, region, and model entitlement. Claudex forwards exact
+Anthropic sign in, plan, region, and model entitlement. GICC forwards exact
 IDs through `--claude-model MODEL` but never substitutes another Claude model.
-Codex authentication and `claudex --doctor` do not prove native Claude access.
+Codex authentication and `gicc --doctor` do not prove native Claude access.
 
 ## Fableplan does not start Terra
 
 Fableplan fails closed when native Fable exits unsuccessfully or returns an
 empty, oversized, invalid UTF-8, or NUL containing plan. Read the planner error,
-then verify native Fable with `claudex --fable --print "Plan this task"`.
+then verify native Fable with `gicc --fable --print "Plan this task"`.
 Fableplan requires one quoted nonempty task string. Terra does not start after
 a planning failure, and the private transfer file is removed during cleanup.
 
 ## Local proxy does not become healthy
 
-An open Claudex session automatically restarts a proxy that exits unexpectedly.
+An open GICC session automatically restarts a proxy that exits unexpectedly.
 The recovery is shared across tabs and normally completes within the client's
 bounded retry window. If `ConnectionRefused` persists:
 
 1. Confirm no unrelated process is using port 8318.
 2. Rerun the installer so the pinned compatibility binary and config are
    restored.
-3. Check the sanitized logs under `~/.config/claudex/logs`.
-4. Run `claudex --doctor` again.
+3. Check the sanitized logs under `~/.config/gpt-in-claude-code/logs`.
+4. Run `gicc --doctor` again.
 
 Do not expose the generated proxy port to the network.
 
@@ -104,14 +104,14 @@ apk. If the package manager requires elevation, the installer uses `sudo`.
 
 ## The model picker has duplicates or stale labels
 
-Close Claudex and start a new session. The launcher reconciles managed entries
+Close GICC and start a new session. The launcher reconciles managed entries
 in its isolated `.claude.json` on every launch. If the issue persists, update
-Claudex and rerun the installer.
+GICC and rerun the installer.
 
 ## The status line briefly shows no context percentage
 
 A brand new session intentionally omits a zero value until Claude Code reports
-real usage. During compaction, Claudex retains the last trustworthy value for
+real usage. During compaction, GICC retains the last trustworthy value for
 that session. It should never flash a misleading `0%` and then jump back.
 
 ## Usage limits are missing or stale
@@ -119,16 +119,16 @@ that session. It should never flash a misleading `0%` and then jump back.
 Run:
 
 ```text
-claudex --usage-limit
+gicc --usage-limit
 ```
 
-If the live request fails, Claudex displays a recent sanitized cache when it is
-within the configured maximum age. Check `CLAUDEX_USAGE_SOURCE`, network
+If the live request fails, GICC displays a recent sanitized cache when it is
+within the configured maximum age. Check `GICC_USAGE_SOURCE`, network
 connectivity, and Codex login. Selecting another account clears the old cache.
 
 ## Claude in Chrome does not connect
 
-Use `claudex --claude-chrome`, not a model selector combined with `--chrome`.
+Use `gicc --claude-chrome`, not a model selector combined with `--chrome`.
 The direct command intentionally uses the normal first party Claude profile.
 Browser support, extension versions, subscription plans, and sign in are
 controlled by Anthropic. WSL and unsupported Chromium variants may not work.
@@ -137,12 +137,12 @@ controlled by Anthropic. WSL and unsupported Chromium variants may not work.
 
 Confirm that the terminal supports alternate screen/fullscreen applications
 and that accessibility or reduced motion settings are not forcing a different
-rendering mode. Run the latest Claude Code and Claudex releases. Include the
+rendering mode. Run the latest Claude Code and GICC releases. Include the
 terminal name and version in a sanitized bug report.
 
-Claudex leaves interactive fullscreen cursor and redraw frames byte for byte
+GICC leaves interactive fullscreen cursor and redraw frames byte for byte
 native. If the bottom input or status area is clipped after upgrading, close
-the older running session and start a new `claudex` session so the updated
+the older running session and start a new `gicc` session so the updated
 preload is active. On narrow terminals, the status line intentionally removes
 lower priority quota and effort details rather than wrapping into the input
 area.
@@ -162,12 +162,12 @@ administrator.
 ## Windows reports a missing Codex PowerShell shim
 
 The official Codex npm installation provides `codex.cmd` and `codex.ps1`
-together. Claudex does not run a batch shim by itself because Windows
+together. GICC does not run a batch shim by itself because Windows
 PowerShell 5.1 can change quoted Codex configuration arguments at that
-boundary. Rerun the documented Claudex installer so it repairs the official
+boundary. Rerun the documented GICC installer so it repairs the official
 `@openai/codex` installation, then retry the command.
 
 ## Still stuck
 
 Read [SUPPORT.md](../SUPPORT.md) and open the appropriate discussion or issue.
-Include a minimal reproduction and sanitized `claudex --doctor` output.
+Include a minimal reproduction and sanitized `gicc --doctor` output.

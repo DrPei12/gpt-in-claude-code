@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in Claudex
+description: Report a reproducible problem in GICC
 title: "[Bug]: "
 labels:
   - bug
@@ -7,13 +7,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Claudex. Search existing issues first. Never include OAuth tokens, `auth.json`, generated proxy keys, prompts, session IDs, or unsanitized private paths.
+        Thanks for helping improve GICC. Search existing issues first. Never include OAuth tokens, `auth.json`, generated proxy keys, prompts, session IDs, or unsanitized private paths.
   - type: checkboxes
     id: prerequisites
     attributes:
       label: Before submitting
       options:
-        - label: I updated to the latest Claudex release and reran the installer.
+        - label: I updated to the latest GICC release and reran the installer.
           required: true
         - label: I searched existing issues and discussions.
           required: true
@@ -80,7 +80,7 @@ body:
     id: doctor
     attributes:
       label: Sanitized doctor output
-      description: Paste relevant output from `claudex --doctor` after removing private data.
+      description: Paste relevant output from `gicc --doctor` after removing private data.
       render: text
   - type: textarea
     id: context

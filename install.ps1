@@ -16,14 +16,15 @@ function Get-AbsoluteInstallDirectory([string] $Value, [string] $VariableName) {
 }
 
 $root = $PSScriptRoot
-$proxyVersion = '7.2.80'
-$requestedBinDir = if ($env:CLAUDEX_BIN_DIR) { $env:CLAUDEX_BIN_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
-$requestedConfigDir = if ($env:CLAUDEX_CONFIG_DIR) { $env:CLAUDEX_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\claudex' }
-$binDir = Get-AbsoluteInstallDirectory $requestedBinDir 'CLAUDEX_BIN_DIR'
-$configDir = Get-AbsoluteInstallDirectory $requestedConfigDir 'CLAUDEX_CONFIG_DIR'
+$proxyVersion = '7.2.91-gicc.1'
+$proxyRelease = 'v0.1.0'
+$requestedBinDir = if ($env:GICC_BIN_DIR) { $env:GICC_BIN_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
+$requestedConfigDir = if ($env:GICC_CONFIG_DIR) { $env:GICC_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\gpt-in-claude-code' }
+$binDir = Get-AbsoluteInstallDirectory $requestedBinDir 'GICC_BIN_DIR'
+$configDir = Get-AbsoluteInstallDirectory $requestedConfigDir 'GICC_CONFIG_DIR'
 $managedBinDir = Join-Path $configDir 'bin'
 $managedNodeDir = Join-Path $configDir 'node'
-$managedProxy = Join-Path $managedBinDir "cliproxyapi-$proxyVersion.exe"
+$managedProxy = Join-Path $managedBinDir "gicc-proxy-$proxyVersion.exe"
 $authDir = Join-Path $configDir 'codex-accounts'
 $envFile = Join-Path $configDir 'env'
 $settingsTarget = Join-Path $configDir 'settings.json'
@@ -38,21 +39,21 @@ $installReceiptTarget = Join-Path $configDir 'install.json'
 $proxyConfigTarget = Join-Path $configDir 'cliproxyapi.yaml'
 $runDir = Join-Path $configDir 'run'
 $usageCacheDir = Join-Path $configDir 'usage-cache'
-$launcherTarget = Join-Path $binDir 'claudex.ps1'
-$cmdTarget = Join-Path $binDir 'claudex.cmd'
-$proxyPortText = if ($env:CLAUDEX_PROXY_PORT) { $env:CLAUDEX_PROXY_PORT } else { '8318' }
-$skipDependencies = $env:CLAUDEX_SKIP_DEPENDENCY_INSTALL -eq '1'
-$allowNodeMigration = -not $skipDependencies -or $env:CLAUDEX_ALLOW_NODE_INSTALL -eq '1'
-$skipService = $env:CLAUDEX_SKIP_SERVICE_START -eq '1'
+$launcherTarget = Join-Path $binDir 'gicc.ps1'
+$cmdTarget = Join-Path $binDir 'gicc.cmd'
+$proxyPortText = if ($env:GICC_PROXY_PORT) { $env:GICC_PROXY_PORT } else { '8318' }
+$skipDependencies = $env:GICC_SKIP_DEPENDENCY_INSTALL -eq '1'
+$allowNodeMigration = -not $skipDependencies -or $env:GICC_ALLOW_NODE_INSTALL -eq '1'
+$skipService = $env:GICC_SKIP_SERVICE_START -eq '1'
 $utf8 = New-Object Text.UTF8Encoding($false)
-$callerProxyUrlSet = Test-Path Env:CLAUDEX_PROXY_URL
-$callerProxyUrl = [string] $env:CLAUDEX_PROXY_URL
-$callerProxyPortSet = Test-Path Env:CLAUDEX_PROXY_PORT
+$callerProxyUrlSet = Test-Path Env:GICC_PROXY_URL
+$callerProxyUrl = [string] $env:GICC_PROXY_URL
+$callerProxyPortSet = Test-Path Env:GICC_PROXY_PORT
 $installLockOwned = $false
 $installLockNonce = ''
 $codexInstalledBinDir = ''
 $claudeInstalledBinDir = ''
-$packageManagedInstall = $env:CLAUDEX_PACKAGE_ROOT -or $env:CLAUDEX_INSTALL_METHOD -in @('homebrew', 'scoop', 'winget')
+$packageManagedInstall = $env:GICC_PACKAGE_ROOT -or $env:GICC_INSTALL_METHOD -in @('homebrew', 'scoop', 'winget')
 $installTransaction = $null
 $userPathBeforeInstall = [Environment]::GetEnvironmentVariable('Path', 'User')
 $isWindowsPlatform = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
@@ -67,9 +68,9 @@ function Protect-PrivatePath([string] $Path, [bool] $Directory) {
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     $security = if ($Directory) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
     $security.SetOwner($currentSid)
-    # A caller may deliberately place CLAUDEX_CONFIG_DIR below a directory with
+    # A caller may deliberately place GICC_CONFIG_DIR below a directory with
     # broad inherited access. Do not carry any of those inherited entries into
-    # secret state or executable/interpreted files managed by Claudex.
+    # secret state or executable/interpreted files managed by GICC.
     $security.SetAccessRuleProtection($true, $false)
     $inheritance = if ($Directory) {
         [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
@@ -85,7 +86,8 @@ function Protect-PrivatePath([string] $Path, [bool] $Directory) {
         )
         [void] $security.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $Path -AclObject $security
+    # FileSystemInfo stays idempotent when the DACL is already protected.
+    (Get-Item -LiteralPath $Path -Force).SetAccessControl($security)
 }
 
 function Ensure-PrivateDirectory([string] $Path) {
@@ -154,7 +156,7 @@ function Write-TextAtomic([string] $Path, [string] $Value) {
     }
 }
 
-function ConvertFrom-ClaudexEnvValue([string] $Value) {
+function ConvertFrom-GICCEnvValue([string] $Value) {
     $parsed = $Value.Trim()
     if ($parsed.Length -ge 2 -and (($parsed.StartsWith("'") -and $parsed.EndsWith("'")) -or ($parsed.StartsWith('"') -and $parsed.EndsWith('"')))) {
         $parsed = $parsed.Substring(1, $parsed.Length - 2)
@@ -162,10 +164,10 @@ function ConvertFrom-ClaudexEnvValue([string] $Value) {
     return ($parsed -replace '\\ ', ' ')
 }
 
-function ConvertTo-ClaudexEnvLine([string] $Name, [string] $Value) {
+function ConvertTo-GICCEnvLine([string] $Name, [string] $Value) {
     if ($Value.Contains("`r") -or $Value.Contains("`n")) { Fail "$Name contains an unsupported newline" }
-    if ((ConvertFrom-ClaudexEnvValue $Value) -cne $Value) {
-        Fail "$Name cannot be represented exactly in the cross-platform Claudex environment file"
+    if ((ConvertFrom-GICCEnvValue $Value) -cne $Value) {
+        Fail "$Name cannot be represented exactly in the cross-platform GICC environment file"
     }
     return "$Name=$Value"
 }
@@ -197,8 +199,8 @@ function Install-ManagedNode {
     $temporary = Join-Path $configDir ('.node-install-' + [guid]::NewGuid().ToString('N'))
     Ensure-PrivateDirectory $temporary
     try {
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_MANAGED_NODE_DIR) {
-            $source = $env:CLAUDEX_TEST_MANAGED_NODE_DIR
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_MANAGED_NODE_DIR) {
+            $source = $env:GICC_TEST_MANAGED_NODE_DIR
             if (-not (Test-Path -LiteralPath (Join-Path $source 'node.exe') -PathType Leaf) -or
                 -not (Test-Path -LiteralPath (Join-Path $source 'npm.cmd') -PathType Leaf)) {
                 Fail 'managed Node test fixture is incomplete'
@@ -258,9 +260,9 @@ function Invoke-DependencyManager([string] $Executable, [string[]] $Arguments) {
 function Install-NodeAndNpm {
     $existingMajor = Get-NodeMajorVersion
     if ($existingMajor -gt 0) {
-        [Console]::WriteLine("Upgrading Node.js $existingMajor to Node.js 18 or newer for Claudex skill compatibility...")
+        [Console]::WriteLine("Upgrading Node.js $existingMajor to Node.js 18 or newer for GICC skill compatibility...")
     } else {
-        [Console]::WriteLine('Installing Node.js 18 or newer for Claudex skill compatibility and the official Codex CLI package...')
+        [Console]::WriteLine('Installing Node.js 18 or newer for GICC skill compatibility and the official Codex CLI package...')
     }
     $winget = Get-Command winget -ErrorAction SilentlyContinue
     $choco = Get-Command choco -ErrorAction SilentlyContinue
@@ -352,7 +354,7 @@ function Acquire-InstallLock {
         }
         Start-Sleep -Milliseconds 100
     }
-    Fail 'timed out waiting for another Claudex installation; retry after it finishes'
+    Fail 'timed out waiting for another GICC installation; retry after it finishes'
 }
 
 function Release-InstallLock {
@@ -473,7 +475,7 @@ function Recover-IncompleteInstallTransactions([string[]] $ManagedPaths) {
         if ($restoreErrors.Count -gt 0) { Fail "could not recover interrupted installer transaction: $($restoreErrors -join '; ')" }
         $recovered = $true
     }
-    if ($recovered) { [Console]::WriteLine('Recovered the previous interrupted Claudex installation before continuing.') }
+    if ($recovered) { [Console]::WriteLine('Recovered the previous interrupted GICC installation before continuing.') }
 }
 
 function Complete-InstallTransaction {
@@ -492,16 +494,16 @@ function Complete-InstallTransaction {
 }
 
 function Test-InteractiveInstall {
-    return $env:CLAUDEX_TEST_INTERACTIVE_INSTALL -eq '1' -or
+    return $env:GICC_TEST_INTERACTIVE_INSTALL -eq '1' -or
         ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected)
 }
 
 $proxyPort = 0
 if (-not [int]::TryParse($proxyPortText, [ref] $proxyPort) -or $proxyPort -lt 1 -or $proxyPort -gt 65535) {
-    Fail 'CLAUDEX_PROXY_PORT must be an integer from 1 to 65535'
+    Fail 'GICC_PROXY_PORT must be an integer from 1 to 65535'
 }
 
-foreach ($sourceFile in @('claudex.ps1', 'claudex.cmd', 'codex-session.ps1', 'statusline.ps1', 'usage-limit.ps1', 'preload.cjs', 'skill-bridge.cjs', 'self-update.ps1', 'package.json', 'settings.json', 'skills\usage-limit\SKILL.md', 'skills\usage-limit\SKILL.windows.md')) {
+foreach ($sourceFile in @('gicc.ps1', 'gicc.cmd', 'codex-session.ps1', 'statusline.ps1', 'usage-limit.ps1', 'preload.cjs', 'skill-bridge.cjs', 'self-update.ps1', 'package.json', 'settings.json', 'skills\usage-limit\SKILL.md', 'skills\usage-limit\SKILL.windows.md')) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $sourceFile) -PathType Leaf)) { Fail "missing repository file: $sourceFile" }
 }
 
@@ -512,7 +514,7 @@ function Get-ProxyVersion([string] $Path) {
 
 function Find-ProxyExecutable {
     if (Test-Path -LiteralPath $managedProxy -PathType Leaf) { return $managedProxy }
-    foreach ($name in @('cliproxyapi.exe', 'cli-proxy-api.exe', 'cliproxyapi', 'cli-proxy-api')) {
+    foreach ($name in @('gicc-proxy.exe', 'gicc-proxy', 'cliproxyapi.exe', 'cli-proxy-api.exe', 'cliproxyapi', 'cli-proxy-api')) {
         $command = Get-Command $name -ErrorAction SilentlyContinue
         if ($command) { return $command.Source }
     }
@@ -522,22 +524,22 @@ function Find-ProxyExecutable {
 function Install-Proxy {
     $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     switch ($architecture) {
-        'x64' { $arch = 'amd64'; $expected = 'a8e1a805bae83150d2e1c7e25b4c22714461d4536173f0bd93be8bbc1333be4c' }
-        'arm64' { $arch = 'aarch64'; $expected = '01085cef19e880d8897a79f762a224735e768a11bda4a6a2f988db752b89777e' }
+        'x64' { $arch = 'amd64'; $expected = 'bbaca0d5285be9f3bd2271d01cec089471e6c52f145c99a1c17a6a84bca4bfe2' }
+        'arm64' { $arch = 'aarch64'; $expected = '5b86372895cd2161e18a3b6e7bd68c96986b499264dd12b4b26e30d9041c3ed0' }
         default { Fail "unsupported Windows CPU architecture: $architecture" }
     }
-    $asset = "CLIProxyAPI_${proxyVersion}_windows_${arch}.zip"
-    $url = "https://github.com/router-for-me/CLIProxyAPI/releases/download/v${proxyVersion}/$asset"
-    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('claudex-proxy-' + [guid]::NewGuid().ToString('N'))
+    $asset = "gicc-proxy_${proxyVersion}_windows_${arch}.zip"
+    $url = "https://github.com/DrPei12/gpt-in-claude-code/releases/download/${proxyRelease}/$asset"
+    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('gicc-proxy-' + [guid]::NewGuid().ToString('N'))
     Ensure-PrivateDirectory $temporary
     try {
         $archive = Join-Path $temporary $asset
-        [Console]::WriteLine("Downloading verified internal compatibility service v$proxyVersion for Windows/$arch...")
+        [Console]::WriteLine("Downloading the verified GICC reasoning bridge $proxyVersion for Windows/$arch...")
         Receive-FileWithRetry $url $archive 300
         $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne $expected) { Fail "compatibility service checksum mismatch for $asset" }
         Expand-Archive -LiteralPath $archive -DestinationPath $temporary -Force
-        Copy-Item -LiteralPath (Join-Path $temporary 'cli-proxy-api.exe') -Destination $managedProxy -Force
+        Copy-Item -LiteralPath (Join-Path $temporary 'gicc-proxy.exe') -Destination $managedProxy -Force
         Protect-PrivatePath $managedProxy $false
     } finally {
         if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Recurse -Force }
@@ -547,7 +549,7 @@ function Install-Proxy {
 if ($packageManagedInstall) {
     # Scoop/WinGet/Homebrew own their shim or package directories. Keep that
     # directory policy intact so their atomic upgrade/link management continues
-    # to work; the installed Claudex files still receive explicit file ACLs.
+    # to work; the installed GICC files still receive explicit file ACLs.
     [IO.Directory]::CreateDirectory($binDir) | Out-Null
 } else {
     # A file ACL alone cannot defend a launcher when a broadly writable parent
@@ -608,7 +610,7 @@ if (-not $skipDependencies) {
     if (-not (Get-Command codex -ErrorAction SilentlyContinue)) { Install-CodexCli }
     if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
         [Console]::WriteLine("Installing Claude Code with Anthropic's native installer...")
-        $installerDirectory = Join-Path ([IO.Path]::GetTempPath()) ('claudex-claude-install-' + [guid]::NewGuid().ToString('N'))
+        $installerDirectory = Join-Path ([IO.Path]::GetTempPath()) ('gicc-claude-install-' + [guid]::NewGuid().ToString('N'))
         Ensure-PrivateDirectory $installerDirectory
         $installer = Join-Path $installerDirectory 'install.ps1'
         try {
@@ -639,7 +641,7 @@ if (-not $codexCommand) { Fail "'codex' is required but was not found in PATH" }
 if (-not $claudeCommand) { Fail "'claude' is required but was not found in PATH" }
 if (-not $proxyBinary) { Fail 'the internal compatibility service could not be installed' }
 
-if (-not $skipDependencies -and $env:CLAUDEX_SKIP_CLAUDE_UPDATE -ne '1') {
+if (-not $skipDependencies -and $env:GICC_SKIP_CLAUDE_UPDATE -ne '1') {
     [Console]::WriteLine('Checking Claude Code for the latest compatible release...')
     $savedErrorPreference = $ErrorActionPreference
     $updateExitCode = 1
@@ -670,13 +672,13 @@ if (Test-Path -LiteralPath $envFile -PathType Leaf) {
     foreach ($line in [IO.File]::ReadAllLines($envFile)) {
         if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
             $name = $Matches[1]
-            $value = ConvertFrom-ClaudexEnvValue $Matches[2]
+            $value = ConvertFrom-GICCEnvValue $Matches[2]
             $existingVariables[$name] = $value
         }
-        if ($line -notmatch '^(CLAUDEX_PROXY_TOKEN|CLAUDEX_PROXY_URL|CLAUDEX_PROXY_CONFIG|CLAUDEX_PROXY_BIN|CLAUDEX_CODEX_AUTH_DIR)=') { $existingLines += $line }
+        if ($line -notmatch '^(GICC_PROXY_TOKEN|GICC_PROXY_URL|GICC_PROXY_CONFIG|GICC_PROXY_BIN|GICC_CODEX_AUTH_DIR)=') { $existingLines += $line }
     }
 }
-$proxyToken = if ($env:CLAUDEX_PROXY_TOKEN) { $env:CLAUDEX_PROXY_TOKEN } elseif ($existingVariables['CLAUDEX_PROXY_TOKEN']) { $existingVariables['CLAUDEX_PROXY_TOKEN'] } else { '' }
+$proxyToken = if ($env:GICC_PROXY_TOKEN) { $env:GICC_PROXY_TOKEN } elseif ($existingVariables['GICC_PROXY_TOKEN']) { $existingVariables['GICC_PROXY_TOKEN'] } else { '' }
 if (-not $proxyToken) {
     $bytes = New-Object byte[] 32
     $random = [Security.Cryptography.RandomNumberGenerator]::Create()
@@ -686,7 +688,7 @@ if (-not $proxyToken) {
 if ($proxyToken.Contains("`r") -or $proxyToken.Contains("`n")) { Fail 'local compatibility key contains a newline' }
 
 $jsonToken = $proxyToken | ConvertTo-Json -Compress
-$runtimeAuthDir = if ($env:CLAUDEX_CODEX_AUTH_DIR) { $env:CLAUDEX_CODEX_AUTH_DIR } elseif ($existingVariables['CLAUDEX_CODEX_AUTH_DIR']) { $existingVariables['CLAUDEX_CODEX_AUTH_DIR'] } else { $authDir }
+$runtimeAuthDir = if ($env:GICC_CODEX_AUTH_DIR) { $env:GICC_CODEX_AUTH_DIR } elseif ($existingVariables['GICC_CODEX_AUTH_DIR']) { $existingVariables['GICC_CODEX_AUTH_DIR'] } else { $authDir }
 Ensure-PrivateDirectory $runtimeAuthDir
 $authPath = $runtimeAuthDir.Replace('\', '/')
 $proxyConfig = @"
@@ -709,32 +711,32 @@ streaming:
 "@
 Write-TextAtomic $proxyConfigTarget $proxyConfig
 $managedProxyForEnv = if (Test-Path -LiteralPath $managedProxy -PathType Leaf) { $managedProxy } else { $proxyBinary }
-$existingProxyUrl = [string] $existingVariables['CLAUDEX_PROXY_URL']
+$existingProxyUrl = [string] $existingVariables['GICC_PROXY_URL']
 $runtimeProxyUrl = if ($callerProxyUrlSet) {
     if ($callerProxyUrl) { $callerProxyUrl } else { "http://127.0.0.1:$proxyPort" }
 } elseif ($callerProxyPortSet -and (-not $existingProxyUrl -or $existingProxyUrl -match '^http://127\.0\.0\.1:\d+/?$')) {
     "http://127.0.0.1:$proxyPort"
 } elseif ($existingProxyUrl) { $existingProxyUrl } else { "http://127.0.0.1:$proxyPort" }
-$runtimeProxyConfig = if ($env:CLAUDEX_PROXY_CONFIG) { $env:CLAUDEX_PROXY_CONFIG } elseif ($existingVariables['CLAUDEX_PROXY_CONFIG']) { $existingVariables['CLAUDEX_PROXY_CONFIG'] } else { $proxyConfigTarget }
-$existingProxyBin = [string] $existingVariables['CLAUDEX_PROXY_BIN']
+$runtimeProxyConfig = if ($env:GICC_PROXY_CONFIG) { $env:GICC_PROXY_CONFIG } elseif ($existingVariables['GICC_PROXY_CONFIG']) { $existingVariables['GICC_PROXY_CONFIG'] } else { $proxyConfigTarget }
+$existingProxyBin = [string] $existingVariables['GICC_PROXY_BIN']
 $existingProxyBinLeaf = if ($existingProxyBin) { Split-Path $existingProxyBin -Leaf } else { '' }
 $existingProxyBinParent = if ($existingProxyBin) { Split-Path $existingProxyBin -Parent } else { '' }
 $previousManagedProxy = $existingProxyBin -and
     ([IO.Path]::GetFullPath($existingProxyBinParent) -eq [IO.Path]::GetFullPath($managedBinDir)) -and
-    ($existingProxyBinLeaf -eq 'cliproxyapi.exe' -or $existingProxyBinLeaf -match '^cliproxyapi-\d+\.\d+\.\d+\.exe$')
-$runtimeProxyBin = if ($env:CLAUDEX_PROXY_BIN) { $env:CLAUDEX_PROXY_BIN } elseif ($existingProxyBin -and -not $previousManagedProxy) { $existingProxyBin } else { $managedProxyForEnv }
+    ($existingProxyBinLeaf -eq 'cliproxyapi.exe' -or $existingProxyBinLeaf -match '^(?:cliproxyapi|gicc-proxy)-.+\.exe$')
+$runtimeProxyBin = if ($env:GICC_PROXY_BIN) { $env:GICC_PROXY_BIN } elseif ($existingProxyBin -and -not $previousManagedProxy) { $existingProxyBin } else { $managedProxyForEnv }
 $managedLines = @(
-    (ConvertTo-ClaudexEnvLine 'CLAUDEX_PROXY_TOKEN' $proxyToken),
-    (ConvertTo-ClaudexEnvLine 'CLAUDEX_PROXY_URL' $runtimeProxyUrl),
-    (ConvertTo-ClaudexEnvLine 'CLAUDEX_PROXY_CONFIG' $runtimeProxyConfig),
-    (ConvertTo-ClaudexEnvLine 'CLAUDEX_PROXY_BIN' $runtimeProxyBin),
-    (ConvertTo-ClaudexEnvLine 'CLAUDEX_CODEX_AUTH_DIR' $runtimeAuthDir)
+    (ConvertTo-GICCEnvLine 'GICC_PROXY_TOKEN' $proxyToken),
+    (ConvertTo-GICCEnvLine 'GICC_PROXY_URL' $runtimeProxyUrl),
+    (ConvertTo-GICCEnvLine 'GICC_PROXY_CONFIG' $runtimeProxyConfig),
+    (ConvertTo-GICCEnvLine 'GICC_PROXY_BIN' $runtimeProxyBin),
+    (ConvertTo-GICCEnvLine 'GICC_CODEX_AUTH_DIR' $runtimeAuthDir)
 )
 $environmentText = (@($managedLines + $existingLines) -join [Environment]::NewLine) + [Environment]::NewLine
 Write-TextAtomic $envFile $environmentText
 
-Copy-Item -LiteralPath (Join-Path $root 'claudex.ps1') -Destination $launcherTarget -Force
-Copy-Item -LiteralPath (Join-Path $root 'claudex.cmd') -Destination $cmdTarget -Force
+Copy-Item -LiteralPath (Join-Path $root 'gicc.ps1') -Destination $launcherTarget -Force
+Copy-Item -LiteralPath (Join-Path $root 'gicc.cmd') -Destination $cmdTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'statusline.ps1') -Destination $statuslineTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'usage-limit.ps1') -Destination $usageLimitTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'codex-session.ps1') -Destination $codexSessionTarget -Force
@@ -764,10 +766,10 @@ Write-TextAtomic $settingsTarget ($settings | ConvertTo-Json -Depth 100)
 
 $packageManifest = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw | ConvertFrom-Json
 $installVersion = [string] $packageManifest.version
-if ($installVersion -notmatch '^\d+\.\d+\.\d+$') { Fail 'package.json contains an invalid Claudex version' }
-$installMethod = if ($env:CLAUDEX_INSTALL_METHOD) { $env:CLAUDEX_INSTALL_METHOD } elseif (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container) { 'git' } else { 'archive' }
-if ($installMethod -notin @('homebrew', 'scoop', 'winget', 'archive', 'git')) { Fail "unsupported CLAUDEX_INSTALL_METHOD: $installMethod" }
-$receipt = [ordered]@{ schema = 1; version = $installVersion; method = $installMethod; binDir = $binDir; repository = 'BeamoINT/Claudex' }
+if ($installVersion -notmatch '^\d+\.\d+\.\d+$') { Fail 'package.json contains an invalid GICC version' }
+$installMethod = if ($env:GICC_INSTALL_METHOD) { $env:GICC_INSTALL_METHOD } elseif (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container) { 'git' } else { 'archive' }
+if ($installMethod -notin @('homebrew', 'scoop', 'winget', 'archive', 'git')) { Fail "unsupported GICC_INSTALL_METHOD: $installMethod" }
+$receipt = [ordered]@{ schema = 1; version = $installVersion; method = $installMethod; binDir = $binDir; repository = 'DrPei12/gpt-in-claude-code' }
 Write-TextAtomic $installReceiptTarget (($receipt | ConvertTo-Json -Compress) + "`n")
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -786,7 +788,7 @@ foreach ($pathToAdd in @(
 }
 [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
 
-[Console]::WriteLine("Installed Claudex launcher: $cmdTarget")
+[Console]::WriteLine("Installed GICC launcher: $cmdTarget")
 [Console]::WriteLine("Installed isolated config: $configDir")
 
 $authReady = $false
@@ -802,12 +804,12 @@ if (-not $authReady -and -not $skipDependencies -and (Test-InteractiveInstall)) 
     [Console]::WriteLine('Codex sign-in is required. Opening the official browser login now...')
     & $codexSessionTarget login
     $authReady = $LASTEXITCODE -eq 0
-    if (-not $authReady) { [Console]::Error.WriteLine("Claudex is installed, but Codex sign-in did not finish. Run 'claudex --login' to retry.") }
-} elseif (-not $authReady) { [Console]::Error.WriteLine("Claudex is installed. Sign in with 'claudex --login', then run 'claudex'.") }
+    if (-not $authReady) { [Console]::Error.WriteLine("GICC is installed, but Codex sign-in did not finish. Run 'gicc --login' to retry.") }
+} elseif (-not $authReady) { [Console]::Error.WriteLine("GICC is installed. Sign in with 'gicc --login', then run 'gicc'.") }
 if (-not $skipService -and $authReady) {
     & $launcherTarget --doctor
-    if ($LASTEXITCODE -eq 0) { [Console]::WriteLine('Claudex is ready. Run: claudex') }
-    else { Fail 'the live compatibility check did not pass; run `claudex --doctor` for details' }
+    if ($LASTEXITCODE -eq 0) { [Console]::WriteLine('GICC is ready. Run: gicc') }
+    else { Fail 'the live compatibility check did not pass; run `gicc --doctor` for details' }
 }
 Complete-InstallTransaction
 } finally {

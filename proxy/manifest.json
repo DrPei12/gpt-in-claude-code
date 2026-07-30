@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "bridgeVersion": "7.2.91-gicc.1",
+  "releaseTag": "v0.1.0",
+  "upstream": {
+    "repository": "router-for-me/CLIProxyAPI",
+    "version": "7.2.91",
+    "tag": "v7.2.91",
+    "commit": "fde40c5a0a2f8f6808bcde498bc6079f32c355ef",
+    "sourceUrl": "https://github.com/router-for-me/CLIProxyAPI/archive/refs/tags/v7.2.91.zip",
+    "sourceSha256": "e6e79f109c0a9f1cdc9aa1761ea413befaadf5970b35bfb64b38b060cc079e0e"
+  },
+  "patches": [
+    "patches/0001-fix-continue-Codex-reasoning-only-incomplete-respons.patch"
+  ],
+  "build": {
+    "goVersion": "1.26.0",
+    "cgoEnabled": false,
+    "buildDate": "2026-07-29T00:00:00Z"
+  },
+  "assets": {
+    "gicc-proxy_7.2.91-gicc.1_darwin_aarch64.tar.gz": "0895f9dac36842fe10910647d7c50267ad5bb4de0e1e52885c85c773f3ca5d81",
+    "gicc-proxy_7.2.91-gicc.1_darwin_amd64.tar.gz": "22b4a57957eab4df9c5a497eaffc4b28e07542f2cf407e76daed24ae7e9c902c",
+    "gicc-proxy_7.2.91-gicc.1_linux_aarch64.tar.gz": "5025037c67ae9a395cfdbd58578cd3b51dadfc25e1c1559911a2d6219e386664",
+    "gicc-proxy_7.2.91-gicc.1_linux_amd64.tar.gz": "b64ea016539bee6674088238c7995c66c17a0f514ea020fd72e00f73c22ea308",
+    "gicc-proxy_7.2.91-gicc.1_windows_aarch64.zip": "5b86372895cd2161e18a3b6e7bd68c96986b499264dd12b4b26e30d9041c3ed0",
+    "gicc-proxy_7.2.91-gicc.1_windows_amd64.zip": "bbaca0d5285be9f3bd2271d01cec089471e6c52f145c99a1c17a6a84bca4bfe2"
+  }
+}

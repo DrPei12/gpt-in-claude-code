@@ -1,6 +1,6 @@
 # Security policy
 
-Claudex handles local authentication material and launches a loopback
+GICC handles local authentication material and launches a loopback
 compatibility service, so security reports are taken seriously.
 
 ## Supported versions
@@ -16,7 +16,7 @@ real credentials in a reproduction.
 
 Use GitHub's private vulnerability reporting form:
 
-<https://github.com/BeamoINT/Claudex/security/advisories/new>
+<https://github.com/DrPei12/gpt-in-claude-code/security/advisories/new>
 
 Include:
 
@@ -32,7 +32,7 @@ and session IDs with placeholders. Maintainers will acknowledge the report,
 investigate it, coordinate a fix, and credit the reporter unless anonymity is
 requested.
 
-Claudex is volunteer maintained. The project targets acknowledgement within
+GICC is volunteer maintained. The project targets acknowledgement within
 three business days, an initial impact assessment within seven days, and a
 status update at least weekly while a validated report remains unresolved.
 These are response targets rather than a support SLA. Disclosure timing is
@@ -56,7 +56,7 @@ authorize testing against third party systems or override their policies.
 
 ## Security boundary
 
-Claudex:
+GICC:
 
 - reads the standard local Codex file backed session;
 - writes a minimal bridge credential into a mode restricted private directory;
@@ -73,11 +73,11 @@ Claudex:
   UTF-8, NUL byte, and nonempty validation, then removes that file when the
   workflow exits.
 
-Claudex does not commit credentials, upload local session files, or print OAuth
+GICC does not commit credentials, upload local session files, or print OAuth
 tokens. It does not combine Anthropic and Codex credentials in one process or
 copy a native Claude session into its managed GPT profile. The Fableplan text is
 treated as untrusted planning guidance rather than executable configuration.
-Claudex cannot secure a compromised machine, an unsafe fork, a manually exposed
+GICC cannot secure a compromised machine, an unsafe fork, a manually exposed
 proxy port, malicious task or plan content, or third party software outside
 this repository.
 

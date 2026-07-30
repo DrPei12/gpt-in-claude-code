@@ -10,7 +10,7 @@ if ([string]::IsNullOrWhiteSpace($raw)) {
 $data = $null
 try { $data = $raw | ConvertFrom-Json } catch { $data = $null }
 
-$configDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\claudex' }
+$configDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\gpt-in-claude-code' }
 $modelId = ''
 $displayName = ''
 $effort = ''
@@ -19,7 +19,7 @@ $sessionId = ''
 $totalInputTokens = 0
 $contextWindowSize = 0
 $inputColumns = 0
-$sessionPersistenceEnabled = $env:CLAUDEX_NO_SESSION_PERSISTENCE -ne '1'
+$sessionPersistenceEnabled = $env:GICC_NO_SESSION_PERSISTENCE -ne '1'
 
 function ConvertTo-TerminalSafeText([AllowNull()][string] $Value) {
     if ($null -eq $Value) { return '' }
@@ -45,7 +45,7 @@ function ConvertTo-TerminalSafeLabel([AllowNull()][string] $Value) {
 
 function Start-UsageRefreshWithoutPrivateEnvironment([hashtable] $Parameters) {
     $privateNames = @(
-        'CLAUDEX_PROXY_TOKEN', 'CLAUDEX_PROXY_URL', 'CLAUDEX_PROXY_CONFIG', 'CLAUDEX_PROXY_BIN',
+        'GICC_PROXY_TOKEN', 'GICC_PROXY_URL', 'GICC_PROXY_CONFIG', 'GICC_PROXY_BIN',
         'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_BEDROCK',
         'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'ANTHROPIC_BEDROCK_BASE_URL',
         'ANTHROPIC_BEDROCK_MANTLE_BASE_URL', 'ANTHROPIC_VERTEX_BASE_URL', 'ANTHROPIC_VERTEX_PROJECT_ID',
@@ -149,28 +149,28 @@ if (-not $effort) {
     }
 }
 if (-not $effort) { $effort = 'adaptive' }
-if ($env:CLAUDEX_SESSION_MODE) { $effort = $env:CLAUDEX_SESSION_MODE }
+if ($env:GICC_SESSION_MODE) { $effort = $env:GICC_SESSION_MODE }
 $modelId = ConvertTo-TerminalSafeLabel $modelId
 $displayName = ConvertTo-TerminalSafeLabel $displayName
 $effort = ConvertTo-TerminalSafeLabel $effort
 if (-not $effort) { $effort = 'adaptive' }
 
 $usageSummary = ''
-$usageDisplay = if ($env:CLAUDEX_USAGE_DISPLAY) { $env:CLAUDEX_USAGE_DISPLAY } else { 'on' }
-$usageHelper = if ($env:CLAUDEX_USAGE_LIMIT_BIN) { $env:CLAUDEX_USAGE_LIMIT_BIN } else { Join-Path $configDir 'usage-limit.ps1' }
+$usageDisplay = if ($env:GICC_USAGE_DISPLAY) { $env:GICC_USAGE_DISPLAY } else { 'on' }
+$usageHelper = if ($env:GICC_USAGE_LIMIT_BIN) { $env:GICC_USAGE_LIMIT_BIN } else { Join-Path $configDir 'usage-limit.ps1' }
 if ($usageDisplay -ne 'off' -and (Test-Path -LiteralPath $usageHelper -PathType Leaf)) {
     try {
         $refreshSeconds = 300
         $maxStaleSeconds = 86400
-        if ($env:CLAUDEX_USAGE_REFRESH_SECONDS) {
+        if ($env:GICC_USAGE_REFRESH_SECONDS) {
             $candidate = 0
-            if ([int]::TryParse($env:CLAUDEX_USAGE_REFRESH_SECONDS, [ref] $candidate) -and $candidate -ge 60 -and $candidate -le 3600) {
+            if ([int]::TryParse($env:GICC_USAGE_REFRESH_SECONDS, [ref] $candidate) -and $candidate -ge 60 -and $candidate -le 3600) {
                 $refreshSeconds = $candidate
             }
         }
-        if ($env:CLAUDEX_USAGE_MAX_STALE_SECONDS) {
+        if ($env:GICC_USAGE_MAX_STALE_SECONDS) {
             $candidate = 0
-            if ([int]::TryParse($env:CLAUDEX_USAGE_MAX_STALE_SECONDS, [ref] $candidate) -and $candidate -ge $refreshSeconds -and $candidate -le 604800) {
+            if ([int]::TryParse($env:GICC_USAGE_MAX_STALE_SECONDS, [ref] $candidate) -and $candidate -ge $refreshSeconds -and $candidate -le 604800) {
                 $maxStaleSeconds = $candidate
             }
         }
@@ -225,7 +225,7 @@ $modelName = switch -Wildcard ($modelId) {
         }
     }
 }
-$selectedModelMode = $env:CLAUDEX_MODEL_MODE
+$selectedModelMode = $env:GICC_MODEL_MODE
 if (-not $selectedModelMode) {
     $settingsPath = Join-Path $configDir 'settings.json'
     if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
@@ -239,7 +239,7 @@ if ($selectedModelMode -eq 'solplan') { $modelName = 'GPT-5.6 Solplan' }
 $modelName = ConvertTo-TerminalSafeLabel $modelName
 
 $statuslineColumns = 0
-foreach ($candidate in @($env:CLAUDEX_STATUSLINE_COLUMNS, $inputColumns, $env:COLUMNS)) {
+foreach ($candidate in @($env:GICC_STATUSLINE_COLUMNS, $inputColumns, $env:COLUMNS)) {
     $parsedColumns = 0
     if ([int]::TryParse([string] $candidate, [ref] $parsedColumns) -and $parsedColumns -gt 0) {
         $statuslineColumns = $parsedColumns
@@ -254,8 +254,8 @@ if ($statuslineColumns -le 0) {
 
 $separator = [char] 0x00B7
 $escape = [char] 27
-$brandPlain = 'Claudex'
-$brandAnsi = "${escape}[38;5;81mClaudex${escape}[0m"
+$brandPlain = 'GICC'
+$brandAnsi = "${escape}[38;5;81mGICC${escape}[0m"
 $modelAnsi = "${escape}[1m$modelName${escape}[0m"
 $mandatoryPlain = "$brandPlain $separator $modelName"
 $mandatoryAnsi = "$brandAnsi $separator $modelAnsi"

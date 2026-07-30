@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly config_dir="${CLAUDEX_CONFIG_DIR:-$HOME/.config/claudex}"
+readonly config_dir="${GICC_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}"
 readonly codex_home="${CODEX_HOME:-$HOME/.codex}"
-readonly codex_auth_file="${CLAUDEX_CODEX_SOURCE_AUTH_FILE:-$codex_home/auth.json}"
-readonly bridge_auth_dir="${CLAUDEX_CODEX_AUTH_DIR:-$config_dir/codex-accounts}"
-readonly bridge_auth_file="$bridge_auth_dir/codex-claudex-managed.json"
+readonly codex_auth_file="${GICC_CODEX_SOURCE_AUTH_FILE:-$codex_home/auth.json}"
+readonly bridge_auth_dir="${GICC_CODEX_AUTH_DIR:-$config_dir/codex-accounts}"
+readonly bridge_auth_file="$bridge_auth_dir/codex-gicc-managed.json"
 readonly usage_cache_dir="$config_dir/usage-cache"
 readonly usage_account_file="$config_dir/codex-usage-account"
 readonly usage_generation_file="$config_dir/usage-generation"
@@ -17,18 +17,18 @@ session_sync_owned=0
 last_session_sync_fingerprint=""
 
 fail() {
-  printf 'claudex: %s\n' "$*" >&2
+  printf 'gicc: %s\n' "$*" >&2
 }
 
 current_shell_pid() {
   local destination="$1"
-  sh -c 'printf "%s\n" "$PPID" > "$1"' claudex-session-pid "$destination"
+  sh -c 'printf "%s\n" "$PPID" > "$1"' gicc-session-pid "$destination"
 }
 
 process_identity() {
   local pid="$1" identity="" stat_line=""
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_PROCESS_IDENTITY:-}" ]]; then
-    printf '%s\n' "$CLAUDEX_TEST_PROCESS_IDENTITY"
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_PROCESS_IDENTITY:-}" ]]; then
+    printf '%s\n' "$GICC_TEST_PROCESS_IDENTITY"
     return 0
   fi
   if [[ -r "/proc/$pid/stat" ]]; then
@@ -104,10 +104,10 @@ lock_barrier_exists() {
 
 lock_test_pause() {
   local stage="$1" lock_dir="$2" ready_variable continue_variable ready_file continue_file
-  [[ "${CLAUDEX_TEST_MODE:-0}" == 1 ]] || return 0
-  [[ -z "${CLAUDEX_TEST_LOCK_MATCH:-}" || "$lock_dir" == *"$CLAUDEX_TEST_LOCK_MATCH"* ]] || return 0
-  ready_variable="CLAUDEX_TEST_LOCK_${stage}_READY"
-  continue_variable="CLAUDEX_TEST_LOCK_${stage}_CONTINUE"
+  [[ "${GICC_TEST_MODE:-0}" == 1 ]] || return 0
+  [[ -z "${GICC_TEST_LOCK_MATCH:-}" || "$lock_dir" == *"$GICC_TEST_LOCK_MATCH"* ]] || return 0
+  ready_variable="GICC_TEST_LOCK_${stage}_READY"
+  continue_variable="GICC_TEST_LOCK_${stage}_CONTINUE"
   ready_file="${!ready_variable:-}"
   continue_file="${!continue_variable:-}"
   [[ -n "$ready_file" && -n "$continue_file" ]] || return 0
@@ -130,8 +130,8 @@ remove_lock_directory_files() {
 
 publish_lock_file() {
   local source="$1" destination="$2"
-  [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || "${CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE:-0}" != 1 ]] || return 1
-  if [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || "${CLAUDEX_TEST_FORCE_HARDLINK_FAILURE:-0}" != 1 ]]; then
+  [[ "${GICC_TEST_MODE:-0}" != 1 || "${GICC_TEST_FORCE_PUBLICATION_FAILURE:-0}" != 1 ]] || return 1
+  if [[ "${GICC_TEST_MODE:-0}" != 1 || "${GICC_TEST_FORCE_HARDLINK_FAILURE:-0}" != 1 ]]; then
     ln "$source" "$destination" 2>/dev/null && return 0
   fi
   (
@@ -297,7 +297,7 @@ recover_owned_lock_generation() {
   [[ -n "$current_nonce" ]] || current_nonce=$(read_lock_field "$lock_dir/owner" nonce)
   current_directory_identity=$(lock_directory_identity "$lock_dir" || true)
   if [[ "$current_nonce" == "$expected_nonce" && ( -z "$expected_directory_identity" || "$current_directory_identity" == "$expected_directory_identity" ) ]] && ! lock_barrier_exists "$lock_dir"; then
-    [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || -z "${CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE:-}" ]] || : > "$CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE"
+    [[ "${GICC_TEST_MODE:-0}" != 1 || -z "${GICC_TEST_LOCK_SELF_RECOVERED_FILE:-}" ]] || : > "$GICC_TEST_LOCK_SELF_RECOVERED_FILE"
     return 0
   fi
   if [[ "$current_nonce" == "$expected_nonce" && ( -z "$expected_directory_identity" || "$current_directory_identity" == "$expected_directory_identity" ) ]]; then remove_owned_lock_generation "$lock_dir" "$expected_nonce" || true; fi
@@ -421,8 +421,8 @@ trap 'exit_for_session_signal 143' TERM
 acquire_session_sync_lock() {
   mkdir -p "$bridge_auth_dir"
   chmod 700 "$bridge_auth_dir" 2>/dev/null || true
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_SESSION_SYNC_LOCK_WAIT_READY_FILE:-}" ]]; then
-    (umask 077; printf '%s\n' ready > "$CLAUDEX_TEST_SESSION_SYNC_LOCK_WAIT_READY_FILE")
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_SESSION_SYNC_LOCK_WAIT_READY_FILE:-}" ]]; then
+    (umask 077; printf '%s\n' ready > "$GICC_TEST_SESSION_SYNC_LOCK_WAIT_READY_FILE")
   fi
   if ! acquire_owned_lock "$session_sync_lock" 250 0.02 2 60; then
     fail 'timed out waiting for another Codex credential synchronization.'
@@ -508,7 +508,7 @@ sync_session() {
       if codex_is_logged_in; then release_session_sync_lock; continue; fi
       clear_owned_session_state || { release_session_sync_lock; return 1; }
       release_session_sync_lock
-      fail 'Codex is logged out. Run `codex login` (or `claudex --login`) and retry.'
+      fail 'Codex is logged out. Run `codex login` (or `gicc --login`) and retry.'
       return 11
     fi
     if ! command -v jq >/dev/null 2>&1; then
@@ -525,7 +525,7 @@ sync_session() {
       clear_owned_session_state || { release_session_sync_lock; return 1; }
       release_session_sync_lock
       fail 'Codex is logged in, but its credentials are stored in the OS keyring.'
-      fail 'Run `claudex --login` once so Codex can create a reusable file-backed local session.'
+      fail 'Run `gicc --login` once so Codex can create a reusable file-backed local session.'
       return 13
     fi
     source_json=$(<"$codex_auth_file") || source_json=""
@@ -538,7 +538,7 @@ sync_session() {
       fi
       clear_owned_session_state || { release_session_sync_lock; return 1; }
       release_session_sync_lock
-      fail 'Claudex requires Codex ChatGPT sign-in. Run `claudex --login` and choose ChatGPT.'
+      fail 'GICC requires Codex ChatGPT sign-in. Run `gicc --login` and choose ChatGPT.'
       return 14
     fi
     break
@@ -558,7 +558,7 @@ sync_session() {
       fi
       clear_owned_session_state || { release_session_sync_lock; return 1; }
       release_session_sync_lock
-      fail 'Claudex requires Codex ChatGPT sign-in. Run `claudex --login` and choose ChatGPT.'
+      fail 'GICC requires Codex ChatGPT sign-in. Run `gicc --login` and choose ChatGPT.'
       return 14
     fi
     source_fingerprint=$(printf '%s' "$source_json" | json_fingerprint)
@@ -691,10 +691,10 @@ managed_background_registry_state() {
     -u CLAUDE_CODE_AUTO_MODE_MODEL -u CLAUDE_CODE_BG_CLASSIFIER_MODEL -u CLAUDE_CODE_SUBAGENT_MODEL \
     -u CLAUDE_CODE_ALWAYS_ENABLE_EFFORT -u CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY -u CLAUDE_CODE_MAX_RETRIES \
     -u CLAUDE_CODE_MAX_CONTEXT_TOKENS -u CLAUDE_CODE_AUTO_COMPACT_WINDOW -u CLAUDE_CODE_DISABLE_1M_CONTEXT \
-    -u CLAUDEX_PROXY_TOKEN -u CLAUDEX_PROXY_URL -u CLAUDEX_PROXY_CONFIG -u CLAUDEX_PROXY_BIN \
-    -u CLAUDEX_CODEX_AUTH_FILE -u CLAUDEX_CODEX_SOURCE_AUTH_FILE -u CLAUDEX_MANAGED_SESSION \
-    -u CLAUDEX_CHATGPT_PLAN_LABEL -u CLAUDEX_SESSION_MODE -u CLAUDEX_MODEL_MODE -u CLAUDEX_INTERACTIVE_TUI \
-    -u CLAUDEX_NO_SESSION_PERSISTENCE -u CLAUDEX_INSTRUCTION_BRIDGE -u CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD \
+    -u GICC_PROXY_TOKEN -u GICC_PROXY_URL -u GICC_PROXY_CONFIG -u GICC_PROXY_BIN \
+    -u GICC_CODEX_AUTH_FILE -u GICC_CODEX_SOURCE_AUTH_FILE -u GICC_MANAGED_SESSION \
+    -u GICC_CHATGPT_PLAN_LABEL -u GICC_SESSION_MODE -u GICC_MODEL_MODE -u GICC_INTERACTIVE_TUI \
+    -u GICC_NO_SESSION_PERSISTENCE -u GICC_INSTRUCTION_BRIDGE -u CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD \
     -u CLAUDE_CODE_EFFORT_LEVEL -u CLAUDE_CODE_NO_FLICKER -u CLAUDE_CODE_ACCESSIBILITY \
     claude agents --json 2>/dev/null) || return 2
   printf '%s' "$registry" | jq -e 'type == "array"' >/dev/null 2>&1 || return 2
@@ -706,13 +706,13 @@ managed_background_registry_state() {
 
 watch_session() {
   local parent_pid="${1:-}" parent_identity="${2:-}" background="${3:-0}"
-  local interval="${CLAUDEX_AUTH_WATCH_SECONDS:-2}" fingerprint next registry_status empty_polls=0
+  local interval="${GICC_AUTH_WATCH_SECONDS:-2}" fingerprint next registry_status empty_polls=0
   [[ "$parent_pid" =~ ^[0-9]+$ && "$parent_pid" -gt 1 ]] || {
     fail 'watch requires a valid parent process ID.'
     return 2
   }
   [[ "$interval" =~ ^[0-9]+$ && "$interval" -ge 1 && "$interval" -le 60 ]] || {
-    fail 'CLAUDEX_AUTH_WATCH_SECONDS must be an integer from 1 to 60.'
+    fail 'GICC_AUTH_WATCH_SECONDS must be an integer from 1 to 60.'
     return 2
   }
   [[ "$background" == 0 || "$background" == 1 ]] || {
@@ -728,14 +728,14 @@ watch_session() {
   if sync_session >/dev/null 2>&1 && [[ -n "$last_session_sync_fingerprint" ]]; then
     fingerprint="$last_session_sync_fingerprint"
   fi
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 \
-      && -n "${CLAUDEX_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_READY_FILE:-}" \
-      && -n "${CLAUDEX_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_CONTINUE_FILE:-}" ]]; then
-    (umask 077; printf '%s\n' ready > "$CLAUDEX_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_READY_FILE")
-    while [[ ! -e "$CLAUDEX_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_CONTINUE_FILE" ]]; do sleep 0.02; done
+  if [[ "${GICC_TEST_MODE:-0}" == 1 \
+      && -n "${GICC_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_READY_FILE:-}" \
+      && -n "${GICC_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_CONTINUE_FILE:-}" ]]; then
+    (umask 077; printf '%s\n' ready > "$GICC_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_READY_FILE")
+    while [[ ! -e "$GICC_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_CONTINUE_FILE" ]]; do sleep 0.02; done
   fi
-  if [[ -n "${CLAUDEX_AUTH_WATCH_READY_FILE:-}" ]]; then
-    (umask 077; printf '%s\n' ready > "$CLAUDEX_AUTH_WATCH_READY_FILE")
+  if [[ -n "${GICC_AUTH_WATCH_READY_FILE:-}" ]]; then
+    (umask 077; printf '%s\n' ready > "$GICC_AUTH_WATCH_READY_FILE")
   fi
   while :; do
     if watch_parent_is_current "$parent_pid" "$parent_identity"; then
@@ -764,8 +764,8 @@ watch_session() {
       fingerprint="$next"
     fi
   done
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_AUTH_WATCH_EXIT_FILE:-}" ]]; then
-    (umask 077; printf '%s\n' exited > "$CLAUDEX_TEST_AUTH_WATCH_EXIT_FILE")
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_AUTH_WATCH_EXIT_FILE:-}" ]]; then
+    (umask 077; printf '%s\n' exited > "$GICC_TEST_AUTH_WATCH_EXIT_FILE")
   fi
 }
 
@@ -774,10 +774,10 @@ login() {
     fail 'Codex CLI was not found. Install Codex and retry.'
     return 10
   }
-  printf '%s\n' 'Claudex is opening the official Codex sign-in flow...'
+  printf '%s\n' 'GICC is opening the official Codex sign-in flow...'
   codex -c 'cli_auth_credentials_store="file"' login
   sync_session
-  printf '%s\n' 'Codex authentication is ready for Claudex.'
+  printf '%s\n' 'Codex authentication is ready for GICC.'
 }
 
 logout() {
@@ -793,14 +793,14 @@ logout() {
   release_session_sync_lock
   (( clear_status == 0 )) || return "$clear_status"
   if (( ! codex_found )); then
-    fail 'Codex CLI was not found; the local Claudex bridge session was cleared.'
+    fail 'Codex CLI was not found; the local GICC bridge session was cleared.'
     return 10
   fi
   if (( logout_status != 0 )); then
-    fail 'Codex logout failed, but the local Claudex bridge session was cleared.'
+    fail 'Codex logout failed, but the local GICC bridge session was cleared.'
     return "$logout_status"
   fi
-  printf '%s\n' 'Codex and Claudex are logged out.'
+  printf '%s\n' 'Codex and GICC are logged out.'
 }
 
 status() {

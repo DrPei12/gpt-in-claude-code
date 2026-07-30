@@ -9,5 +9,5 @@ trim_trailing_whitespace = true
 [*.md]
 trim_trailing_whitespace = false
 
-[claudex.cmd]
+[gicc.cmd]
 end_of_line = crlf

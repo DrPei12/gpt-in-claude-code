@@ -1,21 +1,28 @@
 # Notices and third party software
 
-Claudex is an independent, community maintained project. It is not an official
-OpenAI or Anthropic product and is not endorsed by either company.
+GPT in Claude Code, whose command is `gicc`, is an independent community
+project. It is not an official OpenAI or Anthropic product and neither company
+endorses or supports it.
 
 The names OpenAI, Codex, ChatGPT, Anthropic, Claude, and Claude Code, together
-with their associated marks, belong to their respective owners. Their use in
-this repository describes compatibility and does not grant trademark rights.
+with their associated marks, belong to their respective owners. Their use here
+describes compatibility and does not grant trademark rights.
 
-Claudex is licensed under the [MIT License](LICENSE). That license covers the
-code and documentation in this repository only. It does not grant rights to
-Claude Code, Codex, hosted models, provider accounts, or third party services.
+This repository is derived from
+[BeamoINT/Claudex](https://github.com/BeamoINT/Claudex) v1.6.2 under the MIT
+License. The original copyright and license are preserved in
+[`third_party/CLAUDEX_LICENSE.txt`](third_party/CLAUDEX_LICENSE.txt). See
+[`UPSTREAM.md`](UPSTREAM.md) for the exact source reference and the changes in
+this independent distribution.
 
-The installer downloads a pinned, checksum verified build of
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI), which is maintained
-and licensed separately by its authors under the MIT License. Claudex does not
-vendor that binary in this repository.
+Release assets include a patched build of
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) v7.2.91 under the
+MIT License. The original copyright and license are preserved in
+[`third_party/CLIPROXYAPI_LICENSE.txt`](third_party/CLIPROXYAPI_LICENSE.txt).
+The patch and build manifest are public in [`patches`](patches) and
+[`proxy/manifest.json`](proxy/manifest.json).
 
-Users are responsible for complying with the licenses, terms of service,
-acceptable use policies, subscription limits, and local laws that apply to the
-third party software and accounts they connect to Claudex.
+The repository MIT License covers only the code and documentation distributed
+here. It does not grant rights to Claude Code, Codex, hosted models, provider
+accounts, or third party services. Users remain responsible for the licenses,
+terms, usage limits, and laws that apply to the software and accounts they use.

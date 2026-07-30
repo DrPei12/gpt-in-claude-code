@@ -9,7 +9,7 @@ const crypto = require('crypto');
 
 const root = path.resolve(__dirname, '..');
 const helper = path.join(root, 'skill-bridge.cjs');
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'claudex-skill-bridge-'));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'gicc-skill-bridge-'));
 
 function write(file, contents) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -39,7 +39,7 @@ function invoke(command, environment, cwd, extraArguments = []) {
 
 try {
   const home = path.join(temporary, 'home with spaces');
-  const config = path.join(home, '.config', 'claudex');
+  const config = path.join(home, '.config', 'gpt-in-claude-code');
   const claudeHome = path.join(home, '.claude');
   const codexHome = path.join(home, '.codex');
   const repo = path.join(temporary, 'repo');
@@ -110,12 +110,12 @@ try {
   const environment = {
     HOME: home,
     USERPROFILE: home,
-    CLAUDEX_CONFIG_DIR: config,
-    CLAUDEX_CLAUDE_CONFIG_DIR: claudeHome,
+    GICC_CONFIG_DIR: config,
+    GICC_CLAUDE_CONFIG_DIR: claudeHome,
     CODEX_HOME: codexHome,
-    CLAUDEX_TEST_CODEX_PLUGIN_LIST_FILE: pluginInventory,
-    CLAUDEX_SKILL_BRIDGE_NO_LINKS: '1',
-    CLAUDEX_CODEX_ADMIN_SKILLS_DIR: path.join(temporary, 'missing-admin'),
+    GICC_TEST_CODEX_PLUGIN_LIST_FILE: pluginInventory,
+    GICC_SKILL_BRIDGE_NO_LINKS: '1',
+    GICC_CODEX_ADMIN_SKILLS_DIR: path.join(temporary, 'missing-admin'),
   };
 
   const first = invoke('sync', environment, project);
@@ -215,13 +215,13 @@ try {
     const fakeCodexBin = path.join(temporary, 'fake-codex-bin');
     const fakeCodex = path.join(fakeCodexBin, 'codex');
     const codexCwdLog = path.join(temporary, 'codex-plugin-cwd.log');
-    write(fakeCodex, '#!/bin/sh\npwd -P > "$CLAUDEX_TEST_CODEX_PLUGIN_CWD_LOG"\nprintf \'%s\\n\' \'{"installed":[]}\'\n');
+    write(fakeCodex, '#!/bin/sh\npwd -P > "$GICC_TEST_CODEX_PLUGIN_CWD_LOG"\nprintf \'%s\\n\' \'{"installed":[]}\'\n');
     fs.chmodSync(fakeCodex, 0o755);
     const neutralEnvironment = {
       ...environment,
-      CLAUDEX_CONFIG_DIR: path.join(temporary, 'neutral-config'),
-      CLAUDEX_TEST_CODEX_PLUGIN_LIST_FILE: '',
-      CLAUDEX_TEST_CODEX_PLUGIN_CWD_LOG: codexCwdLog,
+      GICC_CONFIG_DIR: path.join(temporary, 'neutral-config'),
+      GICC_TEST_CODEX_PLUGIN_LIST_FILE: '',
+      GICC_TEST_CODEX_PLUGIN_CWD_LOG: codexCwdLog,
       PATH: `${fakeCodexBin}${path.delimiter}${process.env.PATH || ''}`,
     };
     invoke('sync', neutralEnvironment, dirtyOriginal, ['--global-only']);
@@ -259,7 +259,7 @@ try {
   assert(first.modelMappings.some((entry) => entry.from === 'claude-sonnet-9-9' && entry.to === 'gpt-5.6-terra'));
 
   const referencePlugin = first.pluginDirs.find((directory) => {
-    try { return JSON.parse(fs.readFileSync(path.join(directory, '.claude-plugin', 'plugin.json'), 'utf8')).name === 'claudex-codex-skill-references'; }
+    try { return JSON.parse(fs.readFileSync(path.join(directory, '.claude-plugin', 'plugin.json'), 'utf8')).name === 'gicc-skill-references'; }
     catch { return false; }
   });
   assert(referencePlugin, 'Codex $skill reference compatibility plugin should be generated');
@@ -309,12 +309,12 @@ try {
   assert(listed.includes('/codex-alpha'));
   assert(listed.includes('Claude alpha') === false, 'list output should not expose skill contents');
 
-  const disabledBridge = invoke('sync', { ...environment, CLAUDEX_SKILL_BRIDGE: 'off' }, project);
+  const disabledBridge = invoke('sync', { ...environment, GICC_SKILL_BRIDGE: 'off' }, project);
   assert.strictEqual(disabledBridge.enabled, false);
   assert.deepStrictEqual(disabledBridge.skills, []);
   assert.deepStrictEqual(disabledBridge.instructions, []);
 
-  const disabledInstructions = invoke('sync', { ...environment, CLAUDEX_INSTRUCTION_BRIDGE: 'off' }, project);
+  const disabledInstructions = invoke('sync', { ...environment, GICC_INSTRUCTION_BRIDGE: 'off' }, project);
   assert.deepStrictEqual(disabledInstructions.instructions, []);
   assert(!fs.existsSync(path.join(disabledInstructions.overlay, 'CLAUDE.md')),
     'instruction-only opt-out must not publish a CLAUDE.md compatibility file');

@@ -1,9 +1,9 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
-$ClaudexInternalProxyWatchParentProcessId = 0
-$ClaudexInternalProxyWatchParentIdentity = ''
-$ClaudexInternalProxyWatchBackground = $false
-$claudexInternalClaudeUpdate = $false
+$GICCInternalProxyWatchParentProcessId = 0
+$GICCInternalProxyWatchParentIdentity = ''
+$GICCInternalProxyWatchBackground = $false
+$giccInternalClaudeUpdate = $false
 $internalClaudeUpdatePath = ''
 $internalClaudeUpdateDirectory = ''
 $internalClaudeUpdateInterval = 0L
@@ -23,26 +23,26 @@ for ($hostIndex = 0; $hostIndex + 1 -lt $hostArguments.Count; $hostIndex++) {
     if ($rawClaudeArguments -contains '--') { $ClaudeArguments = $rawClaudeArguments }
     break
 }
-if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '-ClaudexInternalProxyWatchParentProcessId') {
+if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '-GICCInternalProxyWatchParentProcessId') {
     $parsedProxyWatchParent = 0
     if ($ClaudeArguments.Count -lt 2 -or -not [int]::TryParse($ClaudeArguments[1], [ref] $parsedProxyWatchParent)) {
-        throw 'Claudex internal proxy watcher requires a numeric parent process ID.'
+        throw 'GICC internal proxy watcher requires a numeric parent process ID.'
     }
-    $ClaudexInternalProxyWatchParentProcessId = $parsedProxyWatchParent
+    $GICCInternalProxyWatchParentProcessId = $parsedProxyWatchParent
     if ($ClaudeArguments.Count -ge 4) {
-        $ClaudexInternalProxyWatchParentIdentity = [string] $ClaudeArguments[2]
+        $GICCInternalProxyWatchParentIdentity = [string] $ClaudeArguments[2]
         $parsedProxyWatchBackground = 0
         if (-not [int]::TryParse([string] $ClaudeArguments[3], [ref] $parsedProxyWatchBackground) -or $parsedProxyWatchBackground -notin @(0, 1)) {
-            throw 'Claudex internal proxy watcher background mode must be 0 or 1.'
+            throw 'GICC internal proxy watcher background mode must be 0 or 1.'
         }
-        $ClaudexInternalProxyWatchBackground = $parsedProxyWatchBackground -eq 1
+        $GICCInternalProxyWatchBackground = $parsedProxyWatchBackground -eq 1
         if ($ClaudeArguments.Count -gt 4) { $ClaudeArguments = @($ClaudeArguments[4..($ClaudeArguments.Count - 1)]) }
         else { $ClaudeArguments = @() }
     } elseif ($ClaudeArguments.Count -gt 2) { $ClaudeArguments = @($ClaudeArguments[2..($ClaudeArguments.Count - 1)]) }
     else { $ClaudeArguments = @() }
 }
-if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '-ClaudexInternalClaudeUpdate') {
-    $internalNonce = [Environment]::GetEnvironmentVariable('CLAUDEX_INTERNAL_UPDATE_NONCE', 'Process')
+if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '-GICCInternalClaudeUpdate') {
+    $internalNonce = [Environment]::GetEnvironmentVariable('GICC_INTERNAL_UPDATE_NONCE', 'Process')
     $sentinelValid = $false
     if ($ClaudeArguments.Count -eq 5 -and -not [string]::IsNullOrWhiteSpace($internalNonce)) {
         try {
@@ -53,16 +53,16 @@ if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '-ClaudexInternalC
     if ($sentinelValid -and
         [long]::TryParse([string] $ClaudeArguments[3], [ref] $internalClaudeUpdateInterval) -and
         $internalClaudeUpdateInterval -ge 60) {
-        $claudexInternalClaudeUpdate = $true
+        $giccInternalClaudeUpdate = $true
         $internalClaudeUpdatePath = [string] $ClaudeArguments[1]
         $internalClaudeUpdateDirectory = [string] $ClaudeArguments[2]
         $ClaudeArguments = @()
     }
 }
-$previousSessionMode = [Environment]::GetEnvironmentVariable('CLAUDEX_SESSION_MODE', 'Process')
+$previousSessionMode = [Environment]::GetEnvironmentVariable('GICC_SESSION_MODE', 'Process')
 $previousEffortLevel = [Environment]::GetEnvironmentVariable('CLAUDE_CODE_EFFORT_LEVEL', 'Process')
-$previousModelMode = [Environment]::GetEnvironmentVariable('CLAUDEX_MODEL_MODE', 'Process')
-$previousInteractiveTui = [Environment]::GetEnvironmentVariable('CLAUDEX_INTERACTIVE_TUI', 'Process')
+$previousModelMode = [Environment]::GetEnvironmentVariable('GICC_MODEL_MODE', 'Process')
+$previousInteractiveTui = [Environment]::GetEnvironmentVariable('GICC_INTERACTIVE_TUI', 'Process')
 $competingProviderEnvironmentNames = @(
     'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
     'ANTHROPIC_BEDROCK_BASE_URL', 'ANTHROPIC_BEDROCK_MANTLE_BASE_URL',
@@ -81,12 +81,13 @@ $sessionEnvironmentNames = @(
     'ANTHROPIC_DEFAULT_FABLE_MODEL_SUPPORTED_CAPABILITIES', 'ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES', 'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
     'ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES', 'CLAUDE_CODE_AUTO_MODE_MODEL',
     'CLAUDE_CODE_BG_CLASSIFIER_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL', 'CLAUDE_CODE_ALWAYS_ENABLE_EFFORT',
-    'CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY', 'CLAUDE_CODE_MAX_RETRIES', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS',
-    'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_DISABLE_1M_CONTEXT', 'CLAUDEX_CHATGPT_PLAN_LABEL',
-    'CLAUDEX_NO_SESSION_PERSISTENCE', 'CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD', 'CLAUDEX_MANAGED_SESSION',
-    'CLAUDEX_INSTRUCTION_BRIDGE', 'CLAUDEX_PROXY_TOKEN', 'CLAUDEX_PROXY_URL', 'CLAUDEX_PROXY_CONFIG',
-    'CLAUDEX_PROXY_BIN', 'CLAUDEX_CODEX_AUTH_DIR', 'CLAUDEX_CODEX_AUTH_FILE', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE',
-    'CLAUDEX_CONFIG_DIR', 'CLAUDEX_CLAUDE_CONFIG_DIR'
+    'CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY', 'CLAUDE_CODE_MAX_RETRIES', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
+    'CLAUDE_CODE_MAX_CONTEXT_TOKENS',
+    'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_DISABLE_1M_CONTEXT', 'GICC_CHATGPT_PLAN_LABEL',
+    'GICC_NO_SESSION_PERSISTENCE', 'CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD', 'GICC_MANAGED_SESSION',
+    'GICC_INSTRUCTION_BRIDGE', 'GICC_PROXY_TOKEN', 'GICC_PROXY_URL', 'GICC_PROXY_CONFIG',
+    'GICC_PROXY_BIN', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_AUTH_FILE', 'GICC_CODEX_SOURCE_AUTH_FILE',
+    'GICC_CONFIG_DIR', 'GICC_CLAUDE_CONFIG_DIR'
 ) | ForEach-Object { $_ }
 $previousSessionEnvironment = @{}
 foreach ($environmentName in $sessionEnvironmentNames) {
@@ -94,20 +95,20 @@ foreach ($environmentName in $sessionEnvironmentNames) {
 }
 $previousConfigEnvironment = @{}
 
-function Restore-ClaudexSessionEnvironment {
+function Restore-GICCSessionEnvironment {
     foreach ($environmentName in $previousConfigEnvironment.Keys) {
         $previousValue = $previousConfigEnvironment[$environmentName]
         if ($null -eq $previousValue) { Remove-Item -LiteralPath "Env:$environmentName" -ErrorAction SilentlyContinue }
         else { [Environment]::SetEnvironmentVariable($environmentName, [string] $previousValue, 'Process') }
     }
-    if ($null -eq $previousSessionMode) { Remove-Item Env:CLAUDEX_SESSION_MODE -ErrorAction SilentlyContinue }
-    else { $env:CLAUDEX_SESSION_MODE = $previousSessionMode }
+    if ($null -eq $previousSessionMode) { Remove-Item Env:GICC_SESSION_MODE -ErrorAction SilentlyContinue }
+    else { $env:GICC_SESSION_MODE = $previousSessionMode }
     if ($null -eq $previousEffortLevel) { Remove-Item Env:CLAUDE_CODE_EFFORT_LEVEL -ErrorAction SilentlyContinue }
     else { $env:CLAUDE_CODE_EFFORT_LEVEL = $previousEffortLevel }
-    if ($null -eq $previousModelMode) { Remove-Item Env:CLAUDEX_MODEL_MODE -ErrorAction SilentlyContinue }
-    else { $env:CLAUDEX_MODEL_MODE = $previousModelMode }
-    if ($null -eq $previousInteractiveTui) { Remove-Item Env:CLAUDEX_INTERACTIVE_TUI -ErrorAction SilentlyContinue }
-    else { $env:CLAUDEX_INTERACTIVE_TUI = $previousInteractiveTui }
+    if ($null -eq $previousModelMode) { Remove-Item Env:GICC_MODEL_MODE -ErrorAction SilentlyContinue }
+    else { $env:GICC_MODEL_MODE = $previousModelMode }
+    if ($null -eq $previousInteractiveTui) { Remove-Item Env:GICC_INTERACTIVE_TUI -ErrorAction SilentlyContinue }
+    else { $env:GICC_INTERACTIVE_TUI = $previousInteractiveTui }
     foreach ($environmentName in $sessionEnvironmentNames) {
         $previousValue = $previousSessionEnvironment[$environmentName]
         if ($null -eq $previousValue) { Remove-Item -LiteralPath "Env:$environmentName" -ErrorAction SilentlyContinue }
@@ -116,19 +117,19 @@ function Restore-ClaudexSessionEnvironment {
 }
 $utf8 = New-Object Text.UTF8Encoding($false)
 
-$configDir = if ($env:CLAUDEX_CONFIG_DIR) { $env:CLAUDEX_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\claudex' }
+$configDir = if ($env:GICC_CONFIG_DIR) { $env:GICC_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\gpt-in-claude-code' }
 $configFile = Join-Path $configDir 'env'
-$settingsFile = if ($env:CLAUDEX_SETTINGS_FILE) { $env:CLAUDEX_SETTINGS_FILE } else { Join-Path $configDir 'settings.json' }
-$curlCommand = if ($env:CLAUDEX_CURL_BIN) { $env:CLAUDEX_CURL_BIN } else { 'curl.exe' }
+$settingsFile = if ($env:GICC_SETTINGS_FILE) { $env:GICC_SETTINGS_FILE } else { Join-Path $configDir 'settings.json' }
+$curlCommand = if ($env:GICC_CURL_BIN) { $env:GICC_CURL_BIN } else { 'curl.exe' }
 
 function Fail([string] $Message, [int] $Code = 1) {
-    [Console]::Error.WriteLine("claudex: $Message")
-    Restore-ClaudexSessionEnvironment
+    [Console]::Error.WriteLine("gicc: $Message")
+    Restore-GICCSessionEnvironment
     exit $Code
 }
 
-function Exit-Claudex([int] $Code = 0) {
-    Restore-ClaudexSessionEnvironment
+function Exit-GICC([int] $Code = 0) {
+    Restore-GICCSessionEnvironment
     exit $Code
 }
 
@@ -141,8 +142,8 @@ function Invoke-WithoutPrivateManagedEnvironment {
     )
     $savedEnvironment = @{}
     $privateEnvironmentNames = @($sessionEnvironmentNames + @(
-        'CLAUDEX_SESSION_MODE', 'CLAUDEX_MODEL_MODE', 'CLAUDEX_INTERACTIVE_TUI',
-        'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDEX_CODEX_AUTH_FILE', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE'
+        'GICC_SESSION_MODE', 'GICC_MODEL_MODE', 'GICC_INTERACTIVE_TUI',
+        'CLAUDE_CODE_EFFORT_LEVEL', 'GICC_CODEX_AUTH_FILE', 'GICC_CODEX_SOURCE_AUTH_FILE'
     ) | Select-Object -Unique)
     foreach ($environmentName in $privateEnvironmentNames) {
         if ($PreserveNames -contains $environmentName) { continue }
@@ -197,7 +198,8 @@ function Protect-PrivatePath([string] $Path, [bool] $Directory) {
         )
         [void] $security.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $Path -AclObject $security
+    # FileSystemInfo stays idempotent when the DACL is already protected.
+    (Get-Item -LiteralPath $Path -Force).SetAccessControl($security)
 }
 
 # Options whose following token is data, even when that token resembles
@@ -248,11 +250,11 @@ function Get-LockBarriers([string] $LockDirectory) {
 }
 
 function Invoke-LockTestPause([string] $Stage, [string] $LockDirectory) {
-    if ($env:CLAUDEX_TEST_MODE -ne '1') { return }
-    $match = [Environment]::GetEnvironmentVariable('CLAUDEX_TEST_LOCK_MATCH', 'Process')
+    if ($env:GICC_TEST_MODE -ne '1') { return }
+    $match = [Environment]::GetEnvironmentVariable('GICC_TEST_LOCK_MATCH', 'Process')
     if ($match -and -not $LockDirectory.Contains($match)) { return }
-    $ready = [Environment]::GetEnvironmentVariable("CLAUDEX_TEST_LOCK_${Stage}_READY", 'Process')
-    $continue = [Environment]::GetEnvironmentVariable("CLAUDEX_TEST_LOCK_${Stage}_CONTINUE", 'Process')
+    $ready = [Environment]::GetEnvironmentVariable("GICC_TEST_LOCK_${Stage}_READY", 'Process')
+    $continue = [Environment]::GetEnvironmentVariable("GICC_TEST_LOCK_${Stage}_CONTINUE", 'Process')
     if (-not $ready -or -not $continue) { return }
     [IO.File]::WriteAllText($ready, "ready`n", $utf8)
     while (-not (Test-Path -LiteralPath $continue -PathType Leaf)) { Start-Sleep -Milliseconds 20 }
@@ -295,12 +297,12 @@ function Test-LockDirectoryUnknownEntries([string] $Directory) {
 function Get-LockDirectoryIdentity([string] $Directory) {
     if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { return '' }
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-        if (-not ('ClaudexNativeDirectoryIdentity' -as [type])) {
+        if (-not ('GICCNativeDirectoryIdentity' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 
-public static class ClaudexNativeDirectoryIdentity {
+public static class GICCNativeDirectoryIdentity {
     [StructLayout(LayoutKind.Sequential)]
     private struct FileTime { public uint Low; public uint High; }
 
@@ -344,7 +346,7 @@ public static class ClaudexNativeDirectoryIdentity {
 }
 '@
         }
-        try { return [ClaudexNativeDirectoryIdentity]::GetIdentity($Directory) }
+        try { return [GICCNativeDirectoryIdentity]::GetIdentity($Directory) }
         catch { return '' }
     }
     $stat = Get-Command stat -ErrorAction SilentlyContinue
@@ -367,13 +369,13 @@ function Remove-LegacyLockDirectoryFiles([string] $Directory) {
 }
 
 function Publish-LockFile([string] $Source, [string] $Destination) {
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE -eq '1') {
-        if (-not $env:CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE_MATCH -or
-            $Destination.Contains($env:CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE_MATCH)) {
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_FORCE_PUBLICATION_FAILURE -eq '1') {
+        if (-not $env:GICC_TEST_FORCE_PUBLICATION_FAILURE_MATCH -or
+            $Destination.Contains($env:GICC_TEST_FORCE_PUBLICATION_FAILURE_MATCH)) {
             throw 'forced lock publication failure'
         }
     }
-    if ($env:CLAUDEX_TEST_MODE -ne '1' -or $env:CLAUDEX_TEST_FORCE_HARDLINK_FAILURE -ne '1') {
+    if ($env:GICC_TEST_MODE -ne '1' -or $env:GICC_TEST_FORCE_HARDLINK_FAILURE -ne '1') {
         try {
             New-Item -ItemType HardLink -Path $Destination -Target $Source -ErrorAction Stop | Out-Null
             return
@@ -406,8 +408,8 @@ function Remove-IncompleteLockDirectory([string] $LockDirectory, [string] $Expec
         ((Test-Path -LiteralPath (Join-Path $quarantine 'owner-pid') -PathType Leaf) -and
         (Get-Item -LiteralPath (Join-Path $quarantine 'owner-pid')).Length -gt 0)
     if ($PreserveDirectory) {
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_LOCK_PRESERVE_FILE) {
-            [IO.File]::WriteAllText($env:CLAUDEX_TEST_LOCK_PRESERVE_FILE, "preserved`n", $utf8)
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_LOCK_PRESERVE_FILE) {
+            [IO.File]::WriteAllText($env:GICC_TEST_LOCK_PRESERVE_FILE, "preserved`n", $utf8)
         }
         if ($ExpectedNonce -and $movedNonce -eq $ExpectedNonce) {
             Remove-Item -LiteralPath (Join-Path $quarantine 'generation') -Force -ErrorAction SilentlyContinue
@@ -561,8 +563,8 @@ function Recover-OwnedLockGeneration([string] $LockDirectory, [string] $Expected
     $currentNonce = Get-LockGenerationNonce $LockDirectory
     if (-not $currentNonce) { $currentNonce = Get-OwnedLockField (Join-Path $LockDirectory 'owner') 'nonce' }
     if ($currentNonce -eq $ExpectedNonce -and @(Get-LockBarriers $LockDirectory).Count -eq 0) {
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE) {
-            [IO.File]::WriteAllText($env:CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE, "recovered`n", $utf8)
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_LOCK_SELF_RECOVERED_FILE) {
+            [IO.File]::WriteAllText($env:GICC_TEST_LOCK_SELF_RECOVERED_FILE, "recovered`n", $utf8)
         }
         return $true
     }
@@ -644,8 +646,8 @@ function Acquire-OwnedLock([string] $LockDirectory, [int] $Attempts = 100, [int]
                 Start-Sleep -Milliseconds $DelayMilliseconds
                 continue
             }
-            if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE) {
-                [IO.File]::WriteAllText($env:CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE, "recovered`n", $utf8)
+            if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_LOCK_SELF_RECOVERED_FILE) {
+                [IO.File]::WriteAllText($env:GICC_TEST_LOCK_SELF_RECOVERED_FILE, "recovered`n", $utf8)
             }
             return $nonce
         } catch {
@@ -740,13 +742,13 @@ function Invoke-InternalClaudeUpdate {
         [long]::TryParse(([IO.File]::ReadAllText($stamp).Trim()), [ref] $last) | Out-Null
     }
     if ($now - $last -lt $internalClaudeUpdateInterval) { return }
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_UPDATE_WORKER_ATTEMPT_FILE) {
-        Add-Content -LiteralPath $env:CLAUDEX_TEST_UPDATE_WORKER_ATTEMPT_FILE -Value "start $PID" -Encoding UTF8
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE) {
+        Add-Content -LiteralPath $env:GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE -Value "start $PID" -Encoding UTF8
     }
     $nonce = Acquire-OwnedLock $lock 5 20 3600
     if (-not $nonce) {
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_UPDATE_WORKER_ATTEMPT_FILE) {
-            Add-Content -LiteralPath $env:CLAUDEX_TEST_UPDATE_WORKER_ATTEMPT_FILE -Value "blocked $PID" -Encoding UTF8
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE) {
+            Add-Content -LiteralPath $env:GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE -Value "blocked $PID" -Encoding UTF8
         }
         return
     }
@@ -758,9 +760,9 @@ function Invoke-InternalClaudeUpdate {
         }
         if ($now - $last -lt $internalClaudeUpdateInterval) { return }
         Remove-ProcessEnvironmentVariables @($sessionEnvironmentNames + @(
-            'CLAUDEX_SESSION_MODE', 'CLAUDEX_MODEL_MODE', 'CLAUDEX_INTERACTIVE_TUI',
+            'GICC_SESSION_MODE', 'GICC_MODEL_MODE', 'GICC_INTERACTIVE_TUI',
             'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_NO_FLICKER', 'CLAUDE_CODE_ACCESSIBILITY',
-            'CLAUDEX_INTERNAL_UPDATE_NONCE'
+            'GICC_INTERNAL_UPDATE_NONCE'
         ))
         $log = Join-Path $internalClaudeUpdateDirectory 'claude-update.log'
         $global:LASTEXITCODE = $null
@@ -778,14 +780,14 @@ function Invoke-InternalClaudeUpdate {
     }
 }
 
-if ($claudexInternalClaudeUpdate) {
+if ($giccInternalClaudeUpdate) {
     Invoke-InternalClaudeUpdate
-    Exit-Claudex 0
+    Exit-GICC 0
 }
 
 # Route native harnesses and Anthropic-hosted features before reading the
-# Claudex env file. This prevents managed credentials from entering a native
-# child merely because they exist in Claudex's private configuration.
+# GICC env file. This prevents managed credentials from entering a native
+# child merely because they exist in GICC's private configuration.
 $nativeHarness = ''
 $nativeArguments = @()
 $forceFirstPartyClaude = $false
@@ -841,8 +843,8 @@ if ($nativeHarness) {
         $nativeLabel = if ($nativeHarness -eq 'codex') { 'Codex CLI' } else { 'Claude Code' }
         Fail "$nativeLabel was not found. Install it and retry."
     }
-    $managedParentSession = $env:CLAUDEX_MANAGED_SESSION -eq '1'
-    $nativeClaudeProfile = [Environment]::GetEnvironmentVariable('CLAUDEX_CLAUDE_CONFIG_DIR', 'Process')
+    $managedParentSession = $env:GICC_MANAGED_SESSION -eq '1'
+    $nativeClaudeProfile = [Environment]::GetEnvironmentVariable('GICC_CLAUDE_CONFIG_DIR', 'Process')
     $cleanBun = [string] $env:BUN_OPTIONS
     if ($managedParentSession) {
         $managedPreload = '--preload ' + (Join-Path $configDir 'preload.cjs').Replace('\', '/').Replace(' ', '\ ')
@@ -853,28 +855,29 @@ if ($nativeHarness) {
             Remove-Item -LiteralPath "Env:$environmentName" -ErrorAction SilentlyContinue
         }
         foreach ($environmentName in @(
-            'CLAUDE_CODE_NO_FLICKER', 'CLAUDE_CODE_ACCESSIBILITY', 'CLAUDEX_MODEL_MODE',
-            'CLAUDEX_SESSION_MODE', 'CLAUDEX_INTERACTIVE_TUI', 'CLAUDE_CODE_EFFORT_LEVEL'
+            'CLAUDE_CODE_NO_FLICKER', 'CLAUDE_CODE_ACCESSIBILITY', 'GICC_MODEL_MODE',
+            'GICC_SESSION_MODE', 'GICC_INTERACTIVE_TUI', 'CLAUDE_CODE_EFFORT_LEVEL'
         )) {
             Remove-Item -LiteralPath "Env:$environmentName" -ErrorAction SilentlyContinue
         }
     } elseif ($forceFirstPartyClaude) {
         foreach ($environmentName in $sessionEnvironmentNames | Where-Object {
-            $_ -in @('ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDEX_CHATGPT_PLAN_LABEL', 'CLAUDEX_MANAGED_SESSION',
-                'CLAUDEX_CODEX_AUTH_FILE', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE') -or
+            $_ -in @('ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'GICC_CHATGPT_PLAN_LABEL', 'GICC_MANAGED_SESSION',
+                'GICC_CODEX_AUTH_FILE', 'GICC_CODEX_SOURCE_AUTH_FILE') -or
             $_ -in $competingProviderEnvironmentNames -or
             $_ -like 'ANTHROPIC_*_BASE_URL' -or
             $_ -like 'ANTHROPIC_DEFAULT_*' -or $_ -like 'CLAUDE_CODE_*MODEL*' -or
             $_ -in @('CLAUDE_CODE_ALWAYS_ENABLE_EFFORT', 'CLAUDE_CODE_DISABLE_1M_CONTEXT',
-                'CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY', 'CLAUDE_CODE_MAX_RETRIES', 'CLAUDE_CODE_MAX_CONTEXT_TOKENS',
-                'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDEX_NO_SESSION_PERSISTENCE') -or
-            $_ -like 'CLAUDEX_PROXY_*'
+                'CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY', 'CLAUDE_CODE_MAX_RETRIES', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
+                'CLAUDE_CODE_MAX_CONTEXT_TOKENS',
+                'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'GICC_NO_SESSION_PERSISTENCE') -or
+            $_ -like 'GICC_PROXY_*'
         }) {
             Remove-Item -LiteralPath "Env:$environmentName" -ErrorAction SilentlyContinue
         }
     }
-    # The proxy bearer is Claudex-private even when the caller set it directly.
-    Remove-Item Env:CLAUDEX_PROXY_TOKEN -ErrorAction SilentlyContinue
+    # The proxy bearer is GICC-private even when the caller set it directly.
+    Remove-Item Env:GICC_PROXY_TOKEN -ErrorAction SilentlyContinue
     if ($nativeHarness -eq 'claude') {
         if ($nativeClaudeProfile) { $env:CLAUDE_CONFIG_DIR = $nativeClaudeProfile }
         if ($managedParentSession) {
@@ -887,7 +890,7 @@ if ($nativeHarness) {
         $nativeSucceeded = $?
         $nativeExitCode = if ($null -ne $LASTEXITCODE) { [int] $LASTEXITCODE } elseif ($nativeSucceeded) { 0 } else { 1 }
     } finally {
-        Restore-ClaudexSessionEnvironment
+        Restore-GICCSessionEnvironment
     }
     exit $nativeExitCode
 }
@@ -906,7 +909,7 @@ function Assert-SkillBridgeNode {
     $nodeMajor = Get-NodeMajorVersion
     if ($nodeMajor -ge 18) { return }
     $detected = if ($nodeMajor -gt 0) { "found Node.js $nodeMajor" } else { 'Node.js was not found' }
-    Fail "Node.js 18 or newer is required for skill compatibility ($detected); rerun the Claudex installer to install or upgrade Node.js."
+    Fail "Node.js 18 or newer is required for skill compatibility ($detected); rerun the GICC installer to install or upgrade Node.js."
 }
 
 if (Test-Path -LiteralPath $configFile -PathType Leaf) {
@@ -933,36 +936,37 @@ function Env-OrDefault([string] $Name, [string] $Default) {
     return $value
 }
 
-$proxyToken = Env-OrDefault 'CLAUDEX_PROXY_TOKEN' ''
-$proxyUrl = Env-OrDefault 'CLAUDEX_PROXY_URL' 'http://127.0.0.1:8318'
-$model = Env-OrDefault 'CLAUDEX_MODEL' 'gpt-5.6-sol'
-$permissionMode = Env-OrDefault 'CLAUDEX_PERMISSION_MODE' 'auto'
-$autoModeModel = Env-OrDefault 'CLAUDEX_AUTO_MODE_MODEL' 'gpt-5.6-terra'
-$backgroundModel = Env-OrDefault 'CLAUDEX_BACKGROUND_MODEL' 'gpt-5.6-luna'
-$toolConcurrency = Env-OrDefault 'CLAUDEX_MAX_TOOL_USE_CONCURRENCY' '3'
-$agentConcurrency = Env-OrDefault 'CLAUDEX_MAX_AGENT_CONCURRENCY' '3'
-$maxRetries = Env-OrDefault 'CLAUDEX_MAX_RETRIES' '15'
-$contextWindow = Env-OrDefault 'CLAUDEX_CONTEXT_WINDOW' '400000'
-$compactWindow = Env-OrDefault 'CLAUDEX_AUTO_COMPACT_WINDOW' '280000'
-$mousePointer = Env-OrDefault 'CLAUDEX_MOUSE_POINTER_SHAPE' 'pointer'
-$usageDisplay = Env-OrDefault 'CLAUDEX_USAGE_DISPLAY' 'on'
-$usageRefresh = Env-OrDefault 'CLAUDEX_USAGE_REFRESH_SECONDS' '300'
-$usageTimeout = Env-OrDefault 'CLAUDEX_USAGE_TIMEOUT_SECONDS' '8'
-$usageMaxStale = Env-OrDefault 'CLAUDEX_USAGE_MAX_STALE_SECONDS' '86400'
-$usageSource = Env-OrDefault 'CLAUDEX_USAGE_SOURCE' 'auto'
-$usageAlert = Env-OrDefault 'CLAUDEX_USAGE_ALERT_PERCENT' '20'
-$claudeAutoUpdate = Env-OrDefault 'CLAUDEX_CLAUDE_AUTO_UPDATE' 'on'
-$claudeUpdateInterval = Env-OrDefault 'CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS' '86400'
-$claudexAutoUpdate = Env-OrDefault 'CLAUDEX_AUTO_UPDATE' 'on'
-$claudexUpdateInterval = Env-OrDefault 'CLAUDEX_UPDATE_INTERVAL_SECONDS' '86400'
-$planModePolicy = Env-OrDefault 'CLAUDEX_PLAN_MODE_POLICY' 'conservative'
-$skillBridgeMode = Env-OrDefault 'CLAUDEX_SKILL_BRIDGE' 'on'
-$skillPluginMode = Env-OrDefault 'CLAUDEX_SKILL_PLUGINS' 'on'
-$skillDollarReferenceMode = Env-OrDefault 'CLAUDEX_SKILL_DOLLAR_REFERENCES' 'on'
-$instructionBridgeMode = Env-OrDefault 'CLAUDEX_INSTRUCTION_BRIDGE' 'on'
-$codexSessionHelper = Env-OrDefault 'CLAUDEX_CODEX_SESSION_HELPER' (Join-Path $configDir 'codex-session.ps1')
-$selfUpdateHelper = Env-OrDefault 'CLAUDEX_SELF_UPDATE_HELPER' (Join-Path $configDir 'self-update.ps1')
-$skillBridgeHelper = Env-OrDefault 'CLAUDEX_SKILL_BRIDGE_HELPER' (Join-Path $configDir 'skill-bridge.cjs')
+$proxyToken = Env-OrDefault 'GICC_PROXY_TOKEN' ''
+$proxyUrl = Env-OrDefault 'GICC_PROXY_URL' 'http://127.0.0.1:8318'
+$model = Env-OrDefault 'GICC_MODEL' 'gpt-5.6-sol'
+$permissionMode = Env-OrDefault 'GICC_PERMISSION_MODE' 'auto'
+$autoModeModel = Env-OrDefault 'GICC_AUTO_MODE_MODEL' 'gpt-5.6-terra'
+$backgroundModel = Env-OrDefault 'GICC_BACKGROUND_MODEL' 'gpt-5.6-luna'
+$toolConcurrency = Env-OrDefault 'GICC_MAX_TOOL_USE_CONCURRENCY' '1'
+$agentConcurrency = Env-OrDefault 'GICC_MAX_AGENT_CONCURRENCY' '1'
+$maxRetries = Env-OrDefault 'GICC_MAX_RETRIES' '4'
+$maxOutputTokens = Env-OrDefault 'GICC_MAX_OUTPUT_TOKENS' '128000'
+$contextWindow = Env-OrDefault 'GICC_CONTEXT_WINDOW' '400000'
+$compactWindow = Env-OrDefault 'GICC_AUTO_COMPACT_WINDOW' '280000'
+$mousePointer = Env-OrDefault 'GICC_MOUSE_POINTER_SHAPE' 'pointer'
+$usageDisplay = Env-OrDefault 'GICC_USAGE_DISPLAY' 'on'
+$usageRefresh = Env-OrDefault 'GICC_USAGE_REFRESH_SECONDS' '300'
+$usageTimeout = Env-OrDefault 'GICC_USAGE_TIMEOUT_SECONDS' '8'
+$usageMaxStale = Env-OrDefault 'GICC_USAGE_MAX_STALE_SECONDS' '86400'
+$usageSource = Env-OrDefault 'GICC_USAGE_SOURCE' 'auto'
+$usageAlert = Env-OrDefault 'GICC_USAGE_ALERT_PERCENT' '20'
+$claudeAutoUpdate = Env-OrDefault 'GICC_CLAUDE_AUTO_UPDATE' 'on'
+$claudeUpdateInterval = Env-OrDefault 'GICC_CLAUDE_UPDATE_INTERVAL_SECONDS' '86400'
+$giccAutoUpdate = Env-OrDefault 'GICC_AUTO_UPDATE' 'on'
+$giccUpdateInterval = Env-OrDefault 'GICC_UPDATE_INTERVAL_SECONDS' '86400'
+$planModePolicy = Env-OrDefault 'GICC_PLAN_MODE_POLICY' 'conservative'
+$skillBridgeMode = Env-OrDefault 'GICC_SKILL_BRIDGE' 'on'
+$skillPluginMode = Env-OrDefault 'GICC_SKILL_PLUGINS' 'on'
+$skillDollarReferenceMode = Env-OrDefault 'GICC_SKILL_DOLLAR_REFERENCES' 'on'
+$instructionBridgeMode = Env-OrDefault 'GICC_INSTRUCTION_BRIDGE' 'on'
+$codexSessionHelper = Env-OrDefault 'GICC_CODEX_SESSION_HELPER' (Join-Path $configDir 'codex-session.ps1')
+$selfUpdateHelper = Env-OrDefault 'GICC_SELF_UPDATE_HELPER' (Join-Path $configDir 'self-update.ps1')
+$skillBridgeHelper = Env-OrDefault 'GICC_SKILL_BRIDGE_HELPER' (Join-Path $configDir 'skill-bridge.cjs')
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq 'self-update') {
     if (-not (Test-Path -LiteralPath $selfUpdateHelper -PathType Leaf)) { Fail 'self-update helper is missing; rerun the installer.' }
@@ -977,19 +981,19 @@ if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq 'self-update') {
     $powerShellHost = if (Get-Command powershell.exe -CommandType Application -ErrorAction SilentlyContinue) {
         (Get-Command powershell.exe -CommandType Application).Source
     } else { (Get-Process -Id $PID).Path }
-    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('CLAUDEX_CONFIG_DIR') -Action {
+    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
         & $powerShellHost -NoLogo -NoProfile -ExecutionPolicy Bypass -File $selfUpdateHelper $selfUpdateSwitch
     }
-    Exit-Claudex $script:lastPrivateBoundaryExitCode
+    Exit-GICC $script:lastPrivateBoundaryExitCode
 }
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('--login', '--logout', '--auth-status')) {
-    if (-not (Test-Path -LiteralPath $codexSessionHelper -PathType Leaf)) { Fail 'authentication helper is missing; reinstall Claudex.' }
+    if (-not (Test-Path -LiteralPath $codexSessionHelper -PathType Leaf)) { Fail 'authentication helper is missing; reinstall GICC.' }
     $action = switch ($ClaudeArguments[0]) { '--login' { 'login' } '--logout' { 'logout' } default { 'status' } }
-    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('CLAUDEX_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE') -Action {
+    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_SOURCE_AUTH_FILE') -Action {
         & $codexSessionHelper $action
     }
-    Exit-Claudex $script:lastPrivateBoundaryExitCode
+    Exit-GICC $script:lastPrivateBoundaryExitCode
 }
 
 $earlyRuntimeBypass = $false
@@ -1022,7 +1026,7 @@ function Get-ProxyEndpointPolicy {
         $uri.Scheme -notin @('http', 'https') -or -not $uri.Host -or
         $uri.UserInfo -or $uri.Query -or $uri.Fragment -or
         $uri.AbsolutePath -notin @('', '/') -or $uri.Port -lt 1) {
-        throw 'CLAUDEX_PROXY_URL must be an HTTP(S) origin without credentials, a path, a query, or a fragment.'
+        throw 'GICC_PROXY_URL must be an HTTP(S) origin without credentials, a path, a query, or a fragment.'
     }
     $isLoopback = $uri.Host.Equals('localhost', [StringComparison]::OrdinalIgnoreCase)
     $address = $null
@@ -1032,10 +1036,10 @@ function Get-ProxyEndpointPolicy {
     }
     if (-not $isLoopback) {
         if ($uri.Scheme -ne 'https') {
-            throw 'Claudex refuses to send its proxy credential to a non-loopback HTTP endpoint; remote proxies must use HTTPS.'
+            throw 'GICC refuses to send its proxy credential to a non-loopback HTTP endpoint; remote proxies must use HTTPS.'
         }
-        if ((Env-OrDefault 'CLAUDEX_ALLOW_REMOTE_PROXY' '0') -ne '1') {
-            throw 'Claudex refuses non-loopback proxy URLs by default. Set CLAUDEX_ALLOW_REMOTE_PROXY=1 only for an explicitly trusted HTTPS proxy.'
+        if ((Env-OrDefault 'GICC_ALLOW_REMOTE_PROXY' '0') -ne '1') {
+            throw 'GICC refuses non-loopback proxy URLs by default. Set GICC_ALLOW_REMOTE_PROXY=1 only for an explicitly trusted HTTPS proxy.'
         }
     }
     return [pscustomobject]@{ Uri = $uri; IsLoopback = $isLoopback }
@@ -1043,25 +1047,25 @@ function Get-ProxyEndpointPolicy {
 
 function Assert-ProxyConfiguration {
     if (-not (Test-Path -LiteralPath $configFile -PathType Leaf)) {
-        Fail "missing $configFile; reinstall or restore the Claudex configuration."
+        Fail "missing $configFile; reinstall or restore the GICC configuration."
     }
     if (-not (Test-Path -LiteralPath $settingsFile -PathType Leaf)) {
-        Fail "missing $settingsFile; reinstall or restore the Claudex settings."
+        Fail "missing $settingsFile; reinstall or restore the GICC settings."
     }
-    if (-not $proxyToken) { Fail 'CLAUDEX_PROXY_TOKEN is not configured' }
-    if ($proxyToken.Contains("`r") -or $proxyToken.Contains("`n")) { Fail 'CLAUDEX_PROXY_TOKEN contains an unsupported newline.' 2 }
+    if (-not $proxyToken) { Fail 'GICC_PROXY_TOKEN is not configured' }
+    if ($proxyToken.Contains("`r") -or $proxyToken.Contains("`n")) { Fail 'GICC_PROXY_TOKEN contains an unsupported newline.' 2 }
     try { [void](Get-ProxyEndpointPolicy) } catch { Fail $_.Exception.Message 2 }
     if ($model -notin $managedCodexModelIds) {
-        Fail "invalid CLAUDEX_MODEL '$model'; expected gpt-5.6-sol, gpt-5.6-terra, or gpt-5.6-luna." 2
+        Fail "invalid GICC_MODEL '$model'; expected gpt-5.6-sol, gpt-5.6-terra, or gpt-5.6-luna." 2
     }
 }
 if (-not $earlyRuntimeBypass) {
     if ($permissionMode -notin @('manual', 'auto', 'acceptEdits', 'dontAsk', 'plan')) {
-        Fail "invalid CLAUDEX_PERMISSION_MODE '$permissionMode'; expected manual, auto, acceptEdits, dontAsk, or plan." 2
+        Fail "invalid GICC_PERMISSION_MODE '$permissionMode'; expected manual, auto, acceptEdits, dontAsk, or plan." 2
     }
     foreach ($modelSetting in @(
-        @{ Name = 'CLAUDEX_AUTO_MODE_MODEL'; Value = $autoModeModel },
-        @{ Name = 'CLAUDEX_BACKGROUND_MODEL'; Value = $backgroundModel }
+        @{ Name = 'GICC_AUTO_MODE_MODEL'; Value = $autoModeModel },
+        @{ Name = 'GICC_BACKGROUND_MODEL'; Value = $backgroundModel }
     )) {
         if ($modelSetting.Value -notin $managedCodexModelIds) {
             Fail "$($modelSetting.Name) must be a managed Codex model (gpt-5.6-sol, gpt-5.6-terra, or gpt-5.6-luna)." 2
@@ -1078,37 +1082,38 @@ function Require-Integer([string] $Name, [string] $Value, [int] $Minimum, [int] 
 }
 
 if (-not $earlyRuntimeBypass) {
-    $toolConcurrencyNumber = Require-Integer 'CLAUDEX_MAX_TOOL_USE_CONCURRENCY' $toolConcurrency 1 2147483647
-    $agentConcurrencyNumber = Require-Integer 'CLAUDEX_MAX_AGENT_CONCURRENCY' $agentConcurrency 1 2147483647
-    $maxRetriesNumber = Require-Integer 'CLAUDEX_MAX_RETRIES' $maxRetries 0 15
-    $contextWindowNumber = Require-Integer 'CLAUDEX_CONTEXT_WINDOW' $contextWindow 100000 1000000
-    $compactWindowNumber = Require-Integer 'CLAUDEX_AUTO_COMPACT_WINDOW' $compactWindow 100000 $contextWindowNumber
-    $usageRefreshNumber = Require-Integer 'CLAUDEX_USAGE_REFRESH_SECONDS' $usageRefresh 60 3600
-    $usageTimeoutNumber = Require-Integer 'CLAUDEX_USAGE_TIMEOUT_SECONDS' $usageTimeout 1 30
-    $usageMaxStaleNumber = Require-Integer 'CLAUDEX_USAGE_MAX_STALE_SECONDS' $usageMaxStale $usageRefreshNumber 604800
-    $usageAlertNumber = Require-Integer 'CLAUDEX_USAGE_ALERT_PERCENT' $usageAlert 0 100
-    $claudeUpdateIntervalNumber = Require-Integer 'CLAUDEX_CLAUDE_UPDATE_INTERVAL_SECONDS' $claudeUpdateInterval 3600 2592000
-    $claudexUpdateIntervalNumber = Require-Integer 'CLAUDEX_UPDATE_INTERVAL_SECONDS' $claudexUpdateInterval 3600 2592000
-    if ($mousePointer -notin @('pointer', 'default', 'off')) { Fail 'CLAUDEX_MOUSE_POINTER_SHAPE must be pointer, default, or off.' 2 }
-    if ($usageDisplay -notin @('on', 'off')) { Fail 'CLAUDEX_USAGE_DISPLAY must be on or off.' 2 }
-    if ($usageSource -notin @('auto', 'web', 'app-server')) { Fail 'CLAUDEX_USAGE_SOURCE must be auto, web, or app-server.' 2 }
-    if ($claudeAutoUpdate -notin @('on', 'off')) { Fail 'CLAUDEX_CLAUDE_AUTO_UPDATE must be on or off.' 2 }
-    if ($claudexAutoUpdate -notin @('on', 'notify', 'off')) { Fail 'CLAUDEX_AUTO_UPDATE must be on, notify, or off.' 2 }
-    if ($planModePolicy -notin @('conservative', 'normal')) { Fail 'CLAUDEX_PLAN_MODE_POLICY must be conservative or normal.' 2 }
-    if ($skillBridgeMode -notin @('on', 'off')) { Fail 'CLAUDEX_SKILL_BRIDGE must be on or off.' 2 }
-    if ($skillPluginMode -notin @('on', 'off')) { Fail 'CLAUDEX_SKILL_PLUGINS must be on or off.' 2 }
-    if ($skillDollarReferenceMode -notin @('on', 'off')) { Fail 'CLAUDEX_SKILL_DOLLAR_REFERENCES must be on or off.' 2 }
-    if ($instructionBridgeMode -notin @('on', 'off')) { Fail 'CLAUDEX_INSTRUCTION_BRIDGE must be on or off.' 2 }
+    $toolConcurrencyNumber = Require-Integer 'GICC_MAX_TOOL_USE_CONCURRENCY' $toolConcurrency 1 2147483647
+    $agentConcurrencyNumber = Require-Integer 'GICC_MAX_AGENT_CONCURRENCY' $agentConcurrency 1 2147483647
+    $maxRetriesNumber = Require-Integer 'GICC_MAX_RETRIES' $maxRetries 0 15
+    $maxOutputTokensNumber = Require-Integer 'GICC_MAX_OUTPUT_TOKENS' $maxOutputTokens 1024 128000
+    $contextWindowNumber = Require-Integer 'GICC_CONTEXT_WINDOW' $contextWindow 100000 1000000
+    $compactWindowNumber = Require-Integer 'GICC_AUTO_COMPACT_WINDOW' $compactWindow 100000 $contextWindowNumber
+    $usageRefreshNumber = Require-Integer 'GICC_USAGE_REFRESH_SECONDS' $usageRefresh 60 3600
+    $usageTimeoutNumber = Require-Integer 'GICC_USAGE_TIMEOUT_SECONDS' $usageTimeout 1 30
+    $usageMaxStaleNumber = Require-Integer 'GICC_USAGE_MAX_STALE_SECONDS' $usageMaxStale $usageRefreshNumber 604800
+    $usageAlertNumber = Require-Integer 'GICC_USAGE_ALERT_PERCENT' $usageAlert 0 100
+    $claudeUpdateIntervalNumber = Require-Integer 'GICC_CLAUDE_UPDATE_INTERVAL_SECONDS' $claudeUpdateInterval 3600 2592000
+    $giccUpdateIntervalNumber = Require-Integer 'GICC_UPDATE_INTERVAL_SECONDS' $giccUpdateInterval 3600 2592000
+    if ($mousePointer -notin @('pointer', 'default', 'off')) { Fail 'GICC_MOUSE_POINTER_SHAPE must be pointer, default, or off.' 2 }
+    if ($usageDisplay -notin @('on', 'off')) { Fail 'GICC_USAGE_DISPLAY must be on or off.' 2 }
+    if ($usageSource -notin @('auto', 'web', 'app-server')) { Fail 'GICC_USAGE_SOURCE must be auto, web, or app-server.' 2 }
+    if ($claudeAutoUpdate -notin @('on', 'off')) { Fail 'GICC_CLAUDE_AUTO_UPDATE must be on or off.' 2 }
+    if ($giccAutoUpdate -notin @('on', 'notify', 'off')) { Fail 'GICC_AUTO_UPDATE must be on, notify, or off.' 2 }
+    if ($planModePolicy -notin @('conservative', 'normal')) { Fail 'GICC_PLAN_MODE_POLICY must be conservative or normal.' 2 }
+    if ($skillBridgeMode -notin @('on', 'off')) { Fail 'GICC_SKILL_BRIDGE must be on or off.' 2 }
+    if ($skillPluginMode -notin @('on', 'off')) { Fail 'GICC_SKILL_PLUGINS must be on or off.' 2 }
+    if ($skillDollarReferenceMode -notin @('on', 'off')) { Fail 'GICC_SKILL_DOLLAR_REFERENCES must be on or off.' 2 }
+    if ($instructionBridgeMode -notin @('on', 'off')) { Fail 'GICC_INSTRUCTION_BRIDGE must be on or off.' 2 }
 } else {
-    $toolConcurrencyNumber = 3; $agentConcurrencyNumber = 3; $maxRetriesNumber = 4
+    $toolConcurrencyNumber = 1; $agentConcurrencyNumber = 1; $maxRetriesNumber = 4; $maxOutputTokensNumber = 128000
     $contextWindowNumber = 400000; $compactWindowNumber = 280000
     $usageRefreshNumber = 300; $usageTimeoutNumber = 8; $usageMaxStaleNumber = 86400; $usageAlertNumber = 20
-    $claudeUpdateIntervalNumber = 86400; $claudexUpdateIntervalNumber = 86400
+    $claudeUpdateIntervalNumber = 86400; $giccUpdateIntervalNumber = 86400
     if ($mousePointer -notin @('pointer', 'default', 'off')) { $mousePointer = 'pointer' }
     if ($usageDisplay -notin @('on', 'off')) { $usageDisplay = 'on' }
     if ($usageSource -notin @('auto', 'web', 'app-server')) { $usageSource = 'auto' }
     if ($claudeAutoUpdate -notin @('on', 'off')) { $claudeAutoUpdate = 'on' }
-    if ($claudexAutoUpdate -notin @('on', 'notify', 'off')) { $claudexAutoUpdate = 'on' }
+    if ($giccAutoUpdate -notin @('on', 'notify', 'off')) { $giccAutoUpdate = 'on' }
     if ($planModePolicy -notin @('conservative', 'normal')) { $planModePolicy = 'conservative' }
     if ($permissionMode -notin @('manual', 'auto', 'acceptEdits', 'dontAsk', 'plan')) { $permissionMode = 'auto' }
     if ($autoModeModel -notin $managedCodexModelIds) { $autoModeModel = 'gpt-5.6-terra' }
@@ -1118,13 +1123,13 @@ if (-not $earlyRuntimeBypass) {
 $env:CLAUDE_CONFIG_DIR = $configDir
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq 'skills') {
-    if ($ClaudeArguments.Count -ne 1) { Fail 'Usage: claudex skills' 2 }
+    if ($ClaudeArguments.Count -ne 1) { Fail 'Usage: gicc skills' 2 }
     Assert-SkillBridgeNode
-    if (-not (Test-Path -LiteralPath $skillBridgeHelper -PathType Leaf)) { Fail 'skill bridge helper is missing; reinstall Claudex.' }
+    if (-not (Test-Path -LiteralPath $skillBridgeHelper -PathType Leaf)) { Fail 'skill bridge helper is missing; reinstall GICC.' }
     Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
-        'CLAUDEX_CONFIG_DIR', 'CLAUDEX_CLAUDE_CONFIG_DIR', 'CLAUDEX_INSTRUCTION_BRIDGE'
+        'GICC_CONFIG_DIR', 'GICC_CLAUDE_CONFIG_DIR', 'GICC_INSTRUCTION_BRIDGE'
     ) -Action { & node $skillBridgeHelper list --project (Get-Location).Path }
-    Exit-Claudex $script:lastPrivateBoundaryExitCode
+    Exit-GICC $script:lastPrivateBoundaryExitCode
 }
 $stateFile = Join-Path $configDir '.claude.json'
 $managedModels = @(
@@ -1214,7 +1219,7 @@ function Start-FableplanChildProcess {
             # this launcher sourced its managed config; a nested managed child
             # is scrubbed by the recursive native boundary itself.
             $restoreNames = @($sessionEnvironmentNames + @($previousConfigEnvironment.Keys) + @(
-                'CLAUDEX_SESSION_MODE', 'CLAUDEX_MODEL_MODE', 'CLAUDEX_INTERACTIVE_TUI',
+                'GICC_SESSION_MODE', 'GICC_MODEL_MODE', 'GICC_INTERACTIVE_TUI',
                 'CLAUDE_CODE_EFFORT_LEVEL'
             ) | Select-Object -Unique)
             $managedEnvironment = @{}
@@ -1222,7 +1227,7 @@ function Start-FableplanChildProcess {
                 $managedEnvironment[$environmentName] = [Environment]::GetEnvironmentVariable($environmentName, 'Process')
             }
             try {
-                Restore-ClaudexSessionEnvironment
+                Restore-GICCSessionEnvironment
                 if (-not $process.Start()) { throw 'could not start the Fable planner process.' }
             } finally {
                 foreach ($environmentName in $managedEnvironment.Keys) {
@@ -1232,7 +1237,7 @@ function Start-FableplanChildProcess {
                 }
             }
         } else {
-            Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('CLAUDEX_CONFIG_DIR') -Action {
+            Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
                 if (-not $process.Start()) { throw 'could not start the Terra implementer process.' }
             }
         }
@@ -1245,11 +1250,11 @@ function Start-FableplanChildProcess {
 
 function Invoke-Fableplan([string] $Task) {
     if ([string]::IsNullOrEmpty($Task) -or $Task.IndexOf([char] 0) -ge 0) {
-        Fail 'Usage: claudex --fableplan <single task string>' 2
+        Fail 'Usage: gicc --fableplan <single task string>' 2
     }
     Assert-ProxyConfiguration
     $maxPlanBytes = 1048576
-    $tempDirectory = Join-Path ([IO.Path]::GetTempPath()) ('claudex-fableplan.' + [guid]::NewGuid().ToString('N'))
+    $tempDirectory = Join-Path ([IO.Path]::GetTempPath()) ('gicc-fableplan.' + [guid]::NewGuid().ToString('N'))
     $planFile = Join-Path $tempDirectory 'plan.txt'
     $failureMessage = ''
     $failureCode = 1
@@ -1337,11 +1342,11 @@ function Invoke-Fableplan([string] $Task) {
         Remove-Item -LiteralPath $tempDirectory -Force -ErrorAction SilentlyContinue
     }
     if ($failureMessage) { Fail $failureMessage $failureCode }
-    Exit-Claudex $implementationExitCode
+    Exit-GICC $implementationExitCode
 }
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '--fableplan') {
-    if ($ClaudeArguments.Count -ne 2) { Fail 'Usage: claudex --fableplan <single task string>' 2 }
+    if ($ClaudeArguments.Count -ne 2) { Fail 'Usage: gicc --fableplan <single task string>' 2 }
     Invoke-Fableplan ([string] $ClaudeArguments[1])
 }
 
@@ -1362,8 +1367,8 @@ function Start-DiscardingProcess([string] $Executable, [string[]] $Arguments, [s
         # noisy watcher after the OS pipe fills.
         $stdoutDrain = $process.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null)
         $stderrDrain = $process.StandardError.BaseStream.CopyToAsync([IO.Stream]::Null)
-        $process | Add-Member -NotePropertyName ClaudexStdoutDrain -NotePropertyValue $stdoutDrain
-        $process | Add-Member -NotePropertyName ClaudexStderrDrain -NotePropertyValue $stderrDrain
+        $process | Add-Member -NotePropertyName GICCStdoutDrain -NotePropertyValue $stdoutDrain
+        $process | Add-Member -NotePropertyName GICCStderrDrain -NotePropertyValue $stderrDrain
         return $process
     } catch {
         $process.Dispose()
@@ -1495,8 +1500,8 @@ function Test-ProxyReady([int] $TimeoutMilliseconds = 5000) {
 }
 
 function Test-ProxyReachable {
-    if ($env:CLAUDEX_TEST_PROXY_REACHABLE_FILE) {
-        return (Test-Path -LiteralPath $env:CLAUDEX_TEST_PROXY_REACHABLE_FILE -PathType Leaf)
+    if ($env:GICC_TEST_PROXY_REACHABLE_FILE) {
+        return (Test-Path -LiteralPath $env:GICC_TEST_PROXY_REACHABLE_FILE -PathType Leaf)
     }
     # A listening socket is not health: a wedged, unauthenticated, or unrelated
     # service can own the port. Require the authenticated models contract.
@@ -1504,7 +1509,7 @@ function Test-ProxyReachable {
 }
 
 function Find-ProxyExecutable {
-    $configured = Env-OrDefault 'CLAUDEX_PROXY_BIN' ''
+    $configured = Env-OrDefault 'GICC_PROXY_BIN' ''
     if ($configured -and (Test-Path -LiteralPath $configured -PathType Leaf)) { return $configured }
     $managed = Join-Path $configDir 'bin\cliproxyapi.exe'
     if (Test-Path -LiteralPath $managed -PathType Leaf) { return $managed }
@@ -1628,14 +1633,14 @@ function Stop-RecordedManagedProxy([string] $Reason) {
         $process.Refresh()
         $stopped = $process.HasExited
         if (-not $stopped) {
-            Write-ProxyRecoveryDiagnostic "could not stop verified Claudex-managed proxy pid=$($record.pid) after $Reason"
+            Write-ProxyRecoveryDiagnostic "could not stop verified GICC-managed proxy pid=$($record.pid) after $Reason"
             return $false
         }
         Remove-ManagedProxyMetadata $record
-        Write-ProxyRecoveryDiagnostic "stopped Claudex-managed proxy pid=$($record.pid) after $Reason"
+        Write-ProxyRecoveryDiagnostic "stopped GICC-managed proxy pid=$($record.pid) after $Reason"
         return $true
     } catch {
-        Write-ProxyRecoveryDiagnostic "could not stop verified Claudex-managed proxy pid=$($record.pid) after $Reason"
+        Write-ProxyRecoveryDiagnostic "could not stop verified GICC-managed proxy pid=$($record.pid) after $Reason"
         return $false
     } finally {
         if ($null -ne $process) { try { $process.Dispose() } catch { } }
@@ -1666,7 +1671,7 @@ function Get-ProxyStartupMutexName {
         $identity = [IO.Path]::GetFullPath($configDir).ToLowerInvariant()
         $hash = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($identity))
         $suffix = -join ($hash[0..15] | ForEach-Object { $_.ToString('x2') })
-        return "Local\Claudex.ProxyStart.$suffix"
+        return "Local\GICC.ProxyStart.$suffix"
     } finally { $sha.Dispose() }
 }
 
@@ -1684,7 +1689,7 @@ function Assert-ProxyModelAvailable([string[]] $RequiredModels) {
     }
     $routeSummary = $routeCandidates -join ', '
     Write-ProxyRecoveryDiagnostic "proxy is healthy but primary and fallback model routes are unavailable: $($unavailableRoutes -join '; ')"
-    throw "the authenticated Codex account does not advertise any requested model route ($routeSummary). Run: claudex --doctor"
+    throw "the authenticated Codex account does not advertise any requested model route ($routeSummary). Run: gicc --doctor"
 }
 
 $script:lastProxyFailureWasAuthSync = $false
@@ -1697,13 +1702,13 @@ function Ensure-Proxy([string[]] $RequiredModels = @($model)) {
     $endpointPolicy = Get-ProxyEndpointPolicy
     Write-ProxyWatcherTestTrace 'recovery: begin'
     if (-not (Test-Path -LiteralPath $codexSessionHelper -PathType Leaf)) {
-        throw "authentication helper is missing: $codexSessionHelper; reinstall Claudex."
+        throw "authentication helper is missing: $codexSessionHelper; reinstall GICC."
     }
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_SKIP_AUTH_SYNC -eq '1') {
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_SKIP_AUTH_SYNC -eq '1') {
         $script:lastPrivateBoundaryExitCode = 0
     } else {
         Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
-            'CLAUDEX_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE'
+            'GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_SOURCE_AUTH_FILE'
         ) -Action { & $codexSessionHelper sync }
     }
     if ($script:lastPrivateBoundaryExitCode -ne 0) {
@@ -1718,18 +1723,18 @@ function Ensure-Proxy([string[]] $RequiredModels = @($model)) {
     if ($initialHealth -eq 'authentication-failed') {
         if (-not $endpointPolicy.IsLoopback) {
             Write-ProxyRecoveryDiagnostic 'trusted remote proxy rejected the configured authentication token'
-            throw 'the trusted remote proxy rejected the configured authentication token; verify its Claudex credential without starting or stopping a local service.'
+            throw 'the trusted remote proxy rejected the configured authentication token; verify its GICC credential without starting or stopping a local service.'
         }
         if (-not (Test-RecordedManagedProxy)) {
-            Write-ProxyRecoveryDiagnostic 'proxy authentication failed but no matching Claudex-managed process could be proven'
-            throw 'the loopback proxy rejected the configured authentication token, but Claudex will not stop an unverified process. Stop the conflicting service or rerun the installer.'
+            Write-ProxyRecoveryDiagnostic 'proxy authentication failed but no matching GICC-managed process could be proven'
+            throw 'the loopback proxy rejected the configured authentication token, but GICC will not stop an unverified process. Stop the conflicting service or rerun the installer.'
         }
-        # Do not stop it until the startup lock is held: another Claudex tab may
+        # Do not stop it until the startup lock is held: another GICC tab may
         # already be replacing the same managed process.
-        Write-ProxyRecoveryDiagnostic 'verified Claudex-managed proxy authentication rejection; entering serialized recovery'
+        Write-ProxyRecoveryDiagnostic 'verified GICC-managed proxy authentication rejection; entering serialized recovery'
     }
     if (-not $endpointPolicy.IsLoopback) {
-        throw 'the trusted remote proxy is unavailable; Claudex will not start a local service for a remote endpoint.'
+        throw 'the trusted remote proxy is unavailable; GICC will not start a local service for a remote endpoint.'
     }
     Write-ProxyWatcherTestTrace 'recovery: readiness check failed'
     Write-ProxyRecoveryDiagnostic 'authenticated proxy readiness failed; entering recovery'
@@ -1767,13 +1772,13 @@ function Ensure-Proxy([string[]] $RequiredModels = @($model)) {
         $lockNonce = Acquire-OwnedLock $lockDir 1 0 120
         if ($lockNonce) {
             $lockAcquired = $true
-            if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_PROXY_LOCK_ATTEMPT_FILE) {
-                Add-Content -LiteralPath $env:CLAUDEX_TEST_PROXY_LOCK_ATTEMPT_FILE -Value "acquired $PID" -Encoding UTF8
+            if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_PROXY_LOCK_ATTEMPT_FILE) {
+                Add-Content -LiteralPath $env:GICC_TEST_PROXY_LOCK_ATTEMPT_FILE -Value "acquired $PID" -Encoding UTF8
             }
             break
         }
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_PROXY_LOCK_ATTEMPT_FILE) {
-            Add-Content -LiteralPath $env:CLAUDEX_TEST_PROXY_LOCK_ATTEMPT_FILE -Value "blocked $PID" -Encoding UTF8
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_PROXY_LOCK_ATTEMPT_FILE) {
+            Add-Content -LiteralPath $env:GICC_TEST_PROXY_LOCK_ATTEMPT_FILE -Value "blocked $PID" -Encoding UTF8
         }
         if (Test-ProxyReady 1000) {
             Assert-ProxyModelAvailable $RequiredModels
@@ -1798,18 +1803,18 @@ function Ensure-Proxy([string[]] $RequiredModels = @($model)) {
         if ($lockedHealth -eq 'healthy') { Assert-ProxyModelAvailable $RequiredModels; $becameReady = $true; return }
         if ($lockedHealth -eq 'authentication-failed') {
             if (-not (Stop-RecordedManagedProxy 'an authenticated 401/403 response after acquiring the startup lock')) {
-                throw 'the loopback proxy rejected the configured authentication token, but Claudex will not stop an unverified process. Stop the conflicting service or rerun the installer.'
+                throw 'the loopback proxy rejected the configured authentication token, but GICC will not stop an unverified process. Stop the conflicting service or rerun the installer.'
             }
         } else {
             # A tracked process can also remain alive while failing readiness.
-            # Stop only a strongly identified Claudex record; no record
-            # simply means there is no process Claudex is authorized to kill.
+            # Stop only a strongly identified GICC record; no record
+            # simply means there is no process GICC is authorized to kill.
             [void](Stop-RecordedManagedProxy 'authenticated readiness failure after acquiring the startup lock')
         }
         $proxyBinary = Find-ProxyExecutable
         if (-not $proxyBinary) { throw 'CLIProxyAPI is not reachable and no proxy executable was found.' }
-        [Console]::Error.WriteLine('claudex: starting the local CLIProxyAPI service...')
-        $proxyConfig = Env-OrDefault 'CLAUDEX_PROXY_CONFIG' (Join-Path $configDir 'cliproxyapi.yaml')
+        [Console]::Error.WriteLine('gicc: starting the local CLIProxyAPI service...')
+        $proxyConfig = Env-OrDefault 'GICC_PROXY_CONFIG' (Join-Path $configDir 'cliproxyapi.yaml')
         $logDir = Join-Path $configDir 'logs'
         [IO.Directory]::CreateDirectory($logDir) | Out-Null
         $arguments = @()
@@ -1832,7 +1837,7 @@ function Ensure-Proxy([string[]] $RequiredModels = @($model)) {
             $spawnedProxyRecord = Write-ManagedProxyMetadata $spawnedProxy $proxyBinary
         } catch {
             Stop-NewlySpawnedProxy $spawnedProxy $null 'managed process metadata could not be recorded'
-            throw 'the local proxy started, but Claudex could not record safe process metadata; the process was stopped.'
+            throw 'the local proxy started, but GICC could not record safe process metadata; the process was stopped.'
         }
         Write-ProxyWatcherTestTrace 'recovery: process launched'
         $readinessDeadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -1870,15 +1875,15 @@ function Ensure-Proxy([string[]] $RequiredModels = @($model)) {
         }
     }
     if (-not $becameReady) {
-        throw 'local proxy did not become healthy before the 15-second deadline. Run: claudex --doctor'
+        throw 'local proxy did not become healthy before the 15-second deadline. Run: gicc --doctor'
     }
 }
 
 function Test-InteractiveCodexLoginAllowed {
-    if ($env:CLAUDEX_DISABLE_INTERACTIVE_LOGIN -eq '1') { return $false }
+    if ($env:GICC_DISABLE_INTERACTIVE_LOGIN -eq '1') { return $false }
     if ($env:CI -and $env:CI -notin @('0', 'false', 'FALSE', 'no', 'NO')) { return $false }
     if (-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) { return $true }
-    return ($env:CLAUDEX_TEST_TTY_INPUT -eq '1' -and $env:CLAUDEX_TEST_TTY_OUTPUT -eq '1')
+    return ($env:GICC_TEST_TTY_INPUT -eq '1' -and $env:GICC_TEST_TTY_OUTPUT -eq '1')
 }
 
 # Keep login browser launches exclusive to the foreground startup path. The
@@ -1895,23 +1900,23 @@ function Ensure-ProxyForLaunch([string[]] $RequiredModels = @($model)) {
     if ($script:lastProxyAuthSyncExitCode -notin @(11, 13, 14)) { throw $initialFailure }
 
     if ($script:interactiveLoginAttempted) {
-        [Console]::Error.WriteLine('claudex: Codex authentication is still unavailable after the sign-in attempt. Run `claudex --login` to retry.')
+        [Console]::Error.WriteLine('gicc: Codex authentication is still unavailable after the sign-in attempt. Run `gicc --login` to retry.')
         throw $initialFailure
     }
     if (-not (Test-InteractiveCodexLoginAllowed)) {
-        [Console]::Error.WriteLine('claudex: Codex sign-in is required. Run `claudex --login` in an interactive terminal, then retry.')
+        [Console]::Error.WriteLine('gicc: Codex sign-in is required. Run `gicc --login` in an interactive terminal, then retry.')
         throw $initialFailure
     }
 
     $script:interactiveLoginAttempted = $true
-    [Console]::Error.WriteLine('claudex: Codex sign-in is required. Opening the official Codex browser login...')
+    [Console]::Error.WriteLine('gicc: Codex sign-in is required. Opening the official Codex browser login...')
     Write-ProxyRecoveryDiagnostic 'foreground startup requested official Codex browser login'
     Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
-        'CLAUDEX_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE'
+        'GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_SOURCE_AUTH_FILE'
     ) -Action { & $codexSessionHelper login }
     if ($script:lastPrivateBoundaryExitCode -ne 0) {
         Write-ProxyRecoveryDiagnostic "foreground Codex browser login failed with exit code $($script:lastPrivateBoundaryExitCode)"
-        throw 'Codex sign-in did not complete. Run `claudex --login` to retry.'
+        throw 'Codex sign-in did not complete. Run `gicc --login` to retry.'
     }
 
     try {
@@ -1919,14 +1924,14 @@ function Ensure-ProxyForLaunch([string[]] $RequiredModels = @($model)) {
         Write-ProxyRecoveryDiagnostic 'foreground Codex browser login synchronized successfully'
     } catch {
         if ($script:lastProxyFailureWasAuthSync) {
-            [Console]::Error.WriteLine('claudex: Codex authentication is still unavailable after sign-in. Run `claudex --login` to retry.')
+            [Console]::Error.WriteLine('gicc: Codex authentication is still unavailable after sign-in. Run `gicc --login` to retry.')
         }
         throw
     }
 }
 
 function Start-AuthWatcher {
-    if ($env:CLAUDEX_SKIP_AUTH_WATCHER -eq '1') { return $null }
+    if ($env:GICC_SKIP_AUTH_WATCHER -eq '1') { return $null }
     $hostExecutable = (Get-Process -Id $PID).Path
     $parentIdentity = [string] (Get-Process -Id $PID -ErrorAction Stop).StartTime.ToUniversalTime().Ticks
     $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $codexSessionHelper,
@@ -1934,23 +1939,23 @@ function Start-AuthWatcher {
     if ($backgroundLaunch) { $arguments += '-BackgroundWatch' }
     try {
         $watcher = Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
-            'CLAUDEX_CONFIG_DIR', 'CLAUDE_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE'
+            'GICC_CONFIG_DIR', 'CLAUDE_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_SOURCE_AUTH_FILE'
         ) -Action {
             Start-DiscardingProcess $hostExecutable $arguments -Hidden:([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
         }
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_AUTH_WATCH_PID_FILE) {
-            [IO.File]::WriteAllText($env:CLAUDEX_TEST_AUTH_WATCH_PID_FILE, "$($watcher.Id)`n", $utf8)
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_AUTH_WATCH_PID_FILE) {
+            [IO.File]::WriteAllText($env:GICC_TEST_AUTH_WATCH_PID_FILE, "$($watcher.Id)`n", $utf8)
         }
         return $watcher
     } catch {
-        [Console]::Error.WriteLine('claudex: warning: automatic Codex account switching could not be started for this session.')
+        [Console]::Error.WriteLine('gicc: warning: automatic Codex account switching could not be started for this session.')
         return $null
     }
 }
 
 function Write-ProxyWatcherTestTrace([string] $Message) {
-    if (-not $env:CLAUDEX_TEST_PROXY_WATCH_ERROR_FILE) { return }
-    try { Add-Content -LiteralPath $env:CLAUDEX_TEST_PROXY_WATCH_ERROR_FILE -Value $Message } catch { }
+    if (-not $env:GICC_TEST_PROXY_WATCH_ERROR_FILE) { return }
+    try { Add-Content -LiteralPath $env:GICC_TEST_PROXY_WATCH_ERROR_FILE -Value $Message } catch { }
 }
 
 function Test-WatchParentCurrent([int] $ParentProcessId, [string] $ParentIdentity) {
@@ -1965,7 +1970,7 @@ function Get-ManagedBackgroundRegistryState {
     # session environment for health recovery, but none of it belongs in the
     # separate first-party `claude agents` process used for lifecycle discovery.
     $privateNames = @($sessionEnvironmentNames + @(
-        'CLAUDEX_SESSION_MODE', 'CLAUDEX_MODEL_MODE', 'CLAUDEX_INTERACTIVE_TUI',
+        'GICC_SESSION_MODE', 'GICC_MODEL_MODE', 'GICC_INTERACTIVE_TUI',
         'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_NO_FLICKER', 'CLAUDE_CODE_ACCESSIBILITY'
     ) | Where-Object { $_ -ne 'CLAUDE_CONFIG_DIR' } | Select-Object -Unique)
     $saved = @{}
@@ -2027,32 +2032,32 @@ function Invoke-ProxyWatchLoop([int] $ParentProcessId, [string] $ParentIdentity,
         }
     }
     Write-ProxyWatcherTestTrace 'watcher exited'
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_PROXY_WATCH_EXIT_FILE) {
-        [IO.File]::WriteAllText($env:CLAUDEX_TEST_PROXY_WATCH_EXIT_FILE, "exited`n", $utf8)
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_PROXY_WATCH_EXIT_FILE) {
+        [IO.File]::WriteAllText($env:GICC_TEST_PROXY_WATCH_EXIT_FILE, "exited`n", $utf8)
     }
 }
 
 function Start-ProxyWatcher {
-    if ($env:CLAUDEX_SKIP_PROXY_WATCHER -eq '1') { return $null }
+    if ($env:GICC_SKIP_PROXY_WATCHER -eq '1') { return $null }
     $hostExecutable = (Get-Process -Id $PID).Path
     $parentIdentity = [string] (Get-Process -Id $PID -ErrorAction Stop).StartTime.ToUniversalTime().Ticks
     $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath,
-        '-ClaudexInternalProxyWatchParentProcessId', [string] $PID, $parentIdentity, $(if ($backgroundLaunch) { '1' } else { '0' }))
+        '-GICCInternalProxyWatchParentProcessId', [string] $PID, $parentIdentity, $(if ($backgroundLaunch) { '1' } else { '0' }))
     try {
         $watcher = Start-DiscardingProcess $hostExecutable $arguments -Hidden:([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT)
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_PROXY_WATCH_PID_FILE) {
-            [IO.File]::WriteAllText($env:CLAUDEX_TEST_PROXY_WATCH_PID_FILE, "$($watcher.Id)`n", $utf8)
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_PROXY_WATCH_PID_FILE) {
+            [IO.File]::WriteAllText($env:GICC_TEST_PROXY_WATCH_PID_FILE, "$($watcher.Id)`n", $utf8)
         }
         return $watcher
     } catch {
-        [Console]::Error.WriteLine('claudex: warning: local proxy recovery watcher could not be started for this session.')
+        [Console]::Error.WriteLine('gicc: warning: local proxy recovery watcher could not be started for this session.')
         return $null
     }
 }
 
-if ($ClaudexInternalProxyWatchParentProcessId -gt 0) {
-    Invoke-ProxyWatchLoop $ClaudexInternalProxyWatchParentProcessId $ClaudexInternalProxyWatchParentIdentity $ClaudexInternalProxyWatchBackground
-    Exit-Claudex 0
+if ($GICCInternalProxyWatchParentProcessId -gt 0) {
+    Invoke-ProxyWatchLoop $GICCInternalProxyWatchParentProcessId $GICCInternalProxyWatchParentIdentity $GICCInternalProxyWatchBackground
+    Exit-GICC 0
 }
 
 # Internal watcher processes exit above before touching user-facing state.
@@ -2169,7 +2174,7 @@ function Update-AutoModeRules {
         $taskBoundary = 'User designated task boundary: A repository, cloud project, host, bucket, service, or destination that the user explicitly identifies in their own message as owned or controlled infrastructure and as the intended target is trusted for the specifically requested operation and data flow only. Merely naming a target does not establish trust; do not infer trust for agent selected destinations, unrelated resources, or broader scopes.'
         $approvedTransfer = 'Explicitly approved development transfer: When the user explicitly approves an exact transfer of only the source required for the task from the current trusted repository to an explicitly named private build or deployment host controlled by the user, treat that source and destination as inside the task trust boundary for that transfer only. Approval may unambiguously refer to the immediately preceding blocked command without repeating it. This never covers a public destination, credentials or secrets, unrelated files, a broader source tree, an agent selected target, or a different host.'
         $transferSoftDeny = 'Approved Private Development Transfer [named+specifics: must name the current source repository, the private build or deployment host controlled by the user, and the requested transfer]: Transferring only the source required for the task from the current trusted repository to that exact named private host requires the user to request or explicitly approve that transfer. Approval may unambiguously refer to the immediately preceding denied transfer. This consent never clears credentials or secrets, a public destination, unrelated files, a broader source tree, an agent selected target, or a different host.'
-        $hardException = "`n  - Claudex scoped private development transfer exception: Notwithstanding the bulk scale treatment above, an exact transfer of only the source required for the task from the current trusted repository to an explicitly named private build or deployment host controlled by the user is not HARD Data Exfiltration when the user requested or explicitly approved that exact source, destination, and transfer. Evaluate it under Approved Private Development Transfer as named and specific SOFT consent. The exception never covers credentials or secrets, a public destination, unrelated files, a broader source tree, an agent selected target, or a different host; if any condition is missing, the HARD rule remains in force."
+        $hardException = "`n  - GICC scoped private development transfer exception: Notwithstanding the bulk scale treatment above, an exact transfer of only the source required for the task from the current trusted repository to an explicitly named private build or deployment host controlled by the user is not HARD Data Exfiltration when the user requested or explicitly approved that exact source, destination, and transfer. Evaluate it under Approved Private Development Transfer as named and specific SOFT consent. The exception never covers credentials or secrets, a public destination, unrelated files, a broader source tree, an agent selected target, or a different host; if any condition is missing, the HARD rule remains in force."
         $existingAllow = if ($null -ne $settings.autoMode.PSObject.Properties['allow']) {
             @($settings.autoMode.allow | Where-Object {
                 -not $_.StartsWith('Explicit Action Approval:') -and
@@ -2192,7 +2197,7 @@ function Update-AutoModeRules {
         } else { @() }
         $existingHardDeny = if ($null -ne $settings.autoMode.PSObject.Properties['hard_deny']) {
             @($settings.autoMode.hard_deny | Where-Object {
-                -not $_.Contains('Claudex scoped private development transfer exception:') -and
+                -not $_.Contains('GICC scoped private development transfer exception:') -and
                 $_ -notin $previousHardDeny
             })
         } else { @() }
@@ -2241,7 +2246,7 @@ function Update-AutoModeRules {
 }
 
 function Start-ClaudeUpdateCheck {
-    if ($claudeAutoUpdate -ne 'on' -or $env:CLAUDEX_SKIP_AUTO_UPDATE -eq '1') { return }
+    if ($claudeAutoUpdate -ne 'on' -or $env:GICC_SKIP_AUTO_UPDATE -eq '1') { return }
     $updateDir = Join-Path $configDir 'update'
     $stamp = Join-Path $updateDir 'last-success'
     $last = 0L
@@ -2262,7 +2267,7 @@ function Start-ClaudeUpdateCheck {
     $arguments = @(
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', (ConvertTo-WindowsCommandLineArgument $PSCommandPath),
-        '-ClaudexInternalClaudeUpdate',
+        '-GICCInternalClaudeUpdate',
         (ConvertTo-WindowsCommandLineArgument $claudePath),
         (ConvertTo-WindowsCommandLineArgument $updateDir),
         [string] $claudeUpdateIntervalNumber,
@@ -2277,13 +2282,13 @@ function Start-ClaudeUpdateCheck {
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { $parameters.WindowStyle = 'Hidden' }
     try {
         Invoke-WithoutPrivateManagedEnvironment -Action {
-            $previousWorkerNonce = [Environment]::GetEnvironmentVariable('CLAUDEX_INTERNAL_UPDATE_NONCE', 'Process')
+            $previousWorkerNonce = [Environment]::GetEnvironmentVariable('GICC_INTERNAL_UPDATE_NONCE', 'Process')
             try {
-                $env:CLAUDEX_INTERNAL_UPDATE_NONCE = $workerNonce
+                $env:GICC_INTERNAL_UPDATE_NONCE = $workerNonce
                 Start-Process @parameters | Out-Null
             } finally {
-                if ($null -eq $previousWorkerNonce) { Remove-Item Env:CLAUDEX_INTERNAL_UPDATE_NONCE -ErrorAction SilentlyContinue }
-                else { $env:CLAUDEX_INTERNAL_UPDATE_NONCE = $previousWorkerNonce }
+                if ($null -eq $previousWorkerNonce) { Remove-Item Env:GICC_INTERNAL_UPDATE_NONCE -ErrorAction SilentlyContinue }
+                else { $env:GICC_INTERNAL_UPDATE_NONCE = $previousWorkerNonce }
             }
         }
     } catch {
@@ -2292,22 +2297,22 @@ function Start-ClaudeUpdateCheck {
     }
 }
 
-function Start-ClaudexUpdateCheck {
-    if ($claudexAutoUpdate -eq 'off' -or $env:CLAUDEX_SKIP_AUTO_UPDATE -eq '1' -or
+function Start-GICCUpdateCheck {
+    if ($giccAutoUpdate -eq 'off' -or $env:GICC_SKIP_AUTO_UPDATE -eq '1' -or
         -not (Test-Path -LiteralPath $selfUpdateHelper -PathType Leaf)) { return }
-    $updateDirectory = Join-Path $configDir 'update\claudex'
+    $updateDirectory = Join-Path $configDir 'update\gicc'
     [IO.Directory]::CreateDirectory($updateDirectory) | Out-Null
     $powerShellHost = if (Get-Command powershell.exe -CommandType Application -ErrorAction SilentlyContinue) {
         (Get-Command powershell.exe -CommandType Application).Source
     } else { (Get-Process -Id $PID).Path }
-    $action = if ($claudexAutoUpdate -eq 'on') { '-Apply' } else { '-Check' }
+    $action = if ($giccAutoUpdate -eq 'on') { '-Apply' } else { '-Check' }
     $quotedHelper = '"' + $selfUpdateHelper.Replace('"', '\"') + '"'
     $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $quotedHelper, $action, '-Background')
-    $previousBackground = [Environment]::GetEnvironmentVariable('CLAUDEX_UPDATE_BACKGROUND', 'Process')
-    $previousInterval = [Environment]::GetEnvironmentVariable('CLAUDEX_UPDATE_INTERVAL_SECONDS', 'Process')
+    $previousBackground = [Environment]::GetEnvironmentVariable('GICC_UPDATE_BACKGROUND', 'Process')
+    $previousInterval = [Environment]::GetEnvironmentVariable('GICC_UPDATE_INTERVAL_SECONDS', 'Process')
     try {
-        $env:CLAUDEX_UPDATE_BACKGROUND = '1'
-        $env:CLAUDEX_UPDATE_INTERVAL_SECONDS = [string]$claudexUpdateIntervalNumber
+        $env:GICC_UPDATE_BACKGROUND = '1'
+        $env:GICC_UPDATE_INTERVAL_SECONDS = [string]$giccUpdateIntervalNumber
         $parameters = @{
             FilePath = $powerShellHost
             ArgumentList = $arguments
@@ -2315,15 +2320,15 @@ function Start-ClaudexUpdateCheck {
             RedirectStandardError = (Join-Path $updateDirectory 'background.stderr.log')
         }
         if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { $parameters.WindowStyle = 'Hidden' }
-        Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('CLAUDEX_CONFIG_DIR') -Action {
+        Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
             Start-Process @parameters | Out-Null
         }
     } catch {
         # Background update failures are persisted by the helper when it
-        # starts; a process-launch failure must never break Claudex startup.
+        # starts; a process-launch failure must never break GICC startup.
     } finally {
-        [Environment]::SetEnvironmentVariable('CLAUDEX_UPDATE_BACKGROUND', $previousBackground, 'Process')
-        [Environment]::SetEnvironmentVariable('CLAUDEX_UPDATE_INTERVAL_SECONDS', $previousInterval, 'Process')
+        [Environment]::SetEnvironmentVariable('GICC_UPDATE_BACKGROUND', $previousBackground, 'Process')
+        [Environment]::SetEnvironmentVariable('GICC_UPDATE_INTERVAL_SECONDS', $previousInterval, 'Process')
     }
 }
 
@@ -2359,7 +2364,7 @@ function Invoke-Doctor {
     Write-Output "Claude Code: $claudeVersion"
     Write-Output "CLIProxyAPI: $proxyVersion"
     Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
-        'CLAUDEX_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE'
+        'GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_SOURCE_AUTH_FILE'
     ) -Action { & $codexSessionHelper status }
     if ($script:lastPrivateBoundaryExitCode -ne 0) {
         $script:doctorExitCode = $script:lastPrivateBoundaryExitCode
@@ -2376,22 +2381,23 @@ function Invoke-Doctor {
     Write-Output "Agent concurrency: $agentConcurrencyNumber"
     Write-Output 'Task lifecycle: owned by Sol with final response reconciliation'
     Write-Output "API retries: $maxRetriesNumber"
+    Write-Output "Claude output budget: $maxOutputTokensNumber tokens (reasoning continuation enabled)"
     Write-Output "Context window: $contextWindowNumber tokens"
     Write-Output "Automatic compaction window: $compactWindowNumber tokens (precompute enabled)"
     Write-Output 'Context status: stable session (transient zero suppressed)'
-    Write-Output "Codex usage: status line refresh every ${usageRefreshNumber}s; inspect with /usage-limit or claudex --usage-limit"
+    Write-Output "Codex usage: status line refresh every ${usageRefreshNumber}s; inspect with /usage-limit or gicc --usage-limit"
     Write-Output "Usage source: $usageSource (documented Codex app-server fallback enabled in auto mode)"
     Write-Output "Low quota alert: $usageAlertNumber% remaining (0 disables)"
     Write-Output 'Effort shortcuts: --max-effort and --ultracode (xhigh plus dynamic workflows)'
     Write-Output 'Claude in Chrome: use --claude-chrome for the direct Anthropic profile required by the extension'
     Write-Output "Claude Code updates: $claudeAutoUpdate (checked every ${claudeUpdateIntervalNumber}s)"
-    Write-Output "Claudex updates: $claudexAutoUpdate (checked every ${claudexUpdateIntervalNumber}s; inspect with claudex self-update --status)"
+    Write-Output "GICC updates: $giccAutoUpdate (checked every ${giccUpdateIntervalNumber}s; inspect with gicc self-update --status)"
     Write-Output "Plan mode policy: $planModePolicy (implementation first unless planning is genuinely required)"
     Write-Output 'Rendering: stable mode with native terminal cursor'
-    Write-Output 'Terminal UI: fullscreen (launch command hidden while Claudex is open)'
+    Write-Output 'Terminal UI: fullscreen (launch command hidden while GICC is open)'
     Write-Output "Header model name: $(Model-Name $savedModel)"
     Write-Output "Mouse pointer: $mousePointer"
-    Write-Output "Isolation: Claudex config at $configDir; normal Claude config is untouched"
+    Write-Output "Isolation: GICC config at $configDir; normal Claude config is untouched"
     $missing = $false
     $ids = @($models.data | ForEach-Object { $_.id })
     foreach ($id in @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')) {
@@ -2403,36 +2409,36 @@ function Invoke-Doctor {
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '--doctor') {
     Invoke-Doctor
-    Exit-Claudex $script:doctorExitCode
+    Exit-GICC $script:doctorExitCode
 }
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '--usage-limit') {
     $usageHelper = Join-Path $configDir 'usage-limit.ps1'
-    if (-not (Test-Path -LiteralPath $usageHelper -PathType Leaf)) { Fail 'usage-limit helper is missing; reinstall Claudex.' }
+    if (-not (Test-Path -LiteralPath $usageHelper -PathType Leaf)) { Fail 'usage-limit helper is missing; reinstall GICC.' }
     $usageArguments = if ($ClaudeArguments.Count -gt 1) { @($ClaudeArguments[1..($ClaudeArguments.Count - 1)]) } else { @() }
-    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('CLAUDEX_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR') -Action {
+    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR') -Action {
         & $usageHelper @usageArguments
     }
-    Exit-Claudex $script:lastPrivateBoundaryExitCode
+    Exit-GICC $script:lastPrivateBoundaryExitCode
 }
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '--accounts') {
     $usageHelper = Join-Path $configDir 'usage-limit.ps1'
-    if (-not (Test-Path -LiteralPath $usageHelper -PathType Leaf)) { Fail 'usage-limit helper is missing; reinstall Claudex.' }
-    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('CLAUDEX_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR') -Action {
+    if (-not (Test-Path -LiteralPath $usageHelper -PathType Leaf)) { Fail 'usage-limit helper is missing; reinstall GICC.' }
+    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR') -Action {
         & $usageHelper -Accounts
     }
-    Exit-Claudex $script:lastPrivateBoundaryExitCode
+    Exit-GICC $script:lastPrivateBoundaryExitCode
 }
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '--account') {
-    if ($ClaudeArguments.Count -ne 2) { Fail 'Usage: claudex --account <number|email|filename|auto>' 2 }
+    if ($ClaudeArguments.Count -ne 2) { Fail 'Usage: gicc --account <number|email|filename|auto>' 2 }
     $usageHelper = Join-Path $configDir 'usage-limit.ps1'
-    if (-not (Test-Path -LiteralPath $usageHelper -PathType Leaf)) { Fail 'usage-limit helper is missing; reinstall Claudex.' }
-    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('CLAUDEX_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR') -Action {
+    if (-not (Test-Path -LiteralPath $usageHelper -PathType Leaf)) { Fail 'usage-limit helper is missing; reinstall GICC.' }
+    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR') -Action {
         & $usageHelper -Account $ClaudeArguments[1]
     }
-    Exit-Claudex $script:lastPrivateBoundaryExitCode
+    Exit-GICC $script:lastPrivateBoundaryExitCode
 }
 
 $startModel = ''
@@ -2467,9 +2473,9 @@ while ($index -lt $ClaudeArguments.Count) {
             continue
         }
         default {
-            # Claudex-only options are a leading prefix. Preserve all tokens
+            # GICC-only options are a leading prefix. Preserve all tokens
             # after Claude's first argument so option values and prompts that
-            # look like Claudex flags are never consumed.
+            # look like GICC flags are never consumed.
             while ($index -lt $ClaudeArguments.Count) { $forwardArguments.Add($ClaudeArguments[$index]); $index++ }
             continue
         }
@@ -2554,7 +2560,7 @@ for ($scanIndex = 0; $scanIndex -lt $forwardArguments.Count; $scanIndex++) {
         $injectPermission = $false
     }
     if ($effortMode -and $scanOption -in @('--effort', '--settings')) {
-        Fail "$scanArgument conflicts with the selected Claudex effort shortcut." 2
+        Fail "$scanArgument conflicts with the selected GICC effort shortcut." 2
     }
     if ($scanOption -eq '--session-id') {
         $requestedResumeSessionId = $scanOptionValue
@@ -2578,8 +2584,8 @@ if ($maintenanceCommandDetected) {
     $injectPermission = $false
     $injectSkills = $false
     $maintenanceBun = [string] $env:BUN_OPTIONS
-    Remove-Item Env:CLAUDEX_PROXY_TOKEN -ErrorAction SilentlyContinue
-    if ($env:CLAUDEX_MANAGED_SESSION -eq '1') {
+    Remove-Item Env:GICC_PROXY_TOKEN -ErrorAction SilentlyContinue
+    if ($env:GICC_MANAGED_SESSION -eq '1') {
         $maintenanceManagedPreload = '--preload ' + (Join-Path $configDir 'preload.cjs').Replace('\', '/').Replace(' ', '\ ')
         while ($maintenanceBun -eq $maintenanceManagedPreload -or $maintenanceBun.StartsWith($maintenanceManagedPreload + ' ')) {
             $maintenanceBun = $maintenanceBun.Substring($maintenanceManagedPreload.Length).TrimStart()
@@ -2588,7 +2594,7 @@ if ($maintenanceCommandDetected) {
             Remove-Item -LiteralPath "Env:$environmentName" -ErrorAction SilentlyContinue
         }
         foreach ($environmentName in @(
-            'CLAUDEX_MODEL_MODE', 'CLAUDEX_SESSION_MODE', 'CLAUDEX_INTERACTIVE_TUI',
+            'GICC_MODEL_MODE', 'GICC_SESSION_MODE', 'GICC_INTERACTIVE_TUI',
             'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_NO_FLICKER', 'CLAUDE_CODE_ACCESSIBILITY'
         )) {
             Remove-Item -LiteralPath "Env:$environmentName" -ErrorAction SilentlyContinue
@@ -2600,7 +2606,7 @@ if ($forwardedModelSpecified -and [string]::IsNullOrWhiteSpace($forwardedModel))
     Fail '--model requires a model value.' 2
 }
 if ($forwardedModelSpecified -and $startModel) {
-    Fail 'a Claudex model shortcut cannot be combined with Claude Code --model.' 2
+    Fail 'a GICC model shortcut cannot be combined with Claude Code --model.' 2
 }
 
 if ($directChrome) {
@@ -2610,14 +2616,14 @@ if ($directChrome) {
     $injectLeaderGuard = $false
     $injectPermission = $false
     $injectSkills = $false
-    if ($env:CLAUDEX_CHROME_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR = $env:CLAUDEX_CHROME_CONFIG_DIR }
+    if ($env:GICC_CHROME_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR = $env:GICC_CHROME_CONFIG_DIR }
     else { Remove-Item Env:CLAUDE_CONFIG_DIR -ErrorAction SilentlyContinue }
     Remove-ProcessEnvironmentVariables @($sessionEnvironmentNames | Where-Object {
-        $_ -notin @('BUN_OPTIONS', 'CLAUDE_CONFIG_DIR', 'CLAUDEX_CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD')
+        $_ -notin @('BUN_OPTIONS', 'CLAUDE_CONFIG_DIR', 'GICC_CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD')
     })
     Remove-ProcessEnvironmentVariables $competingProviderEnvironmentNames
     Remove-ProcessEnvironmentVariables @(
-        'CLAUDEX_MODEL_MODE', 'CLAUDEX_SESSION_MODE', 'CLAUDEX_INTERACTIVE_TUI',
+        'GICC_MODEL_MODE', 'GICC_SESSION_MODE', 'GICC_INTERACTIVE_TUI',
         'CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_NO_FLICKER', 'CLAUDE_CODE_ACCESSIBILITY'
     )
     $forwardArguments.Insert(0, '--chrome')
@@ -2659,8 +2665,8 @@ function Get-ChatGptPlanLabelFromCache {
 }
 
 function Set-ChatGptPlanLabel {
-    Remove-Item Env:CLAUDEX_CHATGPT_PLAN_LABEL -ErrorAction SilentlyContinue
-    if ($env:CLAUDEX_INTERACTIVE_TUI -ne '1') { return }
+    Remove-Item Env:GICC_CHATGPT_PLAN_LABEL -ErrorAction SilentlyContinue
+    if ($env:GICC_INTERACTIVE_TUI -ne '1') { return }
     $planLabel = Get-ChatGptPlanLabelFromCache
     $usageHelper = Join-Path $configDir 'usage-limit.ps1'
     # Refresh malformed, incomplete, and unknown snapshots once as well as
@@ -2668,13 +2674,13 @@ function Set-ChatGptPlanLabel {
     # another command happens to rewrite the cache.
     if (-not $planLabel -and (Test-Path -LiteralPath $usageHelper -PathType Leaf)) {
         try {
-            Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('CLAUDEX_CONFIG_DIR', 'CLAUDEX_CODEX_AUTH_DIR') -Action {
+            Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR') -Action {
                 & $usageHelper -RefreshCache *> $null
             }
         } catch { }
         $planLabel = Get-ChatGptPlanLabelFromCache
     }
-    $env:CLAUDEX_CHATGPT_PLAN_LABEL = if ($planLabel) { $planLabel } else { 'ChatGPT' }
+    $env:GICC_CHATGPT_PLAN_LABEL = if ($planLabel) { $planLabel } else { 'ChatGPT' }
 }
 
 if ($useProxy) {
@@ -2703,7 +2709,7 @@ foreach ($fallbackModel in $forwardedFallbackModels) {
 $preload = Join-Path $configDir 'preload.cjs'
 $preloadForBun = $preload.Replace('\', '/').Replace(' ', '\ ')
 $existingBunOptions = [Environment]::GetEnvironmentVariable('BUN_OPTIONS', 'Process')
-function Remove-ClaudexPreloadOption([string] $Options) {
+function Remove-GICCPreloadOption([string] $Options) {
     if (-not $Options) { return '' }
     $managed = "--preload $preloadForBun"
     $quotedManaged = '--preload "' + $preload.Replace('\', '/') + '"'
@@ -2711,14 +2717,14 @@ function Remove-ClaudexPreloadOption([string] $Options) {
     $cleaned = [regex]::Replace($cleaned, '(^|\s)' + [regex]::Escape($quotedManaged) + '(?=\s|$)', ' ')
     return ([regex]::Replace($cleaned, '\s+', ' ')).Trim()
 }
-$cleanBunOptions = Remove-ClaudexPreloadOption $existingBunOptions
+$cleanBunOptions = Remove-GICCPreloadOption $existingBunOptions
 if ($useProxy) {
     if (Test-Path -LiteralPath $preload -PathType Leaf) {
         $env:BUN_OPTIONS = ("--preload $preloadForBun $cleanBunOptions").Trim()
     } elseif ($cleanBunOptions) { $env:BUN_OPTIONS = $cleanBunOptions }
     else { Remove-Item Env:BUN_OPTIONS -ErrorAction SilentlyContinue }
-    if ((-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) -or $env:CLAUDEX_TEST_TTY_OUTPUT -eq '1') { $env:CLAUDEX_INTERACTIVE_TUI = '1' }
-    else { Remove-Item Env:CLAUDEX_INTERACTIVE_TUI -ErrorAction SilentlyContinue }
+    if ((-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) -or $env:GICC_TEST_TTY_OUTPUT -eq '1') { $env:GICC_INTERACTIVE_TUI = '1' }
+    else { Remove-Item Env:GICC_INTERACTIVE_TUI -ErrorAction SilentlyContinue }
 } elseif ($cleanBunOptions) {
     $env:BUN_OPTIONS = $cleanBunOptions
 } else {
@@ -2759,10 +2765,10 @@ function Write-SkillBridgeWarnings([object[]] $Warnings) {
 
     $displayCount = [math]::Min(5, $safeWarnings.Count)
     for ($index = 0; $index -lt $displayCount; $index++) {
-        [Console]::Error.WriteLine("claudex: skill bridge warning: $($safeWarnings[$index])")
+        [Console]::Error.WriteLine("gicc: skill bridge warning: $($safeWarnings[$index])")
     }
     if ($safeWarnings.Count -gt $displayCount) {
-        [Console]::Error.WriteLine("claudex: skill bridge warning: $($safeWarnings.Count - $displayCount) additional unique warnings omitted.")
+        [Console]::Error.WriteLine("gicc: skill bridge warning: $($safeWarnings.Count - $displayCount) additional unique warnings omitted.")
     }
     $temporary = $null
     try {
@@ -2779,14 +2785,14 @@ $skillBridgeAddDirs = @()
 $skillBridgePluginDirs = @()
 $skillBridgeHasInstructions = $false
 if ($injectSkills -and $skillBridgeMode -eq 'on') {
-    $env:CLAUDEX_INSTRUCTION_BRIDGE = $instructionBridgeMode
+    $env:GICC_INSTRUCTION_BRIDGE = $instructionBridgeMode
     Assert-SkillBridgeNode
-    if (-not (Test-Path -LiteralPath $skillBridgeHelper -PathType Leaf)) { Fail 'skill bridge helper is missing; reinstall Claudex.' }
+    if (-not (Test-Path -LiteralPath $skillBridgeHelper -PathType Leaf)) { Fail 'skill bridge helper is missing; reinstall GICC.' }
     try {
         $skillBridgeArguments = @($skillBridgeHelper, 'sync', '--project', (Get-Location).Path)
         if ($skillBridgeGlobalOnly) { $skillBridgeArguments += '--global-only' }
         $skillBridgeOutput = (Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
-            'CLAUDEX_CONFIG_DIR', 'CLAUDEX_CLAUDE_CONFIG_DIR', 'CLAUDEX_INSTRUCTION_BRIDGE'
+            'GICC_CONFIG_DIR', 'GICC_CLAUDE_CONFIG_DIR', 'GICC_INSTRUCTION_BRIDGE'
         ) -Action { & node @skillBridgeArguments } | Out-String)
         if ($script:lastPrivateBoundaryExitCode -ne 0) { throw 'skill bridge helper failed' }
         $skillBridgeResult = $skillBridgeOutput | ConvertFrom-Json
@@ -2796,7 +2802,7 @@ if ($injectSkills -and $skillBridgeMode -eq 'on') {
             $skillBridgeHasInstructions = @($skillBridgeResult.instructions | Where-Object { $_ }).Count -gt 0
         }
         if ($null -ne $skillBridgeResult.PSObject.Properties['warnings']) { Write-SkillBridgeWarnings @($skillBridgeResult.warnings) }
-    } catch { Fail 'skill discovery failed; run `claudex skills` for details.' }
+    } catch { Fail 'skill discovery failed; run `gicc skills` for details.' }
     if ($skillBridgeAddDirs.Count -gt 0 -and -not (Test-ClaudeOption '--add-dir')) {
         Fail 'this Claude Code build lacks --add-dir, which is required for installed Codex skills; run `claude update`.'
     }
@@ -2807,7 +2813,7 @@ if ($injectSkills -and $skillBridgeMode -eq 'on') {
 if ($useProxy -or ($forwardArguments.Count -gt 0 -and $forwardArguments[0] -eq 'auto-mode')) { Update-AutoModeRules }
 if ($forwardArguments.Count -eq 0 -or $forwardArguments[0] -notin @('update', 'upgrade')) {
     Start-ClaudeUpdateCheck
-    Start-ClaudexUpdateCheck
+    Start-GICCUpdateCheck
 }
 
 if ($useProxy) {
@@ -2816,7 +2822,7 @@ if ($useProxy) {
     $proxyWatcher = Start-ProxyWatcher
 
     $env:ANTHROPIC_BASE_URL = $proxyUrl
-    $env:CLAUDEX_MANAGED_SESSION = '1'
+    $env:GICC_MANAGED_SESSION = '1'
     $env:ANTHROPIC_AUTH_TOKEN = $proxyToken
     $env:ANTHROPIC_DEFAULT_FABLE_MODEL = 'gpt-5.6-sol'
     $env:ANTHROPIC_DEFAULT_OPUS_MODEL = 'gpt-5.6-sol'
@@ -2840,9 +2846,10 @@ if ($useProxy) {
     $env:CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = '1'
     $env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = [string] $toolConcurrencyNumber
     $env:CLAUDE_CODE_MAX_RETRIES = [string] $maxRetriesNumber
+    $env:CLAUDE_CODE_MAX_OUTPUT_TOKENS = [string] $maxOutputTokensNumber
     $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = [string] $contextWindowNumber
     $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = [string] $compactWindowNumber
-    # Hide Anthropic's built-in 1M model variant on the Codex bridge. Claudex
+    # Hide Anthropic's built-in 1M model variant on the Codex bridge. GICC
     # supplies its own explicit context-window and compaction controls.
     $env:CLAUDE_CODE_DISABLE_1M_CONTEXT = '1'
 } else {
@@ -2851,19 +2858,19 @@ if ($useProxy) {
     Remove-Item Env:ANTHROPIC_BASE_URL -ErrorAction SilentlyContinue
     Remove-Item Env:ANTHROPIC_AUTH_TOKEN -ErrorAction SilentlyContinue
     Remove-Item Env:CLAUDE_CODE_DISABLE_1M_CONTEXT -ErrorAction SilentlyContinue
-    Remove-Item Env:CLAUDEX_CHATGPT_PLAN_LABEL -ErrorAction SilentlyContinue
+    Remove-Item Env:GICC_CHATGPT_PLAN_LABEL -ErrorAction SilentlyContinue
 }
 $env:CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
-$env:CLAUDEX_USAGE_DISPLAY = $usageDisplay
-$env:CLAUDEX_USAGE_REFRESH_SECONDS = [string] $usageRefreshNumber
-$env:CLAUDEX_USAGE_TIMEOUT_SECONDS = [string] $usageTimeoutNumber
-$env:CLAUDEX_USAGE_MAX_STALE_SECONDS = [string] $usageMaxStaleNumber
-$env:CLAUDEX_USAGE_SOURCE = $usageSource
-$env:CLAUDEX_USAGE_ALERT_PERCENT = [string] $usageAlertNumber
+$env:GICC_USAGE_DISPLAY = $usageDisplay
+$env:GICC_USAGE_REFRESH_SECONDS = [string] $usageRefreshNumber
+$env:GICC_USAGE_TIMEOUT_SECONDS = [string] $usageTimeoutNumber
+$env:GICC_USAGE_MAX_STALE_SECONDS = [string] $usageMaxStaleNumber
+$env:GICC_USAGE_SOURCE = $usageSource
+$env:GICC_USAGE_ALERT_PERCENT = [string] $usageAlertNumber
 $env:CLAUDE_CODE_NO_FLICKER = '1'
 $env:CLAUDE_CODE_ACCESSIBILITY = '1'
-if ($noSessionPersistence) { $env:CLAUDEX_NO_SESSION_PERSISTENCE = '1' }
-else { Remove-Item Env:CLAUDEX_NO_SESSION_PERSISTENCE -ErrorAction SilentlyContinue }
+if ($noSessionPersistence) { $env:GICC_NO_SESSION_PERSISTENCE = '1' }
+else { Remove-Item Env:GICC_NO_SESSION_PERSISTENCE -ErrorAction SilentlyContinue }
 if ($skillBridgeHasInstructions) { $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1' }
 
 $noNestedAgents = "Do not spawn or delegate to additional agents, or send intermediate progress messages to the parent. Unless you are a teammate in a native Agent Team that the user explicitly requested, do not create, claim, or update entries in a shared task list; ordinary Agent task lifecycle belongs to the Sol leader. Complete the assigned task yourself and return one final result through the normal agent result channel. If the provider reports a 429 or model cooldown, do not launch a replacement agent or start a retry loop."
@@ -2872,10 +2879,10 @@ $agents = [ordered]@{
     'Luna (medium)' = [ordered]@{ description = 'Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.'; prompt = "You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. $noNestedAgents"; model = 'gpt-5.6-luna'; effort = 'medium' }
 }
 $agentsJson = $agents | ConvertTo-Json -Depth 10 -Compress
-$capacityGuard = "Claudex capacity rule: keep at most $agentConcurrencyNumber delegated Agent or Agent Team workers active at once. Native Agent Teams may be created only when the user explicitly requests a team; otherwise use the named Terra (high) or Luna (medium) agents for ordinary delegation. Sol capacity is reserved for the leader. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'. If a model reports a 429 or cooldown, do not launch replacement agents or create a retry storm; continue useful local work and retry at most once after active agents settle."
-$taskGuard = 'Claudex task lifecycle rule: for ordinary Agent delegation, the Sol leader owns the shared task list. When the user explicitly requests a native Agent Team, the team lead owns team task lifecycle and teammates may claim only their assigned work. Keep task state compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while the leader or a currently active worker is working on it; queued or blocked work stays pending. After every worker result, immediately reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done.'
-$codexGuard = "Claudex Codex model rule: operate as a Codex coding agent inside Claude Code's interface. Treat the available Claude Code tools and their schemas as the authoritative execution protocol. Prefer direct implementation and verification for concrete change requests. Ask as few questions as possible: inspect available context first, make safe reasonable assumptions, and continue without confirmation for routine, reversible work inside the requested scope. Never repeat a question the user already answered. Ask only when the missing answer cannot be discovered and would materially change the result, authorize a meaningful scope expansion, or precede an irreversible action. Treat the user's explicit approval as decisive for the specifically named action and target: after a soft auto mode denial, ask for precise consent only when it is missing, then retry once when the user grants it instead of claiming the denial is permanent. Hard deny security boundaries still apply. Do not invent unsupported provider behavior, do not expose raw internal tool protocol, and keep progress updates concise and based on evidence."
-$planGuard = if ($planModePolicy -eq 'conservative') { 'Claudex plan mode rule: remain in the current execution mode by default. Do not call EnterPlanMode or switch into plan permission mode merely because work is large, complex, unfamiliar, or benefits from private reasoning. Enter plan mode only when the user explicitly asks for a planning or design only response, when a required user decision would materially change the implementation, or when the requested action is irreversible and needs approval before execution. For ordinary bug fixes and implementation requests, inspect, implement, test, and report directly.' } else { '' }
+$capacityGuard = "GICC capacity rule: keep at most $agentConcurrencyNumber delegated Agent or Agent Team workers active at once. Native Agent Teams may be created only when the user explicitly requests a team; otherwise use the named Terra (high) or Luna (medium) agents for ordinary delegation. Sol capacity is reserved for the leader. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'. If a model reports a 429 or cooldown, do not launch replacement agents or create a retry storm; continue useful local work and retry at most once after active agents settle."
+$taskGuard = 'GICC task lifecycle rule: for ordinary Agent delegation, the Sol leader owns the shared task list. When the user explicitly requests a native Agent Team, the team lead owns team task lifecycle and teammates may claim only their assigned work. Keep task state compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while the leader or a currently active worker is working on it; queued or blocked work stays pending. After every worker result, immediately reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done.'
+$codexGuard = "GICC Codex model rule: operate as a Codex coding agent inside Claude Code's interface. Treat the available Claude Code tools and their schemas as the authoritative execution protocol. Prefer direct implementation and verification for concrete change requests. Ask as few questions as possible: inspect available context first, make safe reasonable assumptions, and continue without confirmation for routine, reversible work inside the requested scope. Never repeat a question the user already answered. Ask only when the missing answer cannot be discovered and would materially change the result, authorize a meaningful scope expansion, or precede an irreversible action. Treat the user's explicit approval as decisive for the specifically named action and target: after a soft auto mode denial, ask for precise consent only when it is missing, then retry once when the user grants it instead of claiming the denial is permanent. Hard deny security boundaries still apply. Do not invent unsupported provider behavior, do not expose raw internal tool protocol, and keep progress updates concise and based on evidence."
+$planGuard = if ($planModePolicy -eq 'conservative') { 'GICC plan mode rule: remain in the current execution mode by default. Do not call EnterPlanMode or switch into plan permission mode merely because work is large, complex, unfamiliar, or benefits from private reasoning. Enter plan mode only when the user explicitly asks for a planning or design only response, when a required user decision would materially change the implementation, or when the requested action is irreversible and needs approval before execution. For ordinary bug fixes and implementation requests, inspect, implement, test, and report directly.' } else { '' }
 $leaderGuard = @($capacityGuard, $taskGuard, $codexGuard, $planGuard) -join ([Environment]::NewLine + [Environment]::NewLine)
 
 $claudeLaunchArguments = New-Object 'System.Collections.Generic.List[string]'
@@ -2899,9 +2906,9 @@ if (-not $directChrome -and $settingsFile -ne (Join-Path $configDir 'settings.js
 }
 if ($startModel) {
     $claudeLaunchArguments.Add('--model'); $claudeLaunchArguments.Add($startModel)
-    if ($startModel -eq 'opusplan') { $env:CLAUDEX_MODEL_MODE = 'solplan' }
+    if ($startModel -eq 'opusplan') { $env:GICC_MODEL_MODE = 'solplan' }
 } elseif ($forwardedModel -eq 'opusplan') {
-    $env:CLAUDEX_MODEL_MODE = 'solplan'
+    $env:GICC_MODEL_MODE = 'solplan'
 }
 if ($effortMode -eq 'ultracode') {
     if (-not (Test-ClaudeOption '--effort')) { Fail 'this Claude Code build lacks --effort; run `claude update`.' }
@@ -2913,12 +2920,12 @@ if ($effortMode -eq 'ultracode') {
     }
     $claudeLaunchArguments.Add('--settings'); $claudeLaunchArguments.Add(($ultracodeSettings | ConvertTo-Json -Depth 100 -Compress))
     $claudeLaunchArguments.Add('--effort'); $claudeLaunchArguments.Add('xhigh')
-    $env:CLAUDEX_SESSION_MODE = 'ultracode'
+    $env:GICC_SESSION_MODE = 'ultracode'
     $env:CLAUDE_CODE_EFFORT_LEVEL = 'xhigh'
 } elseif ($effortMode -eq 'max') {
     if (-not (Test-ClaudeOption '--effort')) { Fail 'this Claude Code build lacks --effort; run `claude update`.' }
     $claudeLaunchArguments.Add('--effort'); $claudeLaunchArguments.Add('max')
-    $env:CLAUDEX_SESSION_MODE = 'max'
+    $env:GICC_SESSION_MODE = 'max'
     $env:CLAUDE_CODE_EFFORT_LEVEL = 'max'
 }
 foreach ($value in $forwardArguments) { $claudeLaunchArguments.Add($value) }
@@ -2928,7 +2935,7 @@ function Set-MousePointer([string] $Shape) {
     [Console]::Out.Write("$([char]27)]22;$Shape$([char]27)\")
 }
 
-$rewriteResumeFooter = ((-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) -or $env:CLAUDEX_TEST_TTY_OUTPUT -eq '1')
+$rewriteResumeFooter = ((-not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) -or $env:GICC_TEST_TTY_OUTPUT -eq '1')
 if ($suppressResumeFooter) { $rewriteResumeFooter = $false }
 if ($requestedResumeSessionId -notmatch '^[0-9a-fA-F-]{36}$') { $requestedResumeSessionId = '' }
 $resumeMarker = $null
@@ -2986,10 +2993,10 @@ function Update-ResumeFooter([string] $Marker) {
     $latest = $matchingCandidates[0]
     $sessionId = [IO.Path]::GetFileNameWithoutExtension($latest.Name)
     if ($sessionId -notmatch '^[0-9a-fA-F-]{36}$') { return }
-    $resumeCommand = if ($directChrome) { 'claudex --claude-chrome --resume' } else { 'claudex --resume' }
-    $footer = "Claudex resume: $resumeCommand $sessionId`n"
-    if ($env:CLAUDEX_TEST_RESUME_CAPTURE_FILE) {
-        [IO.File]::WriteAllText($env:CLAUDEX_TEST_RESUME_CAPTURE_FILE, $footer, $utf8)
+    $resumeCommand = if ($directChrome) { 'gicc --claude-chrome --resume' } else { 'gicc --resume' }
+    $footer = "GICC resume: $resumeCommand $sessionId`n"
+    if ($env:GICC_TEST_RESUME_CAPTURE_FILE) {
+        [IO.File]::WriteAllText($env:GICC_TEST_RESUME_CAPTURE_FILE, $footer, $utf8)
     }
     [Console]::Out.Write($footer)
 }
@@ -3052,6 +3059,6 @@ try {
     }
     if ($resumeMarker) { Remove-Item -LiteralPath $resumeMarker -Force -ErrorAction SilentlyContinue }
     Set-MousePointer 'default'
-    Restore-ClaudexSessionEnvironment
+    Restore-GICCSessionEnvironment
 }
 exit $exitCode

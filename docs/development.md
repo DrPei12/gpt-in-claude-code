@@ -1,6 +1,6 @@
 # Development guide
 
-Claudex is intentionally dependency light. The production code is Bash,
+GICC is intentionally dependency light. The production code is Bash,
 PowerShell, a small Node preload, and JSON; the test harness uses fake homes and
 fake provider commands so it never touches a developer's real sessions.
 
@@ -8,7 +8,7 @@ fake provider commands so it never touches a developer's real sessions.
 
 | Path | Purpose |
 | --- | --- |
-| `claudex`, `claudex.ps1`, `claudex.cmd` | Cross platform launchers |
+| `gicc`, `gicc.ps1`, `gicc.cmd` | Cross platform launchers |
 | `install.sh`, `install.ps1`, `install.zsh` | Install and compatibility entry points |
 | `codex-session*` | Authentication bridge |
 | `usage-limit*` | Detailed and cached quota reporting |
@@ -23,7 +23,7 @@ fake provider commands so it never touches a developer's real sessions.
 ## Design rules
 
 1. Do not modify the signed Claude Code binary.
-2. Keep normal Claude Code state separate from `~/.config/claudex`.
+2. Keep normal Claude Code state separate from `~/.config/gpt-in-claude-code`.
 3. Let Codex own login and logout.
 4. Keep secrets out of arguments, logs, caches, tests, and Git.
 5. Bind the compatibility service to loopback and verify downloaded assets.
@@ -60,7 +60,7 @@ Useful focused checks:
 ```bash
 node scripts/check-docs.mjs
 node --check preload.cjs
-bash -n claudex codex-session install.sh statusline usage-limit
+bash -n gicc codex-session install.sh statusline usage-limit
 zsh -n test.zsh
 git diff --check
 ```
@@ -128,13 +128,13 @@ For a package manager release, also:
 2. verify `npm test` and `./scripts/check-release-artifacts.sh`;
 3. wait for the release assets workflow to publish both archives and
    `SHA256SUMS` from the verified tag;
-4. update and test the BeamoINT Homebrew tap and Scoop bucket with the exact
-   release asset hashes;
-5. submit the matching WinGet manifest and link its external review.
+4. update and test any published package channel with the exact release asset
+   hashes;
+5. link any external package review from the release issue.
 
 Publish only archives built from the verified release tag. Do not publish
-credentials, installed state, or the downloaded CLIProxyAPI binary from a local
-machine; CLIProxyAPI remains a verified install time dependency.
+credentials or installed state from a local machine. Bridge assets must be
+built from the public patch and manifest inputs.
 When adding a release time runtime or support file, add its exact path to the
 payload in `scripts/build-release.sh` and extend the required content checks
 when installation depends on it.

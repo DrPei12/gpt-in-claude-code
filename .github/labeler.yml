@@ -16,7 +16,7 @@
       - any-glob-to-any-file:
           - "bootstrap.*"
           - "install.*"
-          - "bin/claudex-package.mjs"
+          - "bin/gicc-package.mjs"
           - "bin/package-setup-lock.mjs"
 
 "area: updater":
@@ -55,7 +55,7 @@
 "platform: macos-linux":
   - changed-files:
       - any-glob-to-any-file:
-          - "claudex"
+          - "gicc"
           - "codex-session"
           - "install.sh"
           - "install.zsh"

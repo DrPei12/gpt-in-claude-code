@@ -9,11 +9,11 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
-$configDir = if ($env:CLAUDEX_CONFIG_DIR) { $env:CLAUDEX_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\claudex' }
+$configDir = if ($env:GICC_CONFIG_DIR) { $env:GICC_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\gpt-in-claude-code' }
 $codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE '.codex' }
-$codexAuthFile = if ($env:CLAUDEX_CODEX_SOURCE_AUTH_FILE) { $env:CLAUDEX_CODEX_SOURCE_AUTH_FILE } else { Join-Path $codexHome 'auth.json' }
-$bridgeAuthDir = if ($env:CLAUDEX_CODEX_AUTH_DIR) { $env:CLAUDEX_CODEX_AUTH_DIR } else { Join-Path $configDir 'codex-accounts' }
-$bridgeAuthFile = Join-Path $bridgeAuthDir 'codex-claudex-managed.json'
+$codexAuthFile = if ($env:GICC_CODEX_SOURCE_AUTH_FILE) { $env:GICC_CODEX_SOURCE_AUTH_FILE } else { Join-Path $codexHome 'auth.json' }
+$bridgeAuthDir = if ($env:GICC_CODEX_AUTH_DIR) { $env:GICC_CODEX_AUTH_DIR } else { Join-Path $configDir 'codex-accounts' }
+$bridgeAuthFile = Join-Path $bridgeAuthDir 'codex-gicc-managed.json'
 $usageCacheDir = Join-Path $configDir 'usage-cache'
 $usageAccountFile = Join-Path $configDir 'codex-usage-account'
 $usageGenerationFile = Join-Path $configDir 'usage-generation'
@@ -45,24 +45,26 @@ function Protect-PrivatePath([string] $Path, [bool] $Directory) {
         )
         [void] $security.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $Path -AclObject $security
+    # FileSystemInfo writes the supplied owner and DACL without asking Windows
+    # to rewrite the SACL on a path whose DACL is already protected.
+    (Get-Item -LiteralPath $Path -Force).SetAccessControl($security)
 }
 
 function Write-Failure([string] $Message) {
-    [Console]::Error.WriteLine("claudex: $Message")
+    [Console]::Error.WriteLine("gicc: $Message")
 }
 
 # PowerShell finally blocks cover ordinary failures and Ctrl+C unwinding. A
 # process-exit hook also removes the tracked secret temp and owned lock when the
 # host receives a terminating console/POSIX signal before script cleanup runs.
-if (-not ('Claudex.CredentialSyncCleanup' -as [type])) {
+if (-not ('GICC.CredentialSyncCleanup' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 
-namespace Claudex
+namespace GICC
 {
     public static class CredentialSyncCleanup
     {
@@ -189,7 +191,7 @@ namespace Claudex
 }
 
 function Get-LockDirectoryIdentity([string] $Path) {
-    if ($isWindowsPlatform) { return [Claudex.CredentialSyncCleanup]::GetDirectoryIdentity($Path) }
+    if ($isWindowsPlatform) { return [GICC.CredentialSyncCleanup]::GetDirectoryIdentity($Path) }
     $stat = Get-Command stat -ErrorAction SilentlyContinue
     if (-not $stat) { return '' }
     foreach ($arguments in @(@('-f', '%d:%i', $Path), @('-c', '%d:%i', $Path))) {
@@ -252,11 +254,11 @@ function Get-LockBarriers([string] $LockDirectory) {
 }
 
 function Invoke-LockTestPause([string] $Stage, [string] $LockDirectory) {
-    if ($env:CLAUDEX_TEST_MODE -ne '1') { return }
-    $match = [Environment]::GetEnvironmentVariable('CLAUDEX_TEST_LOCK_MATCH', 'Process')
+    if ($env:GICC_TEST_MODE -ne '1') { return }
+    $match = [Environment]::GetEnvironmentVariable('GICC_TEST_LOCK_MATCH', 'Process')
     if ($match -and -not $LockDirectory.Contains($match)) { return }
-    $ready = [Environment]::GetEnvironmentVariable("CLAUDEX_TEST_LOCK_${Stage}_READY", 'Process')
-    $continue = [Environment]::GetEnvironmentVariable("CLAUDEX_TEST_LOCK_${Stage}_CONTINUE", 'Process')
+    $ready = [Environment]::GetEnvironmentVariable("GICC_TEST_LOCK_${Stage}_READY", 'Process')
+    $continue = [Environment]::GetEnvironmentVariable("GICC_TEST_LOCK_${Stage}_CONTINUE", 'Process')
     if (-not $ready -or -not $continue) { return }
     [IO.File]::WriteAllText($ready, "ready`n", $utf8)
     while (-not (Test-Path -LiteralPath $continue -PathType Leaf)) { Start-Sleep -Milliseconds 20 }
@@ -269,8 +271,8 @@ function Remove-LockDirectoryFiles([string] $Directory) {
 }
 
 function Publish-LockFile([string] $Source, [string] $Destination) {
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE -eq '1') { throw 'forced lock publication failure' }
-    if ($env:CLAUDEX_TEST_MODE -ne '1' -or $env:CLAUDEX_TEST_FORCE_HARDLINK_FAILURE -ne '1') {
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_FORCE_PUBLICATION_FAILURE -eq '1') { throw 'forced lock publication failure' }
+    if ($env:GICC_TEST_MODE -ne '1' -or $env:GICC_TEST_FORCE_HARDLINK_FAILURE -ne '1') {
         try { New-Item -ItemType HardLink -Path $Destination -Target $Source -ErrorAction Stop | Out-Null; return } catch { }
     }
     $input = $null
@@ -374,7 +376,7 @@ function Get-OwnedLockAgeSeconds([string] $LockDirectory) {
 }
 
 function Get-ProcessIdentity([int] $ProcessId) {
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_PROCESS_IDENTITY) { return $env:CLAUDEX_TEST_PROCESS_IDENTITY }
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_PROCESS_IDENTITY) { return $env:GICC_TEST_PROCESS_IDENTITY }
     try { return [string] (Get-Process -Id $ProcessId -ErrorAction Stop).StartTime.ToUniversalTime().Ticks } catch { return '' }
 }
 
@@ -455,7 +457,7 @@ function Recover-OwnedLockGeneration([string] $LockDirectory, [string] $Expected
     if (-not $currentNonce) { $currentNonce = Get-OwnedLockField (Join-Path $LockDirectory 'owner') 'nonce' }
     $currentDirectoryIdentity = Get-LockDirectoryIdentity $LockDirectory
     if ($currentNonce -eq $ExpectedNonce -and (-not $ExpectedDirectoryIdentity -or $currentDirectoryIdentity -eq $ExpectedDirectoryIdentity) -and @(Get-LockBarriers $LockDirectory).Count -eq 0) {
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE) { [IO.File]::WriteAllText($env:CLAUDEX_TEST_LOCK_SELF_RECOVERED_FILE, "recovered`n", $utf8) }
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_LOCK_SELF_RECOVERED_FILE) { [IO.File]::WriteAllText($env:GICC_TEST_LOCK_SELF_RECOVERED_FILE, "recovered`n", $utf8) }
         return $true
     }
     if ($currentNonce -eq $ExpectedNonce -and (-not $ExpectedDirectoryIdentity -or $currentDirectoryIdentity -eq $ExpectedDirectoryIdentity)) { [void] (Remove-OwnedLockGeneration $LockDirectory $ExpectedNonce) }
@@ -545,14 +547,14 @@ function Release-SessionSyncLock {
     Release-OwnedLock $sessionSyncLock $script:sessionSyncToken
     $script:sessionSyncOwned = $false
     $script:sessionSyncToken = ''
-    [Claudex.CredentialSyncCleanup]::ClearLockTracking()
+    [GICC.CredentialSyncCleanup]::ClearLockTracking()
 }
 
 function Clear-SensitiveSessionState {
     if ($script:sessionTemporary) {
         Remove-Item -LiteralPath $script:sessionTemporary -Force -ErrorAction SilentlyContinue
         $script:sessionTemporary = ''
-        [Claudex.CredentialSyncCleanup]::ClearTemporaryTracking()
+        [GICC.CredentialSyncCleanup]::ClearTemporaryTracking()
     }
     Release-SessionSyncLock
 }
@@ -560,14 +562,14 @@ function Clear-SensitiveSessionState {
 function Acquire-SessionSyncLock {
     [IO.Directory]::CreateDirectory($bridgeAuthDir) | Out-Null
     Protect-PrivatePath $bridgeAuthDir $true
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_SESSION_SYNC_LOCK_WAIT_READY_FILE) {
-        [IO.File]::WriteAllText($env:CLAUDEX_TEST_SESSION_SYNC_LOCK_WAIT_READY_FILE, "ready`n", $utf8)
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_SESSION_SYNC_LOCK_WAIT_READY_FILE) {
+        [IO.File]::WriteAllText($env:GICC_TEST_SESSION_SYNC_LOCK_WAIT_READY_FILE, "ready`n", $utf8)
     }
     $nonce = Acquire-OwnedLock $sessionSyncLock 250 20 2 60
     if (-not $nonce) { throw 'timed out waiting for another Codex credential synchronization.' }
     $script:sessionSyncToken = $nonce
     $script:sessionSyncOwned = $true
-    [Claudex.CredentialSyncCleanup]::TrackLock($sessionSyncLock, $nonce)
+    [GICC.CredentialSyncCleanup]::TrackLock($sessionSyncLock, $nonce)
 }
 
 function Clear-BridgeSession {
@@ -680,7 +682,7 @@ function Invoke-CodexCommand($Codex, [string[]] $Arguments, [switch] $DiscardOut
         $payload = @{ Path = $commandPath; Arguments = @($Arguments) } | ConvertTo-Json -Compress
         $payloadBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
         $bootstrap = @'
-$payloadJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__CLAUDEX_PAYLOAD__'))
+$payloadJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__GICC_PAYLOAD__'))
 $payload = $payloadJson | ConvertFrom-Json
 $commandArguments = @($payload.Arguments | ForEach-Object { [string] $_ })
 $global:LASTEXITCODE = $null
@@ -690,7 +692,7 @@ $commandExitCode = $LASTEXITCODE
 if ($null -ne $commandExitCode) { exit [int] $commandExitCode }
 if ($commandSucceeded) { exit 0 }
 exit 1
-'@.Replace('__CLAUDEX_PAYLOAD__', $payloadBase64)
+'@.Replace('__GICC_PAYLOAD__', $payloadBase64)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($bootstrap))
         $powerShellPath = (Get-Process -Id $PID).Path
         $childArguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded)
@@ -742,7 +744,7 @@ function Sync-Session {
                 if (Test-CodexLogin) { continue }
                 Clear-OwnedSessionState
             } finally { Release-SessionSyncLock }
-            Write-Failure 'Codex is logged out. Run `codex login` (or `claudex --login`) and retry.'
+            Write-Failure 'Codex is logged out. Run `codex login` (or `gicc --login`) and retry.'
             return 11
         }
         if (-not (Test-Path -LiteralPath $codexAuthFile -PathType Leaf)) {
@@ -752,7 +754,7 @@ function Sync-Session {
                 Clear-OwnedSessionState
             } finally { Release-SessionSyncLock }
             Write-Failure 'Codex is logged in, but its credentials are stored in the OS keyring.'
-            Write-Failure 'Run `claudex --login` once so Codex can create a reusable file-backed local session.'
+            Write-Failure 'Run `gicc --login` once so Codex can create a reusable file-backed local session.'
             return 13
         }
         $snapshot = Get-CodexSourceSnapshot
@@ -763,7 +765,7 @@ function Sync-Session {
                 if ($currentSnapshot.Valid) { continue }
                 Clear-OwnedSessionState
             } finally { Release-SessionSyncLock }
-            Write-Failure 'Codex auth.json is invalid or is not a ChatGPT session. Run `claudex --login` to repair it.'
+            Write-Failure 'Codex auth.json is invalid or is not a ChatGPT session. Run `gicc --login` to repair it.'
             return 14
         }
         break
@@ -778,7 +780,7 @@ function Sync-Session {
                 if ($currentSnapshot.Valid) { continue }
                 Clear-OwnedSessionState
             } finally { Release-SessionSyncLock }
-            Write-Failure 'Codex auth.json is invalid or is not a ChatGPT session. Run `claudex --login` to repair it.'
+            Write-Failure 'Codex auth.json is invalid or is not a ChatGPT session. Run `gicc --login` to repair it.'
             return 14
         }
         $sourceRaw = [string] $snapshot.Raw
@@ -838,13 +840,13 @@ function Sync-Session {
             }
             if ($shouldWrite) {
                 $script:sessionTemporary = Join-Path $bridgeAuthDir ('.codex-session-' + [guid]::NewGuid().ToString('N') + '.tmp')
-                [Claudex.CredentialSyncCleanup]::TrackTemporary($script:sessionTemporary)
+                [GICC.CredentialSyncCleanup]::TrackTemporary($script:sessionTemporary)
                 [IO.File]::WriteAllText($script:sessionTemporary, (($candidate | ConvertTo-Json -Compress) + "`n"), $utf8)
                 Protect-PrivatePath $script:sessionTemporary $false
                 if (-not $previousAccount -or $previousAccount -ne $accountId) { Clear-AccountScopedState }
                 Move-Item -LiteralPath $script:sessionTemporary -Destination $bridgeAuthFile -Force
                 $script:sessionTemporary = ''
-                [Claudex.CredentialSyncCleanup]::ClearTemporaryTracking()
+                [GICC.CredentialSyncCleanup]::ClearTemporaryTracking()
                 Protect-PrivatePath $bridgeAuthFile $false
             }
             $script:lastSessionSyncFingerprint = $sourceFingerprint
@@ -895,10 +897,10 @@ function Get-ManagedBackgroundRegistryState {
         'ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES',
         'ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES',
         'CLAUDE_CODE_AUTO_MODE_MODEL', 'CLAUDE_CODE_BG_CLASSIFIER_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL',
-        'CLAUDEX_PROXY_TOKEN', 'CLAUDEX_PROXY_URL', 'CLAUDEX_PROXY_CONFIG', 'CLAUDEX_PROXY_BIN',
-        'CLAUDEX_CODEX_AUTH_FILE', 'CLAUDEX_CODEX_SOURCE_AUTH_FILE', 'CLAUDEX_MANAGED_SESSION',
-        'CLAUDEX_CHATGPT_PLAN_LABEL', 'CLAUDEX_SESSION_MODE', 'CLAUDEX_MODEL_MODE',
-        'CLAUDEX_INTERACTIVE_TUI', 'CLAUDE_CODE_EFFORT_LEVEL'
+        'GICC_PROXY_TOKEN', 'GICC_PROXY_URL', 'GICC_PROXY_CONFIG', 'GICC_PROXY_BIN',
+        'GICC_CODEX_AUTH_FILE', 'GICC_CODEX_SOURCE_AUTH_FILE', 'GICC_MANAGED_SESSION',
+        'GICC_CHATGPT_PLAN_LABEL', 'GICC_SESSION_MODE', 'GICC_MODEL_MODE',
+        'GICC_INTERACTIVE_TUI', 'CLAUDE_CODE_EFFORT_LEVEL'
     )
     $saved = @{}
     foreach ($name in $privateNames) {
@@ -929,9 +931,9 @@ function Get-ManagedBackgroundRegistryState {
 function Watch-Session {
     if ($ParentProcessId -le 1) { Write-Failure 'watch requires a valid parent process ID.'; return 2 }
     $interval = 2
-    if ($env:CLAUDEX_AUTH_WATCH_SECONDS) {
-        if (-not [int]::TryParse($env:CLAUDEX_AUTH_WATCH_SECONDS, [ref] $interval) -or $interval -lt 1 -or $interval -gt 60) {
-            Write-Failure 'CLAUDEX_AUTH_WATCH_SECONDS must be an integer from 1 to 60.'
+    if ($env:GICC_AUTH_WATCH_SECONDS) {
+        if (-not [int]::TryParse($env:GICC_AUTH_WATCH_SECONDS, [ref] $interval) -or $interval -lt 1 -or $interval -gt 60) {
+            Write-Failure 'GICC_AUTH_WATCH_SECONDS must be an integer from 1 to 60.'
             return 2
         }
     }
@@ -948,16 +950,16 @@ function Watch-Session {
             $fingerprint = $script:lastSessionSyncFingerprint
         }
     } catch { }
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and
-        $env:CLAUDEX_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_READY_FILE -and
-        $env:CLAUDEX_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_CONTINUE_FILE) {
-        [IO.File]::WriteAllText($env:CLAUDEX_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_READY_FILE, "ready`n", $utf8)
-        while (-not (Test-Path -LiteralPath $env:CLAUDEX_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_CONTINUE_FILE)) {
+    if ($env:GICC_TEST_MODE -eq '1' -and
+        $env:GICC_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_READY_FILE -and
+        $env:GICC_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_CONTINUE_FILE) {
+        [IO.File]::WriteAllText($env:GICC_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_READY_FILE, "ready`n", $utf8)
+        while (-not (Test-Path -LiteralPath $env:GICC_TEST_AUTH_WATCH_AFTER_INITIAL_SYNC_CONTINUE_FILE)) {
             Start-Sleep -Milliseconds 20
         }
     }
-    if ($env:CLAUDEX_AUTH_WATCH_READY_FILE) {
-        [IO.File]::WriteAllText($env:CLAUDEX_AUTH_WATCH_READY_FILE, "ready`n", $utf8)
+    if ($env:GICC_AUTH_WATCH_READY_FILE) {
+        [IO.File]::WriteAllText($env:GICC_AUTH_WATCH_READY_FILE, "ready`n", $utf8)
     }
     $emptyPolls = 0
     while ($true) {
@@ -982,8 +984,8 @@ function Watch-Session {
             if ($next -eq 'missing') { $fingerprint = $next }
         }
     }
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_AUTH_WATCH_EXIT_FILE) {
-        [IO.File]::WriteAllText($env:CLAUDEX_TEST_AUTH_WATCH_EXIT_FILE, "exited`n", $utf8)
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_AUTH_WATCH_EXIT_FILE) {
+        [IO.File]::WriteAllText($env:GICC_TEST_AUTH_WATCH_EXIT_FILE, "exited`n", $utf8)
     }
     return 0
 }
@@ -1000,12 +1002,12 @@ switch ($Action) {
             else { Write-Failure 'Codex CLI was not found. Install Codex and retry.' }
             exit 10
         }
-        Write-Output 'Claudex is opening the official Codex sign-in flow...'
+        Write-Output 'GICC is opening the official Codex sign-in flow...'
         Invoke-CodexCommand -Codex $codex -Arguments @('-c', "cli_auth_credentials_store='file'", 'login')
         if ($script:lastCodexCommandExitCode -ne 0) { exit $script:lastCodexCommandExitCode }
         $result = Sync-Session
         if ($result -ne 0) { exit $result }
-        Write-Output 'Codex authentication is ready for Claudex.'
+        Write-Output 'Codex authentication is ready for GICC.'
     }
     'logout' {
         Acquire-SessionSyncLock
@@ -1019,12 +1021,12 @@ switch ($Action) {
         }
         finally { Release-SessionSyncLock }
         if ($exitCode -ne 0) {
-            if ($codex) { Write-Failure 'Codex logout failed, but the local Claudex bridge session was cleared.' }
-            elseif ($script:codexResolutionFailure) { Write-Failure "$($script:codexResolutionFailure) The local Claudex bridge session was cleared." }
-            else { Write-Failure 'Codex CLI was not found; the local Claudex bridge session was cleared.' }
+            if ($codex) { Write-Failure 'Codex logout failed, but the local GICC bridge session was cleared.' }
+            elseif ($script:codexResolutionFailure) { Write-Failure "$($script:codexResolutionFailure) The local GICC bridge session was cleared." }
+            else { Write-Failure 'Codex CLI was not found; the local GICC bridge session was cleared.' }
             exit $exitCode
         }
-        Write-Output 'Codex and Claudex are logged out.'
+        Write-Output 'Codex and GICC are logged out.'
     }
     'status' {
         $result = Sync-Session

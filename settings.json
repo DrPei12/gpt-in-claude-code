@@ -19,7 +19,7 @@
   "tui": "fullscreen",
   "statusLine": {
     "type": "command",
-    "command": "__CLAUDEX_STATUSLINE_COMMAND__",
+    "command": "__GICC_STATUSLINE_COMMAND__",
     "padding": 0
   },
   "effortLevel": "high"

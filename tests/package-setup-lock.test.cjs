@@ -5,7 +5,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'claudex-package-lock-'));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'gicc-package-lock-'));
 
 function writeOwner(lockPath, owner, ageMs = 0) {
   fs.mkdirSync(lockPath, { recursive: true, mode: 0o700 });
@@ -165,16 +165,16 @@ function runPackageSetup(wrapper, env) {
   const fixtureConfig = path.join(temporary, 'failure-wave-config');
   const attemptsPath = path.join(temporary, 'failure-wave-attempts.txt');
   fs.mkdirSync(fixtureBin, { recursive: true });
-  fs.copyFileSync(path.resolve(__dirname, '..', 'bin', 'claudex-package.mjs'), path.join(fixtureBin, 'claudex-package.mjs'));
+  fs.copyFileSync(path.resolve(__dirname, '..', 'bin', 'gicc-package.mjs'), path.join(fixtureBin, 'gicc-package.mjs'));
   fs.copyFileSync(modulePath, path.join(fixtureBin, 'package-setup-lock.mjs'));
   fs.writeFileSync(path.join(fixture, 'package.json'), JSON.stringify({
-    name: 'claudex-lock-test',
+    name: 'gicc-lock-test',
     version: '9.9.9',
     type: 'module',
   }));
   if (process.platform === 'win32') {
     fs.writeFileSync(path.join(fixture, 'install.ps1'), [
-      "Add-Content -LiteralPath $env:CLAUDEX_TEST_ATTEMPTS -Value 'attempt'",
+      "Add-Content -LiteralPath $env:GICC_TEST_ATTEMPTS -Value 'attempt'",
       'Start-Sleep -Milliseconds 2000',
       'exit 23',
       '',
@@ -183,17 +183,17 @@ function runPackageSetup(wrapper, env) {
     fs.writeFileSync(path.join(fixture, 'install.sh'), [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
-      "printf 'attempt\\n' >> \"$CLAUDEX_TEST_ATTEMPTS\"",
+      "printf 'attempt\\n' >> \"$GICC_TEST_ATTEMPTS\"",
       'sleep 2',
       'exit 23',
       '',
     ].join('\n'));
   }
-  const wrapper = path.join(fixtureBin, 'claudex-package.mjs');
+  const wrapper = path.join(fixtureBin, 'gicc-package.mjs');
   const failureEnvironment = {
-    CLAUDEX_CONFIG_DIR: fixtureConfig,
-    CLAUDEX_INSTALL_METHOD: 'homebrew',
-    CLAUDEX_TEST_ATTEMPTS: attemptsPath,
+    GICC_CONFIG_DIR: fixtureConfig,
+    GICC_INSTALL_METHOD: 'homebrew',
+    GICC_TEST_ATTEMPTS: attemptsPath,
   };
   const waveStatuses = await Promise.all(Array.from(
     { length: 5 },

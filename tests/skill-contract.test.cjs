@@ -7,7 +7,7 @@ const childProcess = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const helper = path.join(root, 'skill-bridge.cjs');
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'claudex-skill-contract-'));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'gicc-skill-contract-'));
 const failures = [];
 
 function write(file, contents) {
@@ -83,19 +83,19 @@ function environmentFor(home, config, codexHome, pluginInventory, extra = {}) {
   return {
     HOME: home,
     USERPROFILE: home,
-    CLAUDEX_CONFIG_DIR: config,
-    CLAUDEX_CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
+    GICC_CONFIG_DIR: config,
+    GICC_CLAUDE_CONFIG_DIR: path.join(home, '.claude'),
     CODEX_HOME: codexHome,
-    CLAUDEX_TEST_CODEX_PLUGIN_LIST_FILE: pluginInventory,
-    CLAUDEX_SKILL_BRIDGE_NO_LINKS: '1',
-    CLAUDEX_CODEX_ADMIN_SKILLS_DIR: path.join(home, 'missing-admin-skills'),
+    GICC_TEST_CODEX_PLUGIN_LIST_FILE: pluginInventory,
+    GICC_SKILL_BRIDGE_NO_LINKS: '1',
+    GICC_CODEX_ADMIN_SKILLS_DIR: path.join(home, 'missing-admin-skills'),
     ...extra,
   };
 }
 
 try {
   const home = path.join(temporary, 'primary home');
-  const config = path.join(home, '.config', 'claudex');
+  const config = path.join(home, '.config', 'gpt-in-claude-code');
   const codexHome = path.join(home, '.codex');
   const claudeHome = path.join(home, '.claude');
   const repo = path.join(temporary, 'repo');
@@ -273,14 +273,14 @@ try {
     expect(aliases(first).has('skill-con'), 'reserved identity con was not mapped to skill-con');
   });
 
-  check('Codex bundled system skills are available in Claudex', () => {
+  check('Codex bundled system skills are available in GICC', () => {
     const system = first.skills.find((entry) => entry.alias === 'bundled-tool');
     expect(system && system.kind === 'codex-system', 'CODEX_HOME/skills/.system was not discovered');
     expect(fs.readFileSync(overlaySkillFile(first, 'bundled-tool'), 'utf8').includes('bundled Codex workflow'),
       'bundled Codex skill instructions were not snapshotted');
   });
 
-  check('Claude personal skillOverrides stay disabled in Claudex', () => {
+  check('Claude personal skillOverrides stay disabled in GICC', () => {
     expect(!aliases(first).has('override-disabled'), 'disabled Claude personal skill was imported');
     expect(aliases(first).has('local-precedence'), 'repository-root settings.local.json must override a legacy nested local file');
   });
@@ -315,10 +315,10 @@ try {
       'defaultEnabled:false plugin was imported without an explicit enable');
   });
 
-  const pluginsOff = invoke({ ...environment, CLAUDEX_SKILL_PLUGINS: 'off' }, project);
+  const pluginsOff = invoke({ ...environment, GICC_SKILL_PLUGINS: 'off' }, project);
   check('global plugin opt-out includes skills-directory plugins', () => {
     expect(!pluginsOff.skills.some((entry) => /plugin/.test(entry.kind)),
-      'CLAUDEX_SKILL_PLUGINS=off left imported plugin skills enabled');
+      'GICC_SKILL_PLUGINS=off left imported plugin skills enabled');
     expect(!pluginSkillExists(pluginsOff, 'skills-directory', 'nested'),
       'skills-directory plugin bypassed the global plugin opt-out');
   });
@@ -397,7 +397,7 @@ try {
 
   // Exercise an equivalent valid TOML representation, not only array-table syntax.
   const structuredHome = path.join(temporary, 'structured home');
-  const structuredConfig = path.join(structuredHome, '.config', 'claudex');
+  const structuredConfig = path.join(structuredHome, '.config', 'gpt-in-claude-code');
   const structuredCodexHome = path.join(structuredHome, '.codex');
   const structuredRepo = path.join(temporary, 'structured repo');
   fs.mkdirSync(path.join(structuredRepo, '.git'), { recursive: true });
@@ -429,7 +429,7 @@ try {
   );
 
   const inlineHome = path.join(temporary, 'inline home');
-  const inlineConfig = path.join(inlineHome, '.config', 'claudex');
+  const inlineConfig = path.join(inlineHome, '.config', 'gpt-in-claude-code');
   const inlineCodexHome = path.join(inlineHome, '.codex');
   const inlineRepo = path.join(temporary, 'inline repo');
   fs.mkdirSync(path.join(inlineRepo, '.git'), { recursive: true });

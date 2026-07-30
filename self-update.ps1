@@ -18,15 +18,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
-$script:Repository = 'BeamoINT/Claudex'
-$script:ConfigDir = if ($env:CLAUDEX_CONFIG_DIR) { $env:CLAUDEX_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\claudex' }
+$script:Repository = 'DrPei12/gpt-in-claude-code'
+$script:ConfigDir = if ($env:GICC_CONFIG_DIR) { $env:GICC_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\gpt-in-claude-code' }
 $script:ReceiptPath = Join-Path $script:ConfigDir 'install.json'
-$script:UpdateDir = Join-Path $script:ConfigDir 'update\claudex'
+$script:UpdateDir = Join-Path $script:ConfigDir 'update\gicc'
 $script:StatePath = Join-Path $script:UpdateDir 'state.json'
 $script:LockPath = Join-Path $script:UpdateDir 'lock'
 $script:Utf8 = New-Object Text.UTF8Encoding($false)
 $script:LockToken = $null
-$script:IsBackground = $Background -or $env:CLAUDEX_UPDATE_BACKGROUND -eq '1'
+$script:IsBackground = $Background -or $env:GICC_UPDATE_BACKGROUND -eq '1'
 $script:AllowedDownloadHosts = @(
     'api.github.com',
     'github.com',
@@ -38,7 +38,7 @@ $script:AllowedDownloadHosts = @(
 )
 
 function Write-Failure([string] $Message) {
-    [Console]::Error.WriteLine("claudex self-update: $Message")
+    [Console]::Error.WriteLine("gicc self-update: $Message")
 }
 
 function Write-Notice([string] $Message) {
@@ -135,13 +135,13 @@ function Get-UpdateLockAge([string] $Path) {
 
 function Get-UpdateLockDirectoryIdentity([string] $Path) {
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-        if (-not ('Claudex.SelfUpdateDirectoryIdentity' -as [type])) {
+        if (-not ('GICC.SelfUpdateDirectoryIdentity' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-namespace Claudex
+namespace GICC
 {
     public static class SelfUpdateDirectoryIdentity
     {
@@ -194,7 +194,7 @@ namespace Claudex
 }
 '@
         }
-        try { return [Claudex.SelfUpdateDirectoryIdentity]::GetIdentity($Path) }
+        try { return [GICC.SelfUpdateDirectoryIdentity]::GetIdentity($Path) }
         catch { return '' }
     }
 
@@ -261,9 +261,9 @@ function Get-UpdateCompatibilityOwnerToken([string] $Directory) {
 }
 
 function Invoke-UpdateLockTestPause([string] $Stage) {
-    if ($env:CLAUDEX_TEST_MODE -ne '1') { return }
-    $ready = [Environment]::GetEnvironmentVariable("CLAUDEX_TEST_UPDATE_LOCK_${Stage}_READY", 'Process')
-    $continue = [Environment]::GetEnvironmentVariable("CLAUDEX_TEST_UPDATE_LOCK_${Stage}_CONTINUE", 'Process')
+    if ($env:GICC_TEST_MODE -ne '1') { return }
+    $ready = [Environment]::GetEnvironmentVariable("GICC_TEST_UPDATE_LOCK_${Stage}_READY", 'Process')
+    $continue = [Environment]::GetEnvironmentVariable("GICC_TEST_UPDATE_LOCK_${Stage}_CONTINUE", 'Process')
     if (-not $ready -or -not $continue) { return }
     [IO.File]::WriteAllText($ready, "ready`n", $script:Utf8)
     while (-not (Test-Path -LiteralPath $continue -PathType Leaf)) { Start-Sleep -Milliseconds 20 }
@@ -277,10 +277,10 @@ function Remove-UpdateLockDirectory([string] $Directory) {
 }
 
 function Publish-UpdateLockFile([string] $Source, [string] $Destination) {
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE -eq '1') {
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_FORCE_PUBLICATION_FAILURE -eq '1') {
         throw 'forced update lock publication failure'
     }
-    if ($env:CLAUDEX_TEST_MODE -ne '1' -or $env:CLAUDEX_TEST_FORCE_HARDLINK_FAILURE -ne '1') {
+    if ($env:GICC_TEST_MODE -ne '1' -or $env:GICC_TEST_FORCE_HARDLINK_FAILURE -ne '1') {
         try {
             New-Item -ItemType HardLink -Path $Destination -Target $Source -ErrorAction Stop | Out-Null
             return
@@ -427,8 +427,8 @@ function Recover-OwnedUpdateLock([string] $ExpectedNonce) {
         return $false
     }
     if ($currentNonce -eq $ExpectedNonce -and @(Get-UpdateLockBarriers).Count -eq 0) {
-        if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE) {
-            [IO.File]::WriteAllText($env:CLAUDEX_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE, "recovered`n", $script:Utf8)
+        if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE) {
+            [IO.File]::WriteAllText($env:GICC_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE, "recovered`n", $script:Utf8)
         }
         return $true
     }
@@ -447,7 +447,7 @@ function Acquire-UpdateLock {
     $ownerFile = Join-Path $script:LockPath 'owner'
     $attemptLimit = 100
     $testAttempts = 0
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and [int]::TryParse($env:CLAUDEX_TEST_UPDATE_LOCK_ATTEMPTS, [ref] $testAttempts) -and
+    if ($env:GICC_TEST_MODE -eq '1' -and [int]::TryParse($env:GICC_TEST_UPDATE_LOCK_ATTEMPTS, [ref] $testAttempts) -and
             $testAttempts -ge 1 -and $testAttempts -le 100) { $attemptLimit = $testAttempts }
     for ($attempt = 0; $attempt -lt $attemptLimit; $attempt++) {
         Recover-UpdateLockBarriers
@@ -525,7 +525,7 @@ function Acquire-UpdateLock {
         }
         Start-Sleep -Milliseconds 20
     }
-    throw 'timed out waiting for another Claudex update operation'
+    throw 'timed out waiting for another GICC update operation'
 }
 
 function Release-UpdateLock {
@@ -551,11 +551,11 @@ function Receive-HttpsFile(
     [int] $TimeoutSeconds,
     [string] $Accept = 'application/octet-stream'
 ) {
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_UPDATE_FIXTURE_DIR) {
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_UPDATE_FIXTURE_DIR) {
         Assert-AllowedUri $Uri
         $leaf = [IO.Path]::GetFileName($Uri.AbsolutePath)
         if ($leaf -eq 'latest') { $leaf = 'latest.json' }
-        $source = Join-Path $env:CLAUDEX_TEST_UPDATE_FIXTURE_DIR $leaf
+        $source = Join-Path $env:GICC_TEST_UPDATE_FIXTURE_DIR $leaf
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "update test fixture is missing $leaf" }
         if ((Get-Item -LiteralPath $source).Length -gt $MaximumBytes) { throw "update download exceeds the $MaximumBytes byte limit" }
         Copy-Item -LiteralPath $source -Destination $Destination -ErrorAction Stop
@@ -573,7 +573,7 @@ function Receive-HttpsFile(
         $request = New-Object Net.Http.HttpRequestMessage([Net.Http.HttpMethod]::Get, $current)
         $cancellation = New-Object Threading.CancellationTokenSource
         $cancellation.CancelAfter([TimeSpan]::FromSeconds($TimeoutSeconds))
-        [void]$request.Headers.TryAddWithoutValidation('User-Agent', 'Claudex-Self-Updater/1')
+        [void]$request.Headers.TryAddWithoutValidation('User-Agent', 'GICC-Self-Updater/1')
         [void]$request.Headers.TryAddWithoutValidation('Accept', $Accept)
         # Never forward an API credential to a release-object redirect host.
         if ($env:GITHUB_TOKEN -and $current.Host -eq 'api.github.com') {
@@ -664,7 +664,7 @@ function Get-ReceiptManager($Receipt) {
 }
 
 function Get-LatestRelease {
-    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('claudex-release-' + [guid]::NewGuid().ToString('N') + '.json')
+    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('gicc-release-' + [guid]::NewGuid().ToString('N') + '.json')
     try {
         Receive-HttpsFile ([Uri]"https://api.github.com/repos/$($script:Repository)/releases/latest") $temporary 2097152 20 'application/vnd.github+json'
         $release = Get-Content -LiteralPath $temporary -Raw | ConvertFrom-Json
@@ -677,7 +677,7 @@ function Get-LatestRelease {
     $tag = [string]$release.tag_name
     if ($tag.StartsWith('v')) { $tag = $tag.Substring(1) }
     $version = ConvertTo-StableVersion $tag 'latest release tag'
-    $zipName = "claudex-$($version.Text)-windows.zip"
+    $zipName = "gicc-$($version.Text)-windows.zip"
     $requiredNames = @($zipName, 'SHA256SUMS')
     $assetMap = @{}
     foreach ($asset in @($release.assets)) {
@@ -714,10 +714,10 @@ function New-State($OldState, [hashtable] $Changes) {
 function Record-CheckSuccess($State, $CurrentVersion, $Release) {
     $now = Get-UnixTime
     $interval = 86400
-    if ($env:CLAUDEX_UPDATE_INTERVAL_SECONDS) {
+    if ($env:GICC_UPDATE_INTERVAL_SECONDS) {
         $parsed = 0
-        if (-not [int]::TryParse($env:CLAUDEX_UPDATE_INTERVAL_SECONDS, [ref]$parsed) -or $parsed -lt 3600 -or $parsed -gt 2592000) {
-            throw 'CLAUDEX_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000'
+        if (-not [int]::TryParse($env:GICC_UPDATE_INTERVAL_SECONDS, [ref]$parsed) -or $parsed -lt 3600 -or $parsed -gt 2592000) {
+            throw 'GICC_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000'
         }
         $interval = $parsed
     }
@@ -889,14 +889,14 @@ function Find-ManagerWrapper($Receipt) {
         [string](Get-PropertyValue $Receipt @('binDir')),
         (Join-Path $script:ConfigDir 'package-bin')
     )
-    foreach ($command in @(Get-Command claudex -All -ErrorAction SilentlyContinue)) {
+    foreach ($command in @(Get-Command gicc -All -ErrorAction SilentlyContinue)) {
         $source = [string]$command.Source
         if (-not $source -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
         $isExcluded = $false
         foreach ($directory in $excluded) { if ($directory -and (Test-PathWithin $source $directory)) { $isExcluded = $true; break } }
         if (-not $isExcluded) { return $source }
     }
-    throw 'the package manager completed but its public Claudex wrapper was not found in PATH'
+    throw 'the package manager completed but its public GICC wrapper was not found in PATH'
 }
 
 function Invoke-PackageWrapper([string] $Wrapper, [string[]] $Arguments, [switch] $CaptureOutput) {
@@ -940,21 +940,21 @@ function Invoke-ManagerUpdate([string] $Manager, $Receipt, $Release) {
         'homebrew' {
             $command = Get-NativeCommand @('brew.exe', 'brew')
             if (-not $command) { throw 'Homebrew-managed install cannot update because brew is not in PATH' }
-            $formula = Get-ManagerPackage $Receipt 'beamoint/tap/claudex'
+            $formula = Get-ManagerPackage $Receipt 'drpei12/tap/gicc'
             Invoke-BoundedProcess $command @('upgrade', $formula) 900
         }
         'scoop' {
             $command = Get-NativeCommand @('scoop.cmd', 'scoop.exe', 'scoop')
             $scriptCommand = if (-not $command) { Get-PowerShellScriptCommand 'scoop' } else { $null }
             if (-not $command -and -not $scriptCommand) { throw 'Scoop-managed install cannot update because scoop is not in PATH' }
-            $package = Get-ManagerPackage $Receipt 'claudex'
+            $package = Get-ManagerPackage $Receipt 'gicc'
             if ($command) { Invoke-BoundedProcess $command @('update', $package) 900 }
             else { Invoke-PackageWrapper $scriptCommand @('update', $package) }
         }
         'winget' {
             $command = Get-NativeCommand @('winget.exe', 'winget')
             if (-not $command) { throw 'WinGet-managed install cannot update because winget is not in PATH' }
-            $identifier = Get-ManagerPackage $Receipt 'BeamoINT.Claudex'
+            $identifier = Get-ManagerPackage $Receipt 'DrPei12.GICC'
             Invoke-BoundedProcess $command @('upgrade', '--id', $identifier, '--exact', '--version', $Release.Version.Text, '--accept-source-agreements', '--accept-package-agreements', '--disable-interactivity') 900
         }
         default { throw "unsupported package manager: $Manager" }
@@ -974,7 +974,7 @@ function Invoke-ManagerUpdate([string] $Manager, $Receipt, $Release) {
 }
 
 function Invoke-ArchiveUpdate($Receipt, $Release) {
-    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('claudex-update-' + [guid]::NewGuid().ToString('N'))
+    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('gicc-update-' + [guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($temporary) | Out-Null
     try {
         $archive = Join-Path $temporary $Release.ZipName
@@ -984,7 +984,7 @@ function Invoke-ArchiveUpdate($Receipt, $Release) {
         $expected = Get-ExpectedChecksum $checksums $Release.ZipName
         $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($actual -ne $expected) { throw "checksum mismatch for $($Release.ZipName)" }
-        $rootName = "claudex-$($Release.Version.Text)"
+        $rootName = "gicc-$($Release.Version.Text)"
         Assert-SafeZip $archive $rootName
         $stage = Join-Path $temporary 'stage'
         [IO.Directory]::CreateDirectory($stage) | Out-Null
@@ -1011,8 +1011,8 @@ function Invoke-ArchiveUpdate($Receipt, $Release) {
         $powerShell = if (Get-Command pwsh -ErrorAction SilentlyContinue) { (Get-Command pwsh).Source } else { (Get-Command powershell.exe -ErrorAction Stop).Source }
         $binDir = [string](Get-PropertyValue $Receipt @('binDir'))
         $managedPaths = @(
-            (Join-Path $binDir 'claudex.ps1'),
-            (Join-Path $binDir 'claudex.cmd'),
+            (Join-Path $binDir 'gicc.ps1'),
+            (Join-Path $binDir 'gicc.cmd'),
             (Join-Path $script:ConfigDir 'env'),
             (Join-Path $script:ConfigDir 'cliproxyapi.yaml'),
             (Join-Path $script:ConfigDir 'settings.json'),
@@ -1041,12 +1041,12 @@ function Invoke-ArchiveUpdate($Receipt, $Release) {
         # Archive updates remain barred from changing unrelated dependencies,
         # but may install or upgrade Node for the newly required skill bridge.
         $updateEnvironment = @{
-            CLAUDEX_INSTALL_METHOD = 'archive'
-            CLAUDEX_BIN_DIR = $binDir
-            CLAUDEX_SKIP_DEPENDENCY_INSTALL = '1'
-            CLAUDEX_ALLOW_NODE_INSTALL = '1'
-            CLAUDEX_SKIP_SERVICE_START = '1'
-            CLAUDEX_SKIP_CLAUDE_UPDATE = '1'
+            GICC_INSTALL_METHOD = 'archive'
+            GICC_BIN_DIR = $binDir
+            GICC_SKIP_DEPENDENCY_INSTALL = '1'
+            GICC_ALLOW_NODE_INSTALL = '1'
+            GICC_SKIP_SERVICE_START = '1'
+            GICC_SKIP_CLAUDE_UPDATE = '1'
         }
         $savedEnvironment = @{}
         foreach ($name in $updateEnvironment.Keys) {
@@ -1098,7 +1098,7 @@ function Invoke-Check {
             if ((Compare-StableVersion $release.Version $current) -lt 0) { throw 'latest release is older than the installed version; refusing downgrade' }
             Record-CheckSuccess $state $current $release
             if ((Compare-StableVersion $release.Version $current) -gt 0) {
-                Write-Notice "Claudex $($release.Version.Text) is available (installed: $($current.Text))."
+                Write-Notice "GICC $($release.Version.Text) is available (installed: $($current.Text))."
             }
         } catch {
             # Checks are deliberately quiet while offline or while GitHub is
@@ -1126,7 +1126,7 @@ function Invoke-Apply {
             if ($comparison -lt 0) { throw 'latest release is older than the installed version; refusing downgrade' }
             if ($comparison -eq 0) {
                 Record-CheckSuccess $state $current $release
-                Write-Notice "Claudex $($current.Text) is already current."
+                Write-Notice "GICC $($current.Text) is already current."
                 return
             }
             $manager = Get-ReceiptManager $receipt
@@ -1141,7 +1141,7 @@ function Invoke-Apply {
                 lastAppliedAt = Get-UnixTime
                 lastAppliedVersion = $release.Version.Text
             })
-            Write-Notice "Updated Claudex to $($release.Version.Text)."
+            Write-Notice "Updated GICC to $($release.Version.Text)."
         } catch {
             try { Record-CheckFailure $state $_.Exception.Message } catch { }
             throw

@@ -8,7 +8,7 @@ const path = require('path');
 
 const repositoryRoot = path.resolve(__dirname, '..');
 const helper = path.join(repositoryRoot, 'skill-bridge.cjs');
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'claudex-skill-security-'));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'gicc-skill-security-'));
 const skipped = [];
 
 function write(file, contents) {
@@ -23,7 +23,7 @@ function createSkill(directory, name, body = 'Follow these instructions.') {
 function setup(name) {
   const root = path.join(temporary, name);
   const home = path.join(root, 'home');
-  const config = path.join(home, '.config', 'claudex');
+  const config = path.join(home, '.config', 'gpt-in-claude-code');
   const claudeHome = path.join(home, '.claude');
   const codexHome = path.join(home, '.codex');
   const repo = path.join(root, 'repo');
@@ -38,15 +38,15 @@ function setup(name) {
       ...process.env,
       HOME: home,
       USERPROFILE: home,
-      CLAUDEX_CONFIG_DIR: config,
-      CLAUDEX_CLAUDE_CONFIG_DIR: claudeHome,
+      GICC_CONFIG_DIR: config,
+      GICC_CLAUDE_CONFIG_DIR: claudeHome,
       CODEX_HOME: codexHome,
-      CLAUDEX_CODEX_ADMIN_SKILLS_DIR: path.join(root, 'missing-admin-skills'),
-      CLAUDEX_TEST_CODEX_PLUGIN_LIST_FILE: inventory,
-      CLAUDEX_SKILL_BRIDGE: 'on',
-      CLAUDEX_SKILL_PLUGINS: 'on',
-      CLAUDEX_SKILL_DOLLAR_REFERENCES: 'off',
-      CLAUDEX_SKILL_EXTRA_DIRS: '',
+      GICC_CODEX_ADMIN_SKILLS_DIR: path.join(root, 'missing-admin-skills'),
+      GICC_TEST_CODEX_PLUGIN_LIST_FILE: inventory,
+      GICC_SKILL_BRIDGE: 'on',
+      GICC_SKILL_PLUGINS: 'on',
+      GICC_SKILL_DOLLAR_REFERENCES: 'off',
+      GICC_SKILL_EXTRA_DIRS: '',
     },
   };
 }
@@ -202,7 +202,7 @@ function testPluginInternalSymlinkAndManagedSideloadPolicy() {
   write(managed, '{"disableSideloadFlags":false}\n');
   write(path.join(fixture.root, 'managed-settings.d', '99-lockdown.json'), '{"disableSideloadFlags":true}\n');
   createSkill(path.join(fixture.home, '.agents', 'skills', 'standalone-control'), 'standalone-control');
-  const restricted = invoke({ ...fixture.environment, CLAUDEX_CLAUDE_MANAGED_SETTINGS_FILE: managed }, fixture.project);
+  const restricted = invoke({ ...fixture.environment, GICC_CLAUDE_MANAGED_SETTINGS_FILE: managed }, fixture.project);
   assert.deepStrictEqual(restricted.pluginDirs, [], 'managed disableSideloadFlags must emit no generated --plugin-dir values');
   assert(aliases(restricted).has('standalone-control'), 'standalone --add-dir skill compatibility should remain available');
   assert(!aliases(restricted).has('linked-plugin:linked-task'));
@@ -230,7 +230,7 @@ function testStrictPluginOnlySkillPolicy() {
   write(path.join(fixture.repo, '.claude', 'settings.local.json'), '{"strictPluginOnlyCustomization":false}\n');
   const managed = path.join(fixture.root, 'managed-settings.json');
   write(managed, '{"strictPluginOnlyCustomization":true}\n');
-  const strictBoolean = invoke({ ...fixture.environment, CLAUDEX_CLAUDE_MANAGED_SETTINGS_FILE: managed }, fixture.project);
+  const strictBoolean = invoke({ ...fixture.environment, GICC_CLAUDE_MANAGED_SETTINGS_FILE: managed }, fixture.project);
   assert(!aliases(strictBoolean).has('standalone-strict'), 'managed strict plugin-only policy must omit standalone skills');
   assert(!aliases(strictBoolean).has('standalone-command'), 'boolean strict plugin-only policy must omit standalone commands');
   assert(aliases(strictBoolean).has('strict-plugin:plugin-task'), 'strict plugin-only policy must retain plugin skills');
@@ -240,13 +240,13 @@ function testStrictPluginOnlySkillPolicy() {
   assert(warningIncludes(strictBoolean, 'require skills to come from plugins'));
 
   write(managed, '{"strictPluginOnlyCustomization":["skills"]}\n');
-  const strictArray = invoke({ ...fixture.environment, CLAUDEX_CLAUDE_MANAGED_SETTINGS_FILE: managed }, fixture.project);
+  const strictArray = invoke({ ...fixture.environment, GICC_CLAUDE_MANAGED_SETTINGS_FILE: managed }, fixture.project);
   assert(!aliases(strictArray).has('standalone-strict'));
   assert(aliases(strictArray).has('standalone-command'), 'skills strict category must not block standalone commands');
   assert(aliases(strictArray).has('strict-plugin:plugin-task'));
 
   write(managed, '{"strictPluginOnlyCustomization":["commands"]}\n');
-  const commandsOnly = invoke({ ...fixture.environment, CLAUDEX_CLAUDE_MANAGED_SETTINGS_FILE: managed }, fixture.project);
+  const commandsOnly = invoke({ ...fixture.environment, GICC_CLAUDE_MANAGED_SETTINGS_FILE: managed }, fixture.project);
   assert(aliases(commandsOnly).has('standalone-strict'), 'non-skill strict categories must not block standalone skills');
   assert(!aliases(commandsOnly).has('standalone-command'), 'commands strict category must omit standalone Claude commands');
   assert(aliases(commandsOnly).has('strict-plugin:plugin-task'), 'commands strict category must retain plugin customizations');
@@ -295,8 +295,8 @@ function testPolicyAwareCacheAndFallback() {
   const asset = path.join(source, 'asset.txt');
   createSkill(source, 'policy-cache');
   write(asset, 'policy version one\n');
-  const enabled = invoke({ ...fixture.environment, CLAUDEX_SKILL_PLUGINS: 'on' }, fixture.project);
-  const disabled = invoke({ ...fixture.environment, CLAUDEX_SKILL_PLUGINS: 'off' }, fixture.project);
+  const enabled = invoke({ ...fixture.environment, GICC_SKILL_PLUGINS: 'on' }, fixture.project);
+  const disabled = invoke({ ...fixture.environment, GICC_SKILL_PLUGINS: 'off' }, fixture.project);
   assert.notStrictEqual(disabled.overlay, enabled.overlay,
     'generations with different bridge policy fingerprints must not share a manifest');
   const disabledManifest = JSON.parse(fs.readFileSync(path.join(disabled.overlay, 'manifest.json'), 'utf8'));
@@ -311,9 +311,9 @@ function testPolicyAwareCacheAndFallback() {
   write(asset, 'publication should fail under disabled plugin policy\n');
   const fallback = invoke({
     ...fixture.environment,
-    CLAUDEX_SKILL_PLUGINS: 'off',
+    GICC_SKILL_PLUGINS: 'off',
     NODE_ENV: 'test',
-    CLAUDEX_TEST_FAIL_SKILL_PUBLICATION: '1',
+    GICC_TEST_FAIL_SKILL_PUBLICATION: '1',
   }, fixture.project);
   assert.strictEqual(fallback.overlay, disabled.overlay, 'policy-matched LKG must survive a failed refresh');
   assert(warningIncludes(fallback, 'Skill refresh failed; using the last known good snapshot'));
@@ -330,7 +330,7 @@ function testInstructionPolicyAwareFallback() {
   write(config, 'project_doc_max_bytes = 16\nproject_doc_fallback_filenames = ["TEAM.md"]\n');
   const failed = childProcess.spawnSync(process.execPath, [helper, 'sync', '--project', fixture.project], {
     encoding: 'utf8',
-    env: { ...fixture.environment, NODE_ENV: 'test', CLAUDEX_TEST_FAIL_SKILL_PUBLICATION: '1' },
+    env: { ...fixture.environment, NODE_ENV: 'test', GICC_TEST_FAIL_SKILL_PUBLICATION: '1' },
     maxBuffer: 16 * 1024 * 1024,
   });
   assert.notStrictEqual(failed.status, 0,
@@ -481,7 +481,7 @@ function testNativeConfigCollisionReservation() {
   createSkill(path.join(fixture.claudeHome, 'skills', 'reserved'), 'reserved');
   const result = invoke(fixture.environment, fixture.project);
   const names = aliases(result);
-  assert(!names.has('reserved'), 'the isolated Claudex config must reserve its native unqualified alias');
+  assert(!names.has('reserved'), 'the isolated GICC config must reserve its native unqualified alias');
   assert(names.has('claude-reserved'), 'the bridged collision must receive a provider-qualified alias');
   const record = result.skills.find((entry) => entry.alias === 'claude-reserved');
   assert(record && record.collisionAlias === true);
@@ -498,7 +498,7 @@ function testManagedPersonalProjectPrecedence() {
   createSkill(path.join(managedSkills, 'managed-wins'), 'managed-wins');
   createSkill(path.join(fixture.claudeHome, 'skills', 'managed-wins'), 'managed-wins');
   createSkill(path.join(fixture.repo, '.claude', 'skills', 'managed-wins'), 'managed-wins');
-  const managed = invoke({ ...fixture.environment, CLAUDEX_CLAUDE_MANAGED_SKILLS_DIR: managedSkills }, fixture.project);
+  const managed = invoke({ ...fixture.environment, GICC_CLAUDE_MANAGED_SKILLS_DIR: managedSkills }, fixture.project);
   assert(!aliases(managed).has('managed-wins'), 'personal skill must not claim a managed skill short alias');
   assert(aliases(managed).has('claude-managed-wins'), 'managed collision must retain an explicit personal fallback alias');
 }
@@ -523,7 +523,7 @@ function testNativePluginNamespaceReservation() {
   assert(result.skills.some((entry) => entry.alias === 'imported-shared:task'),
     'an imported plugin must be qualified when its namespace is already native');
   assert(!result.skills.some((entry) => entry.alias === 'shared:task'),
-    'an imported plugin must not shadow a native Claudex plugin namespace');
+    'an imported plugin must not shadow a native GICC plugin namespace');
 }
 
 function testScopedPluginReservationAndSameNameShortcuts() {
@@ -630,7 +630,7 @@ function testLastKnownGoodFallback() {
   const fallback = invoke({
     ...fixture.environment,
     NODE_ENV: 'test',
-    CLAUDEX_TEST_FAIL_SKILL_PUBLICATION: '1',
+    GICC_TEST_FAIL_SKILL_PUBLICATION: '1',
   }, fixture.project);
   assert.strictEqual(fallback.overlay, newest.overlay, 'publication failure must return the newest valid snapshot');
   assert(warningIncludes(fallback, 'Skill refresh failed; using the last known good snapshot'));

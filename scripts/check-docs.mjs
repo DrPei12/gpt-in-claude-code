@@ -122,7 +122,7 @@ if (releaseHeadings.length === 0) {
   if (latestVersion !== manifest.version) {
     failures.push(`CHANGELOG latest released version ${latestVersion} does not match package version ${manifest.version}`);
   }
-  const expectedUnreleased = `https://github.com/BeamoINT/Claudex/compare/v${latestVersion}...HEAD`;
+  const expectedUnreleased = `https://github.com/DrPei12/gpt-in-claude-code/compare/v${latestVersion}...HEAD`;
   if (releaseLinks.get('Unreleased') !== expectedUnreleased) {
     failures.push(`CHANGELOG Unreleased link must compare v${latestVersion} to HEAD`);
   }
@@ -131,8 +131,8 @@ if (releaseHeadings.length === 0) {
     const version = releaseHeadings[index];
     const previousVersion = releaseHeadings[index + 1];
     const expected = previousVersion
-      ? `https://github.com/BeamoINT/Claudex/compare/v${previousVersion}...v${version}`
-      : `https://github.com/BeamoINT/Claudex/releases/tag/v${version}`;
+      ? `https://github.com/DrPei12/gpt-in-claude-code/compare/v${previousVersion}...v${version}`
+      : `https://github.com/DrPei12/gpt-in-claude-code/releases/tag/v${version}`;
     if (releaseLinks.get(version) !== expected) {
       failures.push(`CHANGELOG link for ${version} must be ${expected}`);
     }
@@ -229,7 +229,7 @@ for (const path of collectMarkdown(root)) {
 
 const readme = readFileSync(join(root, 'README.md'), 'utf8');
 if (/private portable backup/i.test(readme)) {
-  failures.push('README still describes Claudex as a private backup');
+  failures.push('README still describes GICC as a private backup');
 }
 
 if (failures.length > 0) {

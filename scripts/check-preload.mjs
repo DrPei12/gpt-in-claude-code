@@ -7,14 +7,14 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const preloadPath = path.join(root, 'preload.cjs');
 const require = createRequire(import.meta.url);
-for (const name of ['CLAUDEX_INTERACTIVE_TUI', 'CLAUDEX_CHATGPT_PLAN_LABEL', 'CLAUDEX_TEST_WELCOME_FILTER']) {
+for (const name of ['GICC_INTERACTIVE_TUI', 'GICC_CHATGPT_PLAN_LABEL', 'GICC_TEST_WELCOME_FILTER']) {
   delete process.env[name];
 }
 const {
   chatGptPlanLabel,
   createInputRewriter,
   createWelcomePlanStreamFilter,
-  filterClaudexOutput,
+  filterGICCOutput,
   replaceWelcomeBillingColumns,
 } = require(preloadPath);
 
@@ -163,12 +163,12 @@ assert.deepEqual(
 // The pure compatibility helper remains available, but valid ANSI state must
 // survive it. Only the known malformed no-ESC SGR token is discarded.
 assert.equal(
-  filterClaudexOutput('\x1b[31m/model opus\x1b[0m normal'),
+  filterGICCOutput('\x1b[31m/model opus\x1b[0m normal'),
   '\x1b[31m/model GPT-5.6 Sol\x1b[0m normal',
 );
-assert.equal(filterClaudexOutput('/model opus[1m normal'), '/model GPT-5.6 Sol normal');
-assert.equal(filterClaudexOutput('Opus Plan Mode'), 'GPT-5.6 Solplan');
-assert.equal(filterClaudexOutput('· API Usage Billing'), '· ChatGPT');
+assert.equal(filterGICCOutput('/model opus[1m normal'), '/model GPT-5.6 Sol normal');
+assert.equal(filterGICCOutput('Opus Plan Mode'), 'GPT-5.6 Solplan');
+assert.equal(filterGICCOutput('· API Usage Billing'), '· ChatGPT');
 assert.equal(chatGptPlanLabel('ChatGPT Pro'), 'ChatGPT Pro');
 assert.equal(chatGptPlanLabel('ChatGPT Pro\x1b[2J'), 'ChatGPT');
 assert.deepEqual(
@@ -257,9 +257,9 @@ const welcomeProbe = spawnSync(process.execPath, ['-e', `
   encoding: 'utf8',
   env: {
     ...process.env,
-    CLAUDEX_INTERACTIVE_TUI: '1',
-    CLAUDEX_CHATGPT_PLAN_LABEL: 'ChatGPT Pro',
-    CLAUDEX_TEST_WELCOME_FILTER: '1',
+    GICC_INTERACTIVE_TUI: '1',
+    GICC_CHATGPT_PLAN_LABEL: 'ChatGPT Pro',
+    GICC_TEST_WELCOME_FILTER: '1',
   },
 });
 assert.equal(welcomeProbe.status, 0, welcomeProbe.stderr);
@@ -290,9 +290,9 @@ const splitWelcomeProbe = spawnSync(process.execPath, ['-e', `
   encoding: 'utf8',
   env: {
     ...process.env,
-    CLAUDEX_INTERACTIVE_TUI: '1',
-    CLAUDEX_CHATGPT_PLAN_LABEL: 'ChatGPT Pro',
-    CLAUDEX_TEST_WELCOME_FILTER: '1',
+    GICC_INTERACTIVE_TUI: '1',
+    GICC_CHATGPT_PLAN_LABEL: 'ChatGPT Pro',
+    GICC_TEST_WELCOME_FILTER: '1',
   },
 });
 assert.equal(splitWelcomeProbe.status, 0, splitWelcomeProbe.stderr);
@@ -380,7 +380,7 @@ const listenerProbe = spawnSync(process.execPath, ['-r', preloadPath, '-e', `
   process.stdout.write(JSON.stringify(received.map((parts) => Buffer.concat(parts).toString('base64'))));
 `], {
   encoding: 'utf8',
-  env: { ...process.env, CLAUDEX_TEST_TTY_INPUT: '1' },
+  env: { ...process.env, GICC_TEST_TTY_INPUT: '1' },
 });
 assert.equal(listenerProbe.status, 0, listenerProbe.stderr);
 const listenerOutputs = JSON.parse(listenerProbe.stdout).map((encoded) => Buffer.from(encoded, 'base64'));
@@ -393,10 +393,10 @@ const onceProbe = spawnSync(process.execPath, ['-r', preloadPath, '-e', `
   process.stdin.once('data', (chunk) => received.push(Buffer.from(chunk).toString('base64')));
   process.stdin.prependOnceListener('data', (chunk) => received.push(Buffer.from(chunk).toString('base64')));
   process.stdin.emit('data', Buffer.from('/model solplan\\r'));
-  process.stdout.write(JSON.stringify({ received, mode: process.env.CLAUDEX_MODEL_MODE }));
+  process.stdout.write(JSON.stringify({ received, mode: process.env.GICC_MODEL_MODE }));
 `], {
   encoding: 'utf8',
-  env: { ...process.env, CLAUDEX_TEST_TTY_INPUT: '1' },
+  env: { ...process.env, GICC_TEST_TTY_INPUT: '1' },
 });
 assert.equal(onceProbe.status, 0, onceProbe.stderr);
 const onceResult = JSON.parse(onceProbe.stdout);

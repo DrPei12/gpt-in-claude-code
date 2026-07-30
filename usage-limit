@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly config_dir="${CLAUDEX_CONFIG_DIR:-$HOME/.config/claudex}"
+readonly config_dir="${GICC_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}"
 readonly cache_dir="$config_dir/usage-cache"
 readonly cache_file="$cache_dir/limits.json"
 readonly summary_file="$cache_dir/summary"
@@ -11,14 +11,14 @@ readonly refresh_lock="$cache_dir/refresh.lock"
 readonly refresh_owner_file="$refresh_lock/owner-pid"
 readonly account_selection_file="$config_dir/codex-usage-account"
 readonly usage_generation_file="$config_dir/usage-generation"
-readonly curl_bin="${CLAUDEX_CURL_BIN:-curl}"
+readonly curl_bin="${GICC_CURL_BIN:-curl}"
 readonly official_usage_url="https://chatgpt.com/backend-api/wham/usage"
-readonly usage_url="${CLAUDEX_USAGE_URL:-$official_usage_url}"
-readonly refresh_seconds="${CLAUDEX_USAGE_REFRESH_SECONDS:-300}"
-readonly timeout_seconds="${CLAUDEX_USAGE_TIMEOUT_SECONDS:-8}"
-readonly max_stale_seconds="${CLAUDEX_USAGE_MAX_STALE_SECONDS:-86400}"
-readonly usage_source="${CLAUDEX_USAGE_SOURCE:-auto}"
-readonly alert_percent="${CLAUDEX_USAGE_ALERT_PERCENT:-20}"
+readonly usage_url="${GICC_USAGE_URL:-$official_usage_url}"
+readonly refresh_seconds="${GICC_USAGE_REFRESH_SECONDS:-300}"
+readonly timeout_seconds="${GICC_USAGE_TIMEOUT_SECONDS:-8}"
+readonly max_stale_seconds="${GICC_USAGE_MAX_STALE_SECONDS:-86400}"
+readonly usage_source="${GICC_USAGE_SOURCE:-auto}"
+readonly alert_percent="${GICC_USAGE_ALERT_PERCENT:-20}"
 
 mode=detail
 refresh=1
@@ -44,12 +44,12 @@ fail() {
 
 validate_usage_url() {
   [[ "$usage_url" == "$official_usage_url" ]] && return 0
-  if [[ "${CLAUDEX_INSECURE_TEST_ALLOW_USAGE_URL:-0}" != 1 ]]; then
-    fail "CLAUDEX_USAGE_URL must remain $official_usage_url; only tests may enable a loopback override with CLAUDEX_INSECURE_TEST_ALLOW_USAGE_URL=1."
+  if [[ "${GICC_INSECURE_TEST_ALLOW_USAGE_URL:-0}" != 1 ]]; then
+    fail "GICC_USAGE_URL must remain $official_usage_url; only tests may enable a loopback override with GICC_INSECURE_TEST_ALLOW_USAGE_URL=1."
     return 1
   fi
   if [[ ! "$usage_url" =~ ^https?://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?([/?#]|$) ]]; then
-    fail 'CLAUDEX_INSECURE_TEST_ALLOW_USAGE_URL permits only loopback HTTP(S) usage endpoints.'
+    fail 'GICC_INSECURE_TEST_ALLOW_USAGE_URL permits only loopback HTTP(S) usage endpoints.'
     return 1
   fi
 }
@@ -74,8 +74,8 @@ read_usage_generation() {
 
 process_start_identity() {
   local pid="$1" started checksum
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_REFRESH_PROCESS_IDENTITY:-}" ]]; then
-    printf '%s\n' "$CLAUDEX_TEST_REFRESH_PROCESS_IDENTITY"
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_REFRESH_PROCESS_IDENTITY:-}" ]]; then
+    printf '%s\n' "$GICC_TEST_REFRESH_PROCESS_IDENTITY"
     return 0
   fi
   started=$(/bin/ps -p "$pid" -o lstart= 2>/dev/null | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]][[:space:]]*/ /g') || return 1
@@ -146,9 +146,9 @@ refresh_lock_directory_identity() {
 
 refresh_lock_test_pause() {
   local stage="$1" ready_variable continue_variable ready_file continue_file
-  [[ "${CLAUDEX_TEST_MODE:-0}" == 1 ]] || return 0
-  ready_variable="CLAUDEX_TEST_REFRESH_LOCK_${stage}_READY_FILE"
-  continue_variable="CLAUDEX_TEST_REFRESH_LOCK_${stage}_CONTINUE_FILE"
+  [[ "${GICC_TEST_MODE:-0}" == 1 ]] || return 0
+  ready_variable="GICC_TEST_REFRESH_LOCK_${stage}_READY_FILE"
+  continue_variable="GICC_TEST_REFRESH_LOCK_${stage}_CONTINUE_FILE"
   ready_file="${!ready_variable:-}"
   continue_file="${!continue_variable:-}"
   [[ -n "$ready_file" && -n "$continue_file" ]] || return 0
@@ -176,8 +176,8 @@ legacy_refresh_owner_is_current() {
 
 publish_refresh_lock_file() {
   local source="$1" destination="$2"
-  [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || "${CLAUDEX_TEST_FORCE_REFRESH_PUBLICATION_FAILURE:-0}" != 1 ]] || return 1
-  if [[ "${CLAUDEX_TEST_MODE:-0}" != 1 || "${CLAUDEX_TEST_FORCE_REFRESH_HARDLINK_FAILURE:-0}" != 1 ]]; then
+  [[ "${GICC_TEST_MODE:-0}" != 1 || "${GICC_TEST_FORCE_REFRESH_PUBLICATION_FAILURE:-0}" != 1 ]] || return 1
+  if [[ "${GICC_TEST_MODE:-0}" != 1 || "${GICC_TEST_FORCE_REFRESH_HARDLINK_FAILURE:-0}" != 1 ]]; then
     ln "$source" "$destination" 2>/dev/null && return 0
   fi
   (set -C; umask 077; exec 9> "$destination" || exit 1; cat "$source" >&9) 2>/dev/null
@@ -297,8 +297,8 @@ inspect_contended_refresh_lock() {
   local legacy_seconds=$(( timeout_seconds * 3 + 10 )) elapsed=$(( SECONDS - acquisition_started ))
   (( elapsed >= 0 )) || elapsed=0
   refresh_lock_contention_state="contended"
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_REFRESH_LOCK_CONTENDED_READY_FILE:-}" ]]; then
-    (umask 077; printf '%s\n' ready > "$CLAUDEX_TEST_REFRESH_LOCK_CONTENDED_READY_FILE")
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_REFRESH_LOCK_CONTENDED_READY_FILE:-}" ]]; then
+    (umask 077; printf '%s\n' ready > "$GICC_TEST_REFRESH_LOCK_CONTENDED_READY_FILE")
   fi
   age=$(refresh_lock_age_seconds)
   observed_nonce=$(read_refresh_lock_field "$refresh_owner_file" nonce)
@@ -340,8 +340,8 @@ acquire_refresh_lock() {
   for attempt in {1..100}; do
     recover_refresh_lock_barriers
     if refresh_lock_barrier_exists; then
-      if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_REFRESH_LOCK_CONTENDED_READY_FILE:-}" ]]; then
-        (umask 077; printf '%s\n' ready > "$CLAUDEX_TEST_REFRESH_LOCK_CONTENDED_READY_FILE")
+      if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_REFRESH_LOCK_CONTENDED_READY_FILE:-}" ]]; then
+        (umask 077; printf '%s\n' ready > "$GICC_TEST_REFRESH_LOCK_CONTENDED_READY_FILE")
       fi
       (( SECONDS - acquisition_started < 5 )) || break
       sleep 0.02
@@ -429,7 +429,7 @@ release_refresh_lock() {
 }
 
 usage() {
-  printf '%s\n' 'Usage: claudex --usage-limit [--cached|--json|--refresh|--accounts|--account SELECTOR]'
+  printf '%s\n' 'Usage: gicc --usage-limit [--cached|--json|--refresh|--accounts|--account SELECTOR]'
 }
 
 while (( $# > 0 )); do
@@ -465,22 +465,22 @@ if (( lock_held )) && [[ ! "$lock_token" =~ ^[A-Za-z0-9._-]{8,128}$ ]]; then
   exit 2
 fi
 if [[ ! "$refresh_seconds" =~ ^[0-9]+$ ]] || (( refresh_seconds < 60 || refresh_seconds > 3600 )); then
-  fail 'CLAUDEX_USAGE_REFRESH_SECONDS must be an integer from 60 to 3600.'
+  fail 'GICC_USAGE_REFRESH_SECONDS must be an integer from 60 to 3600.'
   exit 2
 fi
 if [[ ! "$timeout_seconds" =~ ^[0-9]+$ ]] || (( timeout_seconds < 1 || timeout_seconds > 30 )); then
-  fail 'CLAUDEX_USAGE_TIMEOUT_SECONDS must be an integer from 1 to 30.'
+  fail 'GICC_USAGE_TIMEOUT_SECONDS must be an integer from 1 to 30.'
   exit 2
 fi
 if [[ ! "$max_stale_seconds" =~ ^[0-9]+$ ]] || (( max_stale_seconds < refresh_seconds || max_stale_seconds > 604800 )); then
-  fail 'CLAUDEX_USAGE_MAX_STALE_SECONDS must be between the refresh interval and 604800.'
+  fail 'GICC_USAGE_MAX_STALE_SECONDS must be between the refresh interval and 604800.'
   exit 2
 fi
 case "$usage_source" in auto|web|app-server) ;;
-  *) fail 'CLAUDEX_USAGE_SOURCE must be auto, web, or app-server.'; exit 2 ;;
+  *) fail 'GICC_USAGE_SOURCE must be auto, web, or app-server.'; exit 2 ;;
 esac
 if [[ ! "$alert_percent" =~ ^[0-9]+$ ]] || (( alert_percent < 0 || alert_percent > 100 )); then
-  fail 'CLAUDEX_USAGE_ALERT_PERCENT must be an integer from 0 to 100.'
+  fail 'GICC_USAGE_ALERT_PERCENT must be an integer from 0 to 100.'
   exit 2
 fi
 
@@ -577,14 +577,14 @@ cleanup() {
   terminate_appserver
   [[ -z "$temporary_appserver_dir" ]] || rm -rf "$temporary_appserver_dir"
   release_refresh_lock
-  if [[ "${CLAUDEX_TEST_MODE:-0}" == 1 && -n "${CLAUDEX_TEST_USAGE_REFRESH_EXIT_FILE:-}" ]]; then
-    (umask 077; printf '%s\n' exited > "$CLAUDEX_TEST_USAGE_REFRESH_EXIT_FILE")
+  if [[ "${GICC_TEST_MODE:-0}" == 1 && -n "${GICC_TEST_USAGE_REFRESH_EXIT_FILE:-}" ]]; then
+    (umask 077; printf '%s\n' exited > "$GICC_TEST_USAGE_REFRESH_EXIT_FILE")
   fi
 }
 trap cleanup EXIT
 
 proxy_auth_dir() {
-  local proxy_config="${CLAUDEX_PROXY_CONFIG:-$config_dir/cliproxyapi.yaml}"
+  local proxy_config="${GICC_PROXY_CONFIG:-$config_dir/cliproxyapi.yaml}"
   local configured=""
   if [[ -r "$proxy_config" ]]; then
     configured=$(awk '
@@ -597,7 +597,7 @@ proxy_auth_dir() {
       }
     ' "$proxy_config")
   fi
-  configured="${CLAUDEX_CODEX_AUTH_DIR:-${configured:-$HOME/.cli-proxy-api}}"
+  configured="${GICC_CODEX_AUTH_DIR:-${configured:-$HOME/.cli-proxy-api}}"
   case "$configured" in
     '~') configured="$HOME" ;;
     '~/'*) configured="$HOME/${configured#\~/}" ;;
@@ -663,14 +663,14 @@ ordered_auth_files() {
 
 find_auth_file() {
   local candidate
-  if [[ -n "${CLAUDEX_CODEX_AUTH_FILE:-}" ]]; then
-    [[ -r "$CLAUDEX_CODEX_AUTH_FILE" ]] || return 1
+  if [[ -n "${GICC_CODEX_AUTH_FILE:-}" ]]; then
+    [[ -r "$GICC_CODEX_AUTH_FILE" ]] || return 1
     jq -e '.type == "codex"
       and (.access_token | type == "string" and length > 0)
       and ((.disabled // false) != true)
       and ((.expired // false) != true)' \
-      "$CLAUDEX_CODEX_AUTH_FILE" >/dev/null 2>&1 || return 1
-    printf '%s\n' "$CLAUDEX_CODEX_AUTH_FILE"
+      "$GICC_CODEX_AUTH_FILE" >/dev/null 2>&1 || return 1
+    printf '%s\n' "$GICC_CODEX_AUTH_FILE"
     return 0
   fi
 
@@ -736,7 +736,7 @@ list_accounts() {
     printf '[%s] %d. %s%s\n' "$marker" "$index" "$email" "$suffix"
   done < <(ordered_auth_files "$auth_dir")
   (( index > 0 )) || { fail 'no CLIProxyAPI Codex OAuth credentials were found.'; return 1; }
-  printf '%s\n' 'Select one with: claudex --account <number|email|filename>; use auto to follow the newest credential.'
+  printf '%s\n' 'Select one with: gicc --account <number|email|filename>; use auto to follow the newest credential.'
 }
 
 select_account() {
@@ -762,7 +762,7 @@ select_account() {
       break
     fi
   done < <(ordered_auth_files "$auth_dir")
-  [[ -n "$selected" ]] || { fail "no Codex account matched '$selector'. Run: claudex --accounts"; return 1; }
+  [[ -n "$selected" ]] || { fail "no Codex account matched '$selector'. Run: gicc --accounts"; return 1; }
   umask 077
   printf '%s\n' "$(basename "$selected")" > "$account_selection_file"
   chmod 600 "$account_selection_file" 2>/dev/null || true
@@ -822,13 +822,13 @@ valid_raw_usage_response() {
 
 fetch_appserver_usage() {
   command -v codex >/dev/null 2>&1 || { fail 'Codex CLI is unavailable for the app-server fallback.'; return 1; }
-  if [[ -n "${CLAUDEX_CODEX_AUTH_FILE:-}" || -r "$account_selection_file" ]]; then
+  if [[ -n "${GICC_CODEX_AUTH_FILE:-}" || -r "$account_selection_file" ]]; then
     fail 'app-server fallback is disabled while an explicit usage account is selected.'
     return 1
   fi
 
   local input_fifo output_fifo error_fifo output_file error_file attempts response="" initialized=0
-  temporary_appserver_dir=$(mktemp -d "${TMPDIR:-/tmp}/claudex-appserver.XXXXXX") || return 1
+  temporary_appserver_dir=$(mktemp -d "${TMPDIR:-/tmp}/gicc-appserver.XXXXXX") || return 1
   input_fifo="$temporary_appserver_dir/input"
   output_fifo="$temporary_appserver_dir/stdout"
   error_fifo="$temporary_appserver_dir/stderr"
@@ -873,7 +873,7 @@ fetch_appserver_usage() {
     kill -TERM "$appserver_pid" 2>/dev/null || true
   ) &
   appserver_timeout_pid=$!
-  if ! printf '%s\n' '{"id":1,"method":"initialize","params":{"clientInfo":{"name":"Claudex","title":"Claudex usage fallback","version":"1.0.0"}}}' >&9; then
+  if ! printf '%s\n' '{"id":1,"method":"initialize","params":{"clientInfo":{"name":"GICC","title":"GICC usage fallback","version":"1.0.0"}}}' >&9; then
     finish_appserver
     fail 'Codex app-server closed during initialization.'
     return 1

@@ -35,11 +35,11 @@ absolute_install_directory() {
   [[ -n "$result" ]] || result=/
   printf -v "$output_name" '%s' "$result"
 }
-bin_dir=""; absolute_install_directory "${CLAUDEX_BIN_DIR:-$HOME/.local/bin}" bin_dir; readonly bin_dir
-config_dir=""; absolute_install_directory "${CLAUDEX_CONFIG_DIR:-$HOME/.config/claudex}" config_dir; readonly config_dir
+bin_dir=""; absolute_install_directory "${GICC_BIN_DIR:-$HOME/.local/bin}" bin_dir; readonly bin_dir
+config_dir=""; absolute_install_directory "${GICC_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}" config_dir; readonly config_dir
 readonly managed_bin_dir="$config_dir/bin"
 readonly managed_node_dir="$config_dir/node"
-readonly managed_proxy="$managed_bin_dir/cliproxyapi"
+readonly managed_proxy="$managed_bin_dir/gicc-proxy"
 readonly auth_dir="$config_dir/codex-accounts"
 readonly env_file="$config_dir/env"
 readonly settings_target="$config_dir/settings.json"
@@ -52,13 +52,14 @@ readonly skill_bridge_target="$config_dir/skill-bridge.cjs"
 readonly self_update_target="$config_dir/self-update"
 readonly install_receipt_target="$config_dir/install.json"
 readonly proxy_config_target="$config_dir/cliproxyapi.yaml"
-readonly launcher_target="$bin_dir/claudex"
-readonly proxy_version="7.2.80"
-readonly proxy_port="${CLAUDEX_PROXY_PORT:-8318}"
-readonly skip_deps="${CLAUDEX_SKIP_DEPENDENCY_INSTALL:-0}"
-readonly skip_service="${CLAUDEX_SKIP_SERVICE_START:-0}"
+readonly launcher_target="$bin_dir/gicc"
+readonly proxy_version="7.2.91-gicc.1"
+readonly proxy_release="v0.1.0"
+readonly proxy_port="${GICC_PROXY_PORT:-8318}"
+readonly skip_deps="${GICC_SKIP_DEPENDENCY_INSTALL:-0}"
+readonly skip_service="${GICC_SKIP_SERVICE_START:-0}"
 package_managed_install=0
-if [[ -n "${CLAUDEX_PACKAGE_ROOT:-}" || "${CLAUDEX_INSTALL_METHOD:-}" =~ ^(homebrew|scoop|winget)$ ]]; then
+if [[ -n "${GICC_PACKAGE_ROOT:-}" || "${GICC_INSTALL_METHOD:-}" =~ ^(homebrew|scoop|winget)$ ]]; then
   package_managed_install=1
 fi
 
@@ -67,12 +68,12 @@ if [[ -x "$managed_node_dir/bin/node" ]]; then export PATH="$managed_node_dir/bi
 # Preserve values supplied for this installer invocation. Sourcing the existing
 # managed env below must not silently override an explicit repair/migration
 # target selected by the caller.
-caller_proxy_token_set=${CLAUDEX_PROXY_TOKEN+x}; caller_proxy_token=${CLAUDEX_PROXY_TOKEN-}
-caller_proxy_url_set=${CLAUDEX_PROXY_URL+x}; caller_proxy_url=${CLAUDEX_PROXY_URL-}
-caller_proxy_config_set=${CLAUDEX_PROXY_CONFIG+x}; caller_proxy_config=${CLAUDEX_PROXY_CONFIG-}
-caller_proxy_bin_set=${CLAUDEX_PROXY_BIN+x}; caller_proxy_bin=${CLAUDEX_PROXY_BIN-}
-caller_auth_dir_set=${CLAUDEX_CODEX_AUTH_DIR+x}; caller_auth_dir=${CLAUDEX_CODEX_AUTH_DIR-}
-caller_proxy_port_set=${CLAUDEX_PROXY_PORT+x}
+caller_proxy_token_set=${GICC_PROXY_TOKEN+x}; caller_proxy_token=${GICC_PROXY_TOKEN-}
+caller_proxy_url_set=${GICC_PROXY_URL+x}; caller_proxy_url=${GICC_PROXY_URL-}
+caller_proxy_config_set=${GICC_PROXY_CONFIG+x}; caller_proxy_config=${GICC_PROXY_CONFIG-}
+caller_proxy_bin_set=${GICC_PROXY_BIN+x}; caller_proxy_bin=${GICC_PROXY_BIN-}
+caller_auth_dir_set=${GICC_CODEX_AUTH_DIR+x}; caller_auth_dir=${GICC_CODEX_AUTH_DIR-}
+caller_proxy_port_set=${GICC_PROXY_PORT+x}
 login=0
 install_lock_owned=0
 install_lock_nonce=""
@@ -135,9 +136,9 @@ while (( $# > 0 )); do
 done
 
 [[ "$proxy_port" =~ ^[0-9]+$ ]] && (( proxy_port >= 1 && proxy_port <= 65535 )) || \
-  fail 'CLAUDEX_PROXY_PORT must be an integer from 1 to 65535'
+  fail 'GICC_PROXY_PORT must be an integer from 1 to 65535'
 
-for source_file in claudex codex-session statusline usage-limit preload.cjs skill-bridge.cjs self-update package.json settings.json skills/usage-limit/SKILL.md; do
+for source_file in gicc codex-session statusline usage-limit preload.cjs skill-bridge.cjs self-update package.json settings.json skills/usage-limit/SKILL.md; do
   [[ -r "$root/$source_file" ]] || fail "missing repository file: $source_file"
 done
 
@@ -172,8 +173,8 @@ install_jq() {
 }
 
 install_node() {
-  printf '%s\n' 'Installing Node.js and npm for Claudex skill compatibility and the official Codex CLI package...'
-  if [[ "${CLAUDEX_TEST_MODE:-}" == 1 && -n "${CLAUDEX_TEST_MANAGED_NODE_DIR:-}" ]]; then
+  printf '%s\n' 'Installing Node.js and npm for GICC skill compatibility and the official Codex CLI package...'
+  if [[ "${GICC_TEST_MODE:-}" == 1 && -n "${GICC_TEST_MANAGED_NODE_DIR:-}" ]]; then
     install_managed_node
     return
   fi
@@ -210,8 +211,8 @@ install_managed_node() {
   esac
   node_tmp=$(mktemp -d "$config_dir/.node-install.XXXXXX")
   trap 'rm -rf "$node_tmp"' RETURN
-  fixture=${CLAUDEX_TEST_MANAGED_NODE_DIR:-}
-  if [[ "${CLAUDEX_TEST_MODE:-}" == 1 && -n "$fixture" ]]; then
+  fixture=${GICC_TEST_MANAGED_NODE_DIR:-}
+  if [[ "${GICC_TEST_MODE:-}" == 1 && -n "$fixture" ]]; then
     [[ -d "$fixture" && -x "$fixture/bin/node" && -x "$fixture/bin/npm" ]] || fail 'managed Node test fixture is incomplete'
     extracted="$node_tmp/node-v22-test-$platform-$architecture"
     mkdir -p "$extracted"
@@ -393,7 +394,7 @@ recover_incomplete_install_transactions() {
     restore_install_transaction_dir "$source" || fail "could not recover interrupted installer transaction: $source"
     recovered=1
   done
-  (( recovered == 0 )) || printf '%s\n' 'Recovered the previous interrupted Claudex installation before continuing.'
+  (( recovered == 0 )) || printf '%s\n' 'Recovered the previous interrupted GICC installation before continuing.'
 }
 
 commit_install_transaction() {
@@ -443,11 +444,11 @@ acquire_install_lock() {
     fi
     sleep 0.1
   done
-  fail 'timed out waiting for another Claudex installation; retry after it finishes'
+  fail 'timed out waiting for another GICC installation; retry after it finishes'
 }
 
 installer_is_interactive() {
-  [[ "${CLAUDEX_TEST_INTERACTIVE_INSTALL:-0}" == 1 ]] || [[ -t 0 && -t 1 ]]
+  [[ "${GICC_TEST_INTERACTIVE_INSTALL:-0}" == 1 ]] || [[ -t 0 && -t 1 ]]
 }
 
 proxy_asset_details() {
@@ -459,10 +460,10 @@ proxy_asset_details() {
     *) fail "unsupported CPU architecture: $(uname -m)" ;;
   esac
   case "${os}_${arch}" in
-    darwin_aarch64) checksum=7b13a17670a7d24318e3d6a3f24ff38696cf23ab44894fc93fbd53fbb68dfda6 ;;
-    darwin_amd64) checksum=e442331bf90e908adac1da0b5536c360318dd95708f21423705ed0ae6d311fcc ;;
-    linux_aarch64) checksum=c86b709019e6a86ca068772a1ec6f528f314030076163655789f8243be928549 ;;
-    linux_amd64) checksum=6c973562831c4ace016b057708ccb6529ba88af93fe67841ed109b81fe030b9a ;;
+    darwin_aarch64) checksum=0895f9dac36842fe10910647d7c50267ad5bb4de0e1e52885c85c773f3ca5d81 ;;
+    darwin_amd64) checksum=22b4a57957eab4df9c5a497eaffc4b28e07542f2cf407e76daed24ae7e9c902c ;;
+    linux_aarch64) checksum=5025037c67ae9a395cfdbd58578cd3b51dadfc25e1c1559911a2d6219e386664 ;;
+    linux_amd64) checksum=b64ea016539bee6674088238c7995c66c17a0f514ea020fd72e00f73c22ea308 ;;
   esac
   printf '%s %s %s\n' "$os" "$arch" "$checksum"
 }
@@ -484,16 +485,16 @@ install_proxy() {
   local os arch expected asset url archive actual details
   details=$(proxy_asset_details) || return
   read -r os arch expected <<< "$details"
-  asset="CLIProxyAPI_${proxy_version}_${os}_${arch}.tar.gz"
-  url="https://github.com/router-for-me/CLIProxyAPI/releases/download/v${proxy_version}/${asset}"
-  proxy_temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/claudex-proxy.XXXXXX")
+  asset="gicc-proxy_${proxy_version}_${os}_${arch}.tar.gz"
+  url="https://github.com/DrPei12/gpt-in-claude-code/releases/download/${proxy_release}/${asset}"
+  proxy_temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/gicc-proxy.XXXXXX")
   archive="$proxy_temp_dir/$asset"
-  printf 'Downloading verified internal compatibility service v%s for %s/%s...\n' "$proxy_version" "$os" "$arch"
+  printf 'Downloading the verified GICC reasoning bridge %s for %s/%s...\n' "$proxy_version" "$os" "$arch"
   download_with_retry "$archive" "$url" 300
   actual=$(sha256_file "$archive")
   [[ "$actual" == "$expected" ]] || fail "compatibility service checksum mismatch for $asset"
-  tar -xzf "$archive" -C "$proxy_temp_dir" cli-proxy-api
-  install -m 755 "$proxy_temp_dir/cli-proxy-api" "$managed_proxy"
+  tar -xzf "$archive" -C "$proxy_temp_dir" gicc-proxy
+  install -m 755 "$proxy_temp_dir/gicc-proxy" "$managed_proxy"
   rm -rf "$proxy_temp_dir"
   proxy_temp_dir=""
 }
@@ -515,7 +516,7 @@ recover_incomplete_install_transactions
 begin_install_transaction
 
 if [[ "$skip_deps" != 1 ]]; then
-  command -v curl >/dev/null 2>&1 || fail 'curl is required to install Claudex'
+  command -v curl >/dev/null 2>&1 || fail 'curl is required to install GICC'
   command -v jq >/dev/null 2>&1 || install_jq
   node_is_compatible || install_node
   command -v codex >/dev/null 2>&1 || install_codex
@@ -529,7 +530,7 @@ if [[ "$skip_deps" != 1 ]]; then
     export PATH="$HOME/.local/bin:$PATH"
   fi
   if ! managed_proxy_is_current; then install_proxy; fi
-elif ! node_is_compatible && [[ "${CLAUDEX_INSTALL_METHOD:-}" == archive && -r "$install_receipt_target" ]]; then
+elif ! node_is_compatible && [[ "${GICC_INSTALL_METHOD:-}" == archive && -r "$install_receipt_target" ]]; then
   # Archive self-updates historically disabled dependency installation. Allow
   # an existing installation to acquire the newly required bridge runtime so
   # releases predating skill compatibility do not get stuck in a rollback loop.
@@ -542,7 +543,7 @@ done
 node_is_compatible || fail 'Node.js 18 or newer is required for Claude and Codex skill compatibility'
 node --check "$root/skill-bridge.cjs" >/dev/null || fail 'skill-bridge.cjs failed Node.js syntax validation'
 
-if [[ "$skip_deps" != 1 && "${CLAUDEX_SKIP_CLAUDE_UPDATE:-0}" != 1 ]]; then
+if [[ "$skip_deps" != 1 && "${GICC_SKIP_CLAUDE_UPDATE:-0}" != 1 ]]; then
   printf '%s\n' 'Checking Claude Code for the latest compatible release...'
   if claude update >"$config_dir/claude-update-install.log" 2>&1; then
     mkdir -p "$config_dir/update"
@@ -552,14 +553,14 @@ if [[ "$skip_deps" != 1 && "${CLAUDEX_SKIP_CLAUDE_UPDATE:-0}" != 1 ]]; then
   fi
 fi
 
-proxy_token="${CLAUDEX_PROXY_TOKEN:-}"
+proxy_token="${GICC_PROXY_TOKEN:-}"
 if [[ -r "$env_file" ]]; then
   # shellcheck disable=SC1090
   source "$env_file"
-  proxy_token="${CLAUDEX_PROXY_TOKEN:-$proxy_token}"
+  proxy_token="${GICC_PROXY_TOKEN:-$proxy_token}"
 fi
 if [[ -n "$caller_proxy_token_set" ]]; then proxy_token="$caller_proxy_token"; fi
-existing_proxy_url="${CLAUDEX_PROXY_URL:-}"
+existing_proxy_url="${GICC_PROXY_URL:-}"
 if [[ -n "$caller_proxy_url_set" ]]; then
   runtime_proxy_url="${caller_proxy_url:-http://127.0.0.1:$proxy_port}"
 elif [[ -n "$caller_proxy_port_set" && ( -z "$existing_proxy_url" || "$existing_proxy_url" =~ ^http://127\.0\.0\.1:[0-9]+/?$ ) ]]; then
@@ -567,9 +568,9 @@ elif [[ -n "$caller_proxy_port_set" && ( -z "$existing_proxy_url" || "$existing_
 else
   runtime_proxy_url="${existing_proxy_url:-http://127.0.0.1:$proxy_port}"
 fi
-if [[ -n "$caller_proxy_config_set" ]]; then runtime_proxy_config="$caller_proxy_config"; else runtime_proxy_config="${CLAUDEX_PROXY_CONFIG:-$proxy_config_target}"; fi
-if [[ -n "$caller_proxy_bin_set" ]]; then runtime_proxy_bin="$caller_proxy_bin"; else runtime_proxy_bin="${CLAUDEX_PROXY_BIN:-$managed_proxy}"; fi
-if [[ -n "$caller_auth_dir_set" ]]; then runtime_auth_dir="$caller_auth_dir"; else runtime_auth_dir="${CLAUDEX_CODEX_AUTH_DIR:-$auth_dir}"; fi
+if [[ -n "$caller_proxy_config_set" ]]; then runtime_proxy_config="$caller_proxy_config"; else runtime_proxy_config="${GICC_PROXY_CONFIG:-$proxy_config_target}"; fi
+if [[ -n "$caller_proxy_bin_set" ]]; then runtime_proxy_bin="$caller_proxy_bin"; else runtime_proxy_bin="${GICC_PROXY_BIN:-$managed_proxy}"; fi
+if [[ -n "$caller_auth_dir_set" ]]; then runtime_auth_dir="$caller_auth_dir"; else runtime_auth_dir="${GICC_CODEX_AUTH_DIR:-$auth_dir}"; fi
 mkdir -p "$runtime_auth_dir"
 chmod 700 "$runtime_auth_dir"
 if [[ -z "$proxy_token" ]]; then
@@ -599,15 +600,15 @@ proxy_config_tmp=""
 
 env_tmp=$(mktemp "$config_dir/.env.tmp.XXXXXX")
 {
-  printf 'CLAUDEX_PROXY_TOKEN=%q\n' "$proxy_token"
-  printf 'CLAUDEX_PROXY_URL=%q\n' "$runtime_proxy_url"
-  printf 'CLAUDEX_PROXY_CONFIG=%q\n' "$runtime_proxy_config"
-  printf 'CLAUDEX_PROXY_BIN=%q\n' "$runtime_proxy_bin"
-  printf 'CLAUDEX_CODEX_AUTH_DIR=%q\n' "$runtime_auth_dir"
-  [[ ! -x "$managed_node_dir/bin/node" ]] || printf 'CLAUDEX_NODE_BIN=%q\n' "$managed_node_dir/bin"
+  printf 'GICC_PROXY_TOKEN=%q\n' "$proxy_token"
+  printf 'GICC_PROXY_URL=%q\n' "$runtime_proxy_url"
+  printf 'GICC_PROXY_CONFIG=%q\n' "$runtime_proxy_config"
+  printf 'GICC_PROXY_BIN=%q\n' "$runtime_proxy_bin"
+  printf 'GICC_CODEX_AUTH_DIR=%q\n' "$runtime_auth_dir"
+  [[ ! -x "$managed_node_dir/bin/node" ]] || printf 'GICC_NODE_BIN=%q\n' "$managed_node_dir/bin"
   if [[ -r "$env_file" ]]; then
     awk '
-      /^[[:space:]]*(export[[:space:]]+)?(CLAUDEX_PROXY_TOKEN|CLAUDEX_PROXY_URL|CLAUDEX_PROXY_CONFIG|CLAUDEX_PROXY_BIN|CLAUDEX_CODEX_AUTH_DIR|CLAUDEX_NODE_BIN)[[:space:]]*=/ { next }
+      /^[[:space:]]*(export[[:space:]]+)?(GICC_PROXY_TOKEN|GICC_PROXY_URL|GICC_PROXY_CONFIG|GICC_PROXY_BIN|GICC_CODEX_AUTH_DIR|GICC_NODE_BIN)[[:space:]]*=/ { next }
       { print }
     ' "$env_file"
   fi
@@ -616,7 +617,7 @@ mv -f "$env_tmp" "$env_file"
 env_tmp=""
 chmod 600 "$env_file"
 
-install -m 755 "$root/claudex" "$launcher_target"
+install -m 755 "$root/gicc" "$launcher_target"
 install -m 755 "$root/statusline" "$statusline_target"
 install -m 755 "$root/usage-limit" "$usage_limit_target"
 install -m 755 "$root/codex-session" "$codex_session_target"
@@ -633,23 +634,23 @@ install -m 600 "$settings_tmp" "$settings_target"
 rm -f "$settings_tmp"
 settings_tmp=""
 
-install_method="${CLAUDEX_INSTALL_METHOD:-}"
+install_method="${GICC_INSTALL_METHOD:-}"
 if [[ -z "$install_method" ]]; then
   if [[ -d "$root/.git" ]]; then install_method=git; else install_method=archive; fi
 fi
-[[ "$install_method" =~ ^(homebrew|scoop|winget|archive|git)$ ]] || fail "unsupported CLAUDEX_INSTALL_METHOD: $install_method"
+[[ "$install_method" =~ ^(homebrew|scoop|winget|archive|git)$ ]] || fail "unsupported GICC_INSTALL_METHOD: $install_method"
 install_version=$(jq -r '.version' "$root/package.json")
-[[ "$install_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'package.json contains an invalid Claudex version'
+[[ "$install_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'package.json contains an invalid GICC version'
 receipt_tmp=$(mktemp "$config_dir/install.json.tmp.XXXXXX")
 jq -n --arg version "$install_version" --arg method "$install_method" --arg binDir "$bin_dir" \
-  '{schema: 1, version: $version, method: $method, binDir: $binDir, repository: "BeamoINT/Claudex"}' > "$receipt_tmp"
+  '{schema: 1, version: $version, method: $method, binDir: $binDir, repository: "DrPei12/gpt-in-claude-code"}' > "$receipt_tmp"
 chmod 600 "$receipt_tmp"
 mv -f "$receipt_tmp" "$install_receipt_target"
 receipt_tmp=""
 
-printf 'Installed Claudex launcher: %s\n' "$launcher_target"
+printf 'Installed GICC launcher: %s\n' "$launcher_target"
 printf 'Installed isolated config: %s\n' "$config_dir"
-if [[ -z "${CLAUDEX_PACKAGE_ROOT:-}" && ! "${CLAUDEX_INSTALL_METHOD:-}" =~ ^(homebrew|scoop|winget)$ && ":$PATH:" != *":$bin_dir:"* ]]; then
+if [[ -z "${GICC_PACKAGE_ROOT:-}" && ! "${GICC_INSTALL_METHOD:-}" =~ ^(homebrew|scoop|winget)$ && ":$PATH:" != *":$bin_dir:"* ]]; then
   printf 'Add this directory to PATH: %s\n' "$bin_dir"
 fi
 
@@ -662,15 +663,15 @@ elif "$codex_session_target" sync >/dev/null 2>&1; then
 elif [[ "$skip_deps" != 1 ]] && installer_is_interactive; then
   printf '%s\n' 'Codex sign-in is required. Opening the official browser login now...'
   if "$codex_session_target" login; then auth_ready=1
-  else printf '%s\n' "Claudex is installed, but Codex sign-in did not finish. Run 'claudex --login' to retry." >&2
+  else printf '%s\n' "GICC is installed, but Codex sign-in did not finish. Run 'gicc --login' to retry." >&2
   fi
 else
-  printf '%s\n' "Claudex is installed. Sign in with 'claudex --login', then run 'claudex'." >&2
+  printf '%s\n' "GICC is installed. Sign in with 'gicc --login', then run 'gicc'." >&2
 fi
 
 if [[ "$skip_service" != 1 && "$auth_ready" == 1 ]]; then
-  if "$launcher_target" --doctor; then printf '%s\n' 'Claudex is ready. Run: claudex'
-  else fail 'the live compatibility check did not pass; run `claudex --doctor` for details'
+  if "$launcher_target" --doctor; then printf '%s\n' 'GICC is ready. Run: gicc'
+  else fail 'the live compatibility check did not pass; run `gicc --doctor` for details'
   fi
 fi
 

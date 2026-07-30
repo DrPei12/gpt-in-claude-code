@@ -2,16 +2,16 @@
 set -euo pipefail
 
 readonly root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
-readonly temporary="$(mktemp -d "${TMPDIR:-/tmp}/claudex-self-update-test.XXXXXX")"
+readonly temporary="$(mktemp -d "${TMPDIR:-/tmp}/gicc-self-update-test.XXXXXX")"
 trap 'rm -rf "$temporary"' EXIT
 readonly home="$temporary/home"
-readonly config="$home/.config/claudex"
+readonly config="$home/.config/gpt-in-claude-code"
 readonly fixtures="$temporary/fixtures"
 readonly fake_bin="$temporary/bin"
 mkdir -p "$config" "$fixtures" "$fake_bin"
 
 cat > "$config/install.json" <<'EOF'
-{"schema":1,"version":"1.3.1","method":"homebrew","binDir":"/tmp/unused","repository":"BeamoINT/Claudex"}
+{"schema":1,"version":"1.3.1","method":"homebrew","binDir":"/tmp/unused","repository":"DrPei12/gpt-in-claude-code"}
 EOF
 cat > "$fixtures/release.json" <<'EOF'
 {"tag_name":"v1.3.2","draft":false,"prerelease":false}
@@ -40,22 +40,22 @@ cat > "$fake_bin/brew" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_BREW_LOG"
 EOF
-cat > "$fake_bin/claudex" <<'EOF'
+cat > "$fake_bin/gicc" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
   --package-version) printf '%s\n' 1.3.2 ;;
   --package-setup)
-    temporary="$CLAUDEX_CONFIG_DIR/.install.json.$$"
-    jq '.version = "1.3.2"' "$CLAUDEX_CONFIG_DIR/install.json" > "$temporary"
-    mv -f "$temporary" "$CLAUDEX_CONFIG_DIR/install.json"
+    temporary="$GICC_CONFIG_DIR/.install.json.$$"
+    jq '.version = "1.3.2"' "$GICC_CONFIG_DIR/install.json" > "$temporary"
+    mv -f "$temporary" "$GICC_CONFIG_DIR/install.json"
     ;;
   *) exit 2 ;;
 esac
 EOF
-chmod +x "$fake_bin/curl" "$fake_bin/brew" "$fake_bin/claudex"
+chmod +x "$fake_bin/curl" "$fake_bin/brew" "$fake_bin/gicc"
 
-export HOME="$home" PATH="$fake_bin:$PATH" CLAUDEX_CONFIG_DIR="$config" CLAUDEX_CURL_BIN="$fake_bin/curl"
+export HOME="$home" PATH="$fake_bin:$PATH" GICC_CONFIG_DIR="$config" GICC_CURL_BIN="$fake_bin/curl"
 export FAKE_FIXTURES="$fixtures" FAKE_BREW_LOG="$temporary/brew.log"
 
 # The updater lock must identify a specific owner generation, not only a PID.
@@ -77,12 +77,12 @@ grep -F 'function Get-UpdateCompatibilityOwnerToken' "$root/self-update.ps1" >/d
 grep -F "Publish-UpdateLockFile \$compatibilityTemporary (Join-Path \$script:LockPath 'owner.json')" "$root/self-update.ps1" >/dev/null
 
 check_output=$("$root/self-update" --check)
-[[ "$check_output" == *'Claudex 1.3.2 is available'* ]]
+[[ "$check_output" == *'GICC 1.3.2 is available'* ]]
 jq -e '.currentVersion == "1.3.1" and .availableVersion == "1.3.2" and .failureCount == 0' \
-  "$config/update/claudex/state.json" >/dev/null
+  "$config/update/gicc/state.json" >/dev/null
 
 status_output=$("$root/self-update" --status)
-[[ "$status_output" == *'Claudex: 1.3.1'* && "$status_output" == *'Install method: homebrew'* && "$status_output" == *'Available: 1.3.2'* ]]
+[[ "$status_output" == *'GICC: 1.3.1'* && "$status_output" == *'Install method: homebrew'* && "$status_output" == *'Available: 1.3.2'* ]]
 
 wait_for_file() {
   local path="$1" attempt
@@ -91,21 +91,21 @@ wait_for_file() {
   return 1
 }
 
-lock="$config/update/claudex/lock"
-lock_base=(CLAUDEX_TEST_MODE=1 CLAUDEX_TEST_PROCESS_IDENTITY=self-update-test-identity CLAUDEX_TEST_UPDATE_LOCK_ATTEMPTS=12)
+lock="$config/update/gicc/lock"
+lock_base=(GICC_TEST_MODE=1 GICC_TEST_PROCESS_IDENTITY=self-update-test-identity GICC_TEST_UPDATE_LOCK_ATTEMPTS=12)
 
 # A creator paused after mkdir cannot publish into a replacement B generation.
 rm -rf "$lock" "$lock".quarantine.*
 env "${lock_base[@]}" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_MKDIR_READY="$temporary/aba-a-ready" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_MKDIR_CONTINUE="$temporary/aba-a-continue" \
+  GICC_TEST_UPDATE_LOCK_AFTER_MKDIR_READY="$temporary/aba-a-ready" \
+  GICC_TEST_UPDATE_LOCK_AFTER_MKDIR_CONTINUE="$temporary/aba-a-continue" \
   "$root/self-update" --check >"$temporary/aba-a.stdout" 2>"$temporary/aba-a.stderr" &
 aba_a=$!
 wait_for_file "$temporary/aba-a-ready"
 touch -t 200001010000 "$lock"
 env "${lock_base[@]}" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_PUBLISH_READY="$temporary/aba-b-ready" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_PUBLISH_CONTINUE="$temporary/aba-b-continue" \
+  GICC_TEST_UPDATE_LOCK_AFTER_PUBLISH_READY="$temporary/aba-b-ready" \
+  GICC_TEST_UPDATE_LOCK_AFTER_PUBLISH_CONTINUE="$temporary/aba-b-continue" \
   "$root/self-update" --check >"$temporary/aba-b.stdout" 2>"$temporary/aba-b.stderr" &
 aba_b=$!
 wait_for_file "$temporary/aba-b-ready"
@@ -122,15 +122,15 @@ wait "$aba_b"
 # deleting B's plain-PID owner record.
 rm -rf "$lock" "$lock".quarantine.* "$temporary/mixed-a-curl"
 env "${lock_base[@]}" FAKE_CURL_CALL_LOG="$temporary/mixed-a-curl" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_MKDIR_READY="$temporary/mixed-a-ready" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_MKDIR_CONTINUE="$temporary/mixed-a-continue" \
+  GICC_TEST_UPDATE_LOCK_AFTER_MKDIR_READY="$temporary/mixed-a-ready" \
+  GICC_TEST_UPDATE_LOCK_AFTER_MKDIR_CONTINUE="$temporary/mixed-a-continue" \
   "$root/self-update" --check >"$temporary/mixed-a.stdout" 2>"$temporary/mixed-a.stderr" &
 mixed_a=$!
 wait_for_file "$temporary/mixed-a-ready"
-mv "$lock" "$config/update/claudex/abandoned-mixed-a"
+mv "$lock" "$config/update/gicc/abandoned-mixed-a"
 mkdir "$lock"
 printf '%s\n' "$$" > "$lock/owner"
-rm -rf "$config/update/claudex/abandoned-mixed-a"
+rm -rf "$config/update/gicc/abandoned-mixed-a"
 : > "$temporary/mixed-a-continue"
 wait "$mixed_a"
 [[ "$(<"$lock/owner")" == "$$" ]]
@@ -142,14 +142,14 @@ rm -rf "$lock"
 # replace A's directory and pause before writing its legacy owner record, and A
 # still must not publish into or delete B's empty replacement directory.
 env "${lock_base[@]}" FAKE_CURL_CALL_LOG="$temporary/empty-b-curl" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_MKDIR_READY="$temporary/empty-b-ready" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_MKDIR_CONTINUE="$temporary/empty-b-continue" \
+  GICC_TEST_UPDATE_LOCK_AFTER_MKDIR_READY="$temporary/empty-b-ready" \
+  GICC_TEST_UPDATE_LOCK_AFTER_MKDIR_CONTINUE="$temporary/empty-b-continue" \
   "$root/self-update" --check >"$temporary/empty-b.stdout" 2>"$temporary/empty-b.stderr" &
 empty_b_a=$!
 wait_for_file "$temporary/empty-b-ready"
-mv "$lock" "$config/update/claudex/abandoned-empty-b-a"
+mv "$lock" "$config/update/gicc/abandoned-empty-b-a"
 mkdir "$lock"
-rm -rf "$config/update/claudex/abandoned-empty-b-a"
+rm -rf "$config/update/gicc/abandoned-empty-b-a"
 : > "$temporary/empty-b-continue"
 wait "$empty_b_a"
 [[ -d "$lock" && ! -e "$lock/generation" && ! -e "$lock/owner" && ! -e "$temporary/empty-b-curl" ]]
@@ -180,16 +180,16 @@ printf '%s\n' x > "$lock/generation"
 printf 'pid=99999999\nidentity=dead\nnonce=x\n' > "$lock/owner"
 touch -t 200001010000 "$lock"
 env "${lock_base[@]}" \
-  CLAUDEX_TEST_UPDATE_LOCK_BEFORE_RENAME_READY="$temporary/aba-x-before" \
-  CLAUDEX_TEST_UPDATE_LOCK_BEFORE_RENAME_CONTINUE="$temporary/aba-x-before-continue" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_RENAME_READY="$temporary/aba-x-after" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_RENAME_CONTINUE="$temporary/aba-x-after-continue" \
+  GICC_TEST_UPDATE_LOCK_BEFORE_RENAME_READY="$temporary/aba-x-before" \
+  GICC_TEST_UPDATE_LOCK_BEFORE_RENAME_CONTINUE="$temporary/aba-x-before-continue" \
+  GICC_TEST_UPDATE_LOCK_AFTER_RENAME_READY="$temporary/aba-x-after" \
+  GICC_TEST_UPDATE_LOCK_AFTER_RENAME_CONTINUE="$temporary/aba-x-after-continue" \
   "$root/self-update" --check >"$temporary/aba-x.stdout" 2>"$temporary/aba-x.stderr" &
 aba_x=$!
 wait_for_file "$temporary/aba-x-before"
 env "${lock_base[@]}" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_PUBLISH_READY="$temporary/aba-y-ready" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_PUBLISH_CONTINUE="$temporary/aba-y-continue" \
+  GICC_TEST_UPDATE_LOCK_AFTER_PUBLISH_READY="$temporary/aba-y-ready" \
+  GICC_TEST_UPDATE_LOCK_AFTER_PUBLISH_CONTINUE="$temporary/aba-y-continue" \
   "$root/self-update" --check >"$temporary/aba-y.stdout" 2>"$temporary/aba-y.stderr" &
 aba_y=$!
 wait_for_file "$temporary/aba-y-ready"
@@ -220,17 +220,17 @@ printf '%s\n' x-self > "$lock/generation"
 printf 'pid=99999999\nidentity=dead\nnonce=x-self\n' > "$lock/owner"
 touch -t 200001010000 "$lock"
 env "${lock_base[@]}" \
-  CLAUDEX_TEST_UPDATE_LOCK_BEFORE_RENAME_READY="$temporary/self-x-before" \
-  CLAUDEX_TEST_UPDATE_LOCK_BEFORE_RENAME_CONTINUE="$temporary/self-x-before-continue" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_RENAME_READY="$temporary/self-x-after" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_RENAME_CONTINUE="$temporary/self-x-after-continue" \
+  GICC_TEST_UPDATE_LOCK_BEFORE_RENAME_READY="$temporary/self-x-before" \
+  GICC_TEST_UPDATE_LOCK_BEFORE_RENAME_CONTINUE="$temporary/self-x-before-continue" \
+  GICC_TEST_UPDATE_LOCK_AFTER_RENAME_READY="$temporary/self-x-after" \
+  GICC_TEST_UPDATE_LOCK_AFTER_RENAME_CONTINUE="$temporary/self-x-after-continue" \
   "$root/self-update" --check >"$temporary/self-x.stdout" 2>"$temporary/self-x.stderr" &
 self_x=$!
 wait_for_file "$temporary/self-x-before"
 env "${lock_base[@]}" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_PUBLISH_READY="$temporary/self-y-ready" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_PUBLISH_CONTINUE="$temporary/self-y-continue" \
-  CLAUDEX_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE="$temporary/self-y-recovered" \
+  GICC_TEST_UPDATE_LOCK_AFTER_PUBLISH_READY="$temporary/self-y-ready" \
+  GICC_TEST_UPDATE_LOCK_AFTER_PUBLISH_CONTINUE="$temporary/self-y-continue" \
+  GICC_TEST_UPDATE_LOCK_SELF_RECOVERED_FILE="$temporary/self-y-recovered" \
   "$root/self-update" --check >"$temporary/self-y.stdout" 2>"$temporary/self-y.stderr" &
 self_y=$!
 wait_for_file "$temporary/self-y-ready"
@@ -245,19 +245,19 @@ wait "$self_x"
 
 # A stale process exit hook cannot remove a replacement generation.
 env "${lock_base[@]}" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_PUBLISH_READY="$temporary/exit-ready" \
-  CLAUDEX_TEST_UPDATE_LOCK_AFTER_PUBLISH_CONTINUE="$temporary/exit-continue" \
+  GICC_TEST_UPDATE_LOCK_AFTER_PUBLISH_READY="$temporary/exit-ready" \
+  GICC_TEST_UPDATE_LOCK_AFTER_PUBLISH_CONTINUE="$temporary/exit-continue" \
   "$root/self-update" --check >"$temporary/exit.stdout" 2>"$temporary/exit.stderr" &
 exit_owner=$!
 wait_for_file "$temporary/exit-ready"
-mv "$lock" "$config/update/claudex/displaced-lock"
+mv "$lock" "$config/update/gicc/displaced-lock"
 mkdir "$lock"
 printf '%s\n' replacement > "$lock/generation"
 printf 'pid=%s\nidentity=%s\nnonce=replacement\n' "$$" self-update-test-identity > "$lock/owner"
 : > "$temporary/exit-continue"
 wait "$exit_owner"
 grep -F 'nonce=replacement' "$lock/owner" >/dev/null
-rm -rf "$lock" "$config/update/claudex/displaced-lock"
+rm -rf "$lock" "$config/update/gicc/displaced-lock"
 
 # Dead owners and live reused PIDs with a mismatched start identity are both
 # reclaimable. A recent legacy ownerless lock remains conservative until its
@@ -305,27 +305,27 @@ rm -rf "$lock"
 
 # Hardlink denial uses exclusive creation, while an interrupted publication
 # removes only its incomplete directory and never enters the update section.
-env "${lock_base[@]}" CLAUDEX_TEST_FORCE_HARDLINK_FAILURE=1 \
+env "${lock_base[@]}" GICC_TEST_FORCE_HARDLINK_FAILURE=1 \
   FAKE_CURL_CALL_LOG="$temporary/fallback-curl" "$root/self-update" --check >/dev/null
 [[ -s "$temporary/fallback-curl" && ! -e "$lock" ]] && ! compgen -G "$lock.quarantine.*" >/dev/null
-env "${lock_base[@]}" CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE=1 \
+env "${lock_base[@]}" GICC_TEST_FORCE_PUBLICATION_FAILURE=1 \
   FAKE_CURL_CALL_LOG="$temporary/incomplete-curl" "$root/self-update" --check >/dev/null
 [[ ! -e "$temporary/incomplete-curl" && ! -e "$lock" ]] && ! compgen -G "$lock.quarantine.*" >/dev/null
 
 # A contending updater must not fall through and apply cached state without
 # owning the update lock.
-mkdir -p "$config/update/claudex/lock"
-printf '%s\n' "$$" > "$config/update/claudex/lock/owner"
+mkdir -p "$config/update/gicc/lock"
+printf '%s\n' "$$" > "$config/update/gicc/lock/owner"
 before_manager_calls=0
 [[ ! -r "$temporary/brew.log" ]] || before_manager_calls=$(wc -l < "$temporary/brew.log" | tr -d ' ')
 "$root/self-update" --apply >/dev/null
 after_manager_calls=0
 [[ ! -r "$temporary/brew.log" ]] || after_manager_calls=$(wc -l < "$temporary/brew.log" | tr -d ' ')
 [[ "$after_manager_calls" == "$before_manager_calls" ]]
-rm -rf "$config/update/claudex/lock"
+rm -rf "$config/update/gicc/lock"
 
 "$root/self-update" --apply >/dev/null
-grep -Fx 'upgrade beamoint/tap/claudex' "$temporary/brew.log" >/dev/null
+grep -Fx 'upgrade drpei12/tap/gicc' "$temporary/brew.log" >/dev/null
 
 # A prerelease is never accepted on the stable channel.
 cat > "$fixtures/release.json" <<'EOF'
@@ -338,25 +338,25 @@ fi
 
 # Offline background checks are silent and write a bounded retry time instead
 # of retrying on every launch.
-export FAKE_CURL_FAIL=1 CLAUDEX_UPDATE_BACKGROUND=1
+export FAKE_CURL_FAIL=1 GICC_UPDATE_BACKGROUND=1
 "$root/self-update" --check --background >"$temporary/offline.stdout" 2>"$temporary/offline.stderr" || true
 [[ ! -s "$temporary/offline.stdout" && ! -s "$temporary/offline.stderr" ]]
-jq -e '.failureCount >= 1 and .nextAttemptAt > .lastCheckedAt' "$config/update/claudex/state.json" >/dev/null
+jq -e '.failureCount >= 1 and .nextAttemptAt > .lastCheckedAt' "$config/update/gicc/state.json" >/dev/null
 
 # Unsafe archive paths are rejected before the installer can run.
-unset FAKE_CURL_FAIL CLAUDEX_UPDATE_BACKGROUND
+unset FAKE_CURL_FAIL GICC_UPDATE_BACKGROUND
 cat > "$config/install.json" <<EOF
-{"schema":1,"version":"1.3.1","method":"archive","binDir":"$temporary/install-bin","repository":"BeamoINT/Claudex"}
+{"schema":1,"version":"1.3.1","method":"archive","binDir":"$temporary/install-bin","repository":"DrPei12/gpt-in-claude-code"}
 EOF
 cat > "$fixtures/release.json" <<'EOF'
 {"tag_name":"v1.3.2","draft":false,"prerelease":false}
 EOF
-mkdir -p "$temporary/archive-source/claudex-1.3.2"
-ln -s ../../outside "$temporary/archive-source/claudex-1.3.2/unsafe-link"
-tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" claudex-1.3.2
+mkdir -p "$temporary/archive-source/gicc-1.3.2"
+ln -s ../../outside "$temporary/archive-source/gicc-1.3.2/unsafe-link"
+tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" gicc-1.3.2
 if command -v sha256sum >/dev/null 2>&1; then digest=$(sha256sum "$fixtures/release.tar.gz" | awk '{print $1}')
 else digest=$(shasum -a 256 "$fixtures/release.tar.gz" | awk '{print $1}'); fi
-printf '%s  %s\n' "$digest" 'claudex-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
+printf '%s  %s\n' "$digest" 'gicc-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
 if "$root/self-update" --apply >"$temporary/unsafe.stdout" 2>"$temporary/unsafe.stderr"; then
   printf '%s\n' 'expected unsafe release archive to be rejected' >&2
   exit 1
@@ -367,16 +367,16 @@ grep -F 'unsafe paths or file types' "$temporary/unsafe.stderr" >/dev/null
 # A checksum-valid archive without the now-required bridge is rejected before
 # any installer or managed file can run.
 rm -rf "$temporary/archive-source"
-mkdir -p "$temporary/archive-source/claudex-1.3.2"
-printf '%s\n' '{"version":"1.3.2"}' > "$temporary/archive-source/claudex-1.3.2/package.json"
-for script in install.sh claudex self-update; do
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$temporary/archive-source/claudex-1.3.2/$script"
-  chmod +x "$temporary/archive-source/claudex-1.3.2/$script"
+mkdir -p "$temporary/archive-source/gicc-1.3.2"
+printf '%s\n' '{"version":"1.3.2"}' > "$temporary/archive-source/gicc-1.3.2/package.json"
+for script in install.sh gicc self-update; do
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/$script"
+  chmod +x "$temporary/archive-source/gicc-1.3.2/$script"
 done
-tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" claudex-1.3.2
+tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" gicc-1.3.2
 if command -v sha256sum >/dev/null 2>&1; then digest=$(sha256sum "$fixtures/release.tar.gz" | awk '{print $1}')
 else digest=$(shasum -a 256 "$fixtures/release.tar.gz" | awk '{print $1}'); fi
-printf '%s  %s\n' "$digest" 'claudex-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
+printf '%s  %s\n' "$digest" 'gicc-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
 if "$root/self-update" --apply >"$temporary/missing-bridge.stdout" 2>"$temporary/missing-bridge.stderr"; then
   printf '%s\n' 'expected release without a skill bridge to be rejected' >&2
   exit 1
@@ -387,69 +387,69 @@ grep -F 'release archive is missing its skill bridge' "$temporary/missing-bridge
 # additional paths to one `bash -n` invocation only treats them as arguments
 # and previously allowed a broken launcher to be installed.
 rm -rf "$temporary/archive-source"
-mkdir -p "$temporary/archive-source/claudex-1.3.2"
-printf '%s\n' '{"version":"1.3.2"}' > "$temporary/archive-source/claudex-1.3.2/package.json"
+mkdir -p "$temporary/archive-source/gicc-1.3.2"
+printf '%s\n' '{"version":"1.3.2"}' > "$temporary/archive-source/gicc-1.3.2/package.json"
 for script in bootstrap.sh install.sh codex-session self-update statusline usage-limit; do
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$temporary/archive-source/claudex-1.3.2/$script"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/$script"
 done
-printf '%s\n' '#!/bin/sh' 'exit 0' > "$temporary/archive-source/claudex-1.3.2/install.zsh"
-printf '%s\n' '#!/usr/bin/env bash' 'if then' > "$temporary/archive-source/claudex-1.3.2/claudex"
-printf '%s\n' "'use strict';" > "$temporary/archive-source/claudex-1.3.2/skill-bridge.cjs"
-chmod +x "$temporary/archive-source/claudex-1.3.2/"{bootstrap.sh,install.sh,install.zsh,claudex,codex-session,self-update,statusline,usage-limit}
-tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" claudex-1.3.2
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/install.zsh"
+printf '%s\n' '#!/usr/bin/env bash' 'if then' > "$temporary/archive-source/gicc-1.3.2/gicc"
+printf '%s\n' "'use strict';" > "$temporary/archive-source/gicc-1.3.2/skill-bridge.cjs"
+chmod +x "$temporary/archive-source/gicc-1.3.2/"{bootstrap.sh,install.sh,install.zsh,gicc,codex-session,self-update,statusline,usage-limit}
+tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" gicc-1.3.2
 if command -v sha256sum >/dev/null 2>&1; then digest=$(sha256sum "$fixtures/release.tar.gz" | awk '{print $1}')
 else digest=$(shasum -a 256 "$fixtures/release.tar.gz" | awk '{print $1}'); fi
-printf '%s  %s\n' "$digest" 'claudex-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
+printf '%s  %s\n' "$digest" 'gicc-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
 if "$root/self-update" --apply >"$temporary/syntax.stdout" 2>"$temporary/syntax.stderr"; then
   printf '%s\n' 'expected a syntax-broken launcher to be rejected' >&2
   exit 1
 fi
-grep -F 'release shell entrypoint failed validation: claudex' "$temporary/syntax.stderr" >/dev/null
+grep -F 'release shell entrypoint failed validation: gicc' "$temporary/syntax.stderr" >/dev/null
 
 # A failed archive installer restores every prior managed file and removes any
 # managed file that did not exist before the attempt.
 rm -rf "$temporary/archive-source"
-mkdir -p "$temporary/archive-source/claudex-1.3.2" "$temporary/install-bin"
+mkdir -p "$temporary/archive-source/gicc-1.3.2" "$temporary/install-bin"
 printf '%s\n' old-statusline > "$config/statusline"
 rm -f "$config/self-update" "$config/skill-bridge.cjs"
-cat > "$temporary/archive-source/claudex-1.3.2/package.json" <<'EOF'
+cat > "$temporary/archive-source/gicc-1.3.2/package.json" <<'EOF'
 {"version":"1.3.2"}
 EOF
-cat > "$temporary/archive-source/claudex-1.3.2/install.sh" <<'EOF'
+cat > "$temporary/archive-source/gicc-1.3.2/install.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' partial-statusline > "$CLAUDEX_CONFIG_DIR/statusline"
-printf '%s\n' partial-updater > "$CLAUDEX_CONFIG_DIR/self-update"
-printf '%s\n' partial-skill-bridge > "$CLAUDEX_CONFIG_DIR/skill-bridge.cjs"
+printf '%s\n' partial-statusline > "$GICC_CONFIG_DIR/statusline"
+printf '%s\n' partial-updater > "$GICC_CONFIG_DIR/self-update"
+printf '%s\n' partial-skill-bridge > "$GICC_CONFIG_DIR/skill-bridge.cjs"
 exit 23
 EOF
-cat > "$temporary/archive-source/claudex-1.3.2/claudex" <<'EOF'
+cat > "$temporary/archive-source/gicc-1.3.2/gicc" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-cat > "$temporary/archive-source/claudex-1.3.2/self-update" <<'EOF'
+cat > "$temporary/archive-source/gicc-1.3.2/self-update" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
 for script in bootstrap.sh codex-session statusline usage-limit; do
-  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$temporary/archive-source/claudex-1.3.2/$script"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/$script"
 done
-printf '%s\n' '#!/bin/sh' 'exit 0' > "$temporary/archive-source/claudex-1.3.2/install.zsh"
-cat > "$temporary/archive-source/claudex-1.3.2/skill-bridge.cjs" <<'EOF'
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/install.zsh"
+cat > "$temporary/archive-source/gicc-1.3.2/skill-bridge.cjs" <<'EOF'
 'use strict';
 EOF
-chmod +x "$temporary/archive-source/claudex-1.3.2/install.sh" \
-  "$temporary/archive-source/claudex-1.3.2/claudex" \
-  "$temporary/archive-source/claudex-1.3.2/self-update" \
-  "$temporary/archive-source/claudex-1.3.2/bootstrap.sh" \
-  "$temporary/archive-source/claudex-1.3.2/codex-session" \
-  "$temporary/archive-source/claudex-1.3.2/statusline" \
-  "$temporary/archive-source/claudex-1.3.2/usage-limit" \
-  "$temporary/archive-source/claudex-1.3.2/install.zsh"
-tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" claudex-1.3.2
+chmod +x "$temporary/archive-source/gicc-1.3.2/install.sh" \
+  "$temporary/archive-source/gicc-1.3.2/gicc" \
+  "$temporary/archive-source/gicc-1.3.2/self-update" \
+  "$temporary/archive-source/gicc-1.3.2/bootstrap.sh" \
+  "$temporary/archive-source/gicc-1.3.2/codex-session" \
+  "$temporary/archive-source/gicc-1.3.2/statusline" \
+  "$temporary/archive-source/gicc-1.3.2/usage-limit" \
+  "$temporary/archive-source/gicc-1.3.2/install.zsh"
+tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" gicc-1.3.2
 if command -v sha256sum >/dev/null 2>&1; then digest=$(sha256sum "$fixtures/release.tar.gz" | awk '{print $1}')
 else digest=$(shasum -a 256 "$fixtures/release.tar.gz" | awk '{print $1}'); fi
-printf '%s  %s\n' "$digest" 'claudex-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
+printf '%s  %s\n' "$digest" 'gicc-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
 if "$root/self-update" --apply >"$temporary/rollback.stdout" 2>"$temporary/rollback.stderr"; then
   printf '%s\n' 'expected failed archive installer to roll back' >&2
   exit 1

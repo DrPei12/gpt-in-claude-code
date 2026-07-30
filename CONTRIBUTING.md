@@ -1,23 +1,23 @@
-# Contributing to Claudex
+# Contributing to GICC
 
-Thank you for helping make Claudex safer, clearer, and more portable. Bug
+Thank you for helping make GICC safer, clearer, and more portable. Bug
 reports, documentation fixes, tests, design discussion, and focused code
 changes are all welcome.
 
 By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
-General questions belong in [GitHub Discussions](https://github.com/BeamoINT/Claudex/discussions),
+General questions belong in [GitHub Discussions](https://github.com/DrPei12/gpt-in-claude-code/discussions),
 confirmed bugs and feature proposals belong in
-[GitHub Issues](https://github.com/BeamoINT/Claudex/issues), and vulnerabilities
+[GitHub Issues](https://github.com/DrPei12/gpt-in-claude-code/issues), and vulnerabilities
 must be reported through the private process in [SECURITY.md](SECURITY.md).
 
 ## Find a contribution
 
-- Browse [`good first issue`](https://github.com/BeamoINT/Claudex/labels/good%20first%20issue)
+- Browse [`good first issue`](https://github.com/DrPei12/gpt-in-claude-code/labels/good%20first%20issue)
   for narrow tasks with a known approach.
-- Browse [`help wanted`](https://github.com/BeamoINT/Claudex/labels/help%20wanted)
+- Browse [`help wanted`](https://github.com/DrPei12/gpt-in-claude-code/labels/help%20wanted)
   for work where maintainer guidance is available.
 - Improve documentation through the
-  [documentation issue form](https://github.com/BeamoINT/Claudex/issues/new?template=documentation.yml).
+  [documentation issue form](https://github.com/DrPei12/gpt-in-claude-code/issues/new?template=documentation.yml).
 - Read the [roadmap](ROADMAP.md) and start an Ideas discussion before building a
   large or cross cutting feature.
 
@@ -28,18 +28,18 @@ time.
 ## Before opening an issue
 
 1. Update to the current `main` branch and rerun the installer.
-2. Run `claudex --doctor` and remove credentials, account identifiers, paths,
+2. Run `gicc --doctor` and remove credentials, account identifiers, paths,
    prompts, and session IDs before sharing its output.
 3. Search existing issues and discussions.
 4. Use the appropriate issue form and include the operating system, shell,
    Claude Code version, Codex CLI version, and a minimal reproduction.
 
 Do not post OAuth tokens, `auth.json`, the generated proxy token, session files,
-or the contents of `~/.config/claudex`.
+or the contents of `~/.config/gpt-in-claude-code`.
 
 ## Development setup
 
-Claudex has no package installation step. A development checkout needs:
+GICC has no package installation step. A development checkout needs:
 
 - Git;
 - Bash 3.2 or later and Zsh on macOS/Linux;
@@ -50,8 +50,8 @@ Claudex has no package installation step. A development checkout needs:
 Fork the repository, clone your fork, and create a focused branch:
 
 ```bash
-git clone https://github.com/YOUR-USER/Claudex.git
-cd Claudex
+git clone https://github.com/YOUR-USER/GICC.git
+cd GICC
 git switch -c fix/short-description
 ```
 
@@ -97,7 +97,7 @@ platform:
 
 ```bash
 node --check preload.cjs
-bash -n claudex codex-session install.sh statusline usage-limit
+bash -n gicc codex-session install.sh statusline usage-limit
 zsh -n test.zsh
 ```
 
@@ -127,4 +127,4 @@ substantial automated assistance in the pull request when it affects review,
 and provide the same tests and reasoning expected for manually written code.
 Accepted contributions are credited through Git history, release notes when
 user visible, and the repository's
-[contributors page](https://github.com/BeamoINT/Claudex/graphs/contributors).
+[contributors page](https://github.com/DrPei12/gpt-in-claude-code/graphs/contributors).

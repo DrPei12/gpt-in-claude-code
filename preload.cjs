@@ -2,7 +2,7 @@
 
 // Claude Code 2.1.211 has no supported setting for replacing its hardcoded
 // "API Usage Billing" welcome label for a custom API-compatible backend.
-// Claudex replaces only that one startup field with the real ChatGPT plan.
+// GICC replaces only that one startup field with the real ChatGPT plan.
 // It never modifies the signed Claude binary or conversation data.
 const csi = '\\x1b\\[[0-?]*[ -\\/]*[@-~]';
 const positionedBilling = new RegExp(
@@ -16,7 +16,7 @@ const welcomeFrameMarker = '\x1b[?1049h';
 const welcomeTitleMarker = 'Claude Code';
 const welcomeDetectionTailLength = 128;
 
-function chatGptPlanLabel(value = process.env.CLAUDEX_CHATGPT_PLAN_LABEL) {
+function chatGptPlanLabel(value = process.env.GICC_CHATGPT_PLAN_LABEL) {
   const label = typeof value === 'string' ? value.trim() : '';
   return /^ChatGPT(?: (?:Free|Go|Plus|Pro|Business|Enterprise|Edu|Teachers|K-12|Healthcare))?$/.test(label)
     ? label
@@ -145,7 +145,7 @@ function withChatGptPlanLabel(text, label = chatGptPlanLabel()) {
 }
 
 // Claude Code owns the session ID, but users launched this session through
-// Claudex. Keep the generated resume instruction on the same authenticated
+// GICC. Keep the generated resume instruction on the same authenticated
 // model path. Preserve any ANSI positioning between the command and flag.
 const resumeCommand = new RegExp(
   `\\bclaude((?:${csi})*[ \\t]+(?:${csi})*(?:--resume|-r|-resume)\\b)`,
@@ -181,7 +181,7 @@ function replaceModelFooterLabels(text) {
 
   // Claude Code occasionally emits a Select Graphic Rendition token without
   // its ESC byte after the internal footer model name. Remove that orphan only
-  // when it immediately follows a model label managed by Claudex.
+  // when it immediately follows a model label managed by GICC.
   for (const [, label] of modelFooterLabels) {
     filtered = filtered.replace(
       new RegExp(`(${terminalPhrasePattern(label)})\\[[0-9;]*m`, 'g'),
@@ -191,8 +191,8 @@ function replaceModelFooterLabels(text) {
   return filtered;
 }
 
-function filterClaudexOutput(text) {
-  let filtered = replaceModelFooterLabels(withChatGptPlanLabel(text).replace(resumeCommand, 'claudex$1'));
+function filterGICCOutput(text) {
+  let filtered = replaceModelFooterLabels(withChatGptPlanLabel(text).replace(resumeCommand, 'gicc$1'));
   for (const [phrase, replacement] of [
     ['Opus Plan Mode', 'GPT-5.6 Solplan'],
     ['Opus Plan', 'GPT-5.6 Solplan'],
@@ -206,10 +206,10 @@ function filterClaudexOutput(text) {
 }
 
 function installWelcomePlanFilter() {
-  const testOverride = process.env.CLAUDEX_TEST_WELCOME_FILTER === '1';
-  if (process.env.CLAUDEX_INTERACTIVE_TUI !== '1'
+  const testOverride = process.env.GICC_TEST_WELCOME_FILTER === '1';
+  if (process.env.GICC_INTERACTIVE_TUI !== '1'
       || (!process.stdout.isTTY && !testOverride)
-      || !process.env.CLAUDEX_CHATGPT_PLAN_LABEL) return;
+      || !process.env.GICC_CHATGPT_PLAN_LABEL) return;
 
   const originalWrite = process.stdout.write;
   let inspectedBytes = 0;
@@ -452,9 +452,9 @@ class InputAliasRewriter {
         if (this.cursor < this.line.length) output.push(ESC, 0x5b, 0x46);
         output.push(...Array(replacedUnits.length).fill(DEL), ...Buffer.from('opusplan', 'ascii'));
       }
-      process.env.CLAUDEX_MODEL_MODE = 'solplan';
+      process.env.GICC_MODEL_MODE = 'solplan';
     } else if (/^\/model(?:[ \t]+.*)?$/i.test(line)) {
-      delete process.env.CLAUDEX_MODEL_MODE;
+      delete process.env.GICC_MODEL_MODE;
     }
     output.push(newline);
     this.line = [];
@@ -472,7 +472,7 @@ function rewriteSolplanInput(text) {
   return defaultInputRewriter.rewrite(text);
 }
 
-if (process.stdin.isTTY || process.env.CLAUDEX_TEST_TTY_INPUT === '1') {
+if (process.stdin.isTTY || process.env.GICC_TEST_TTY_INPUT === '1') {
   // Bun's native stdin implementation dispatches raw-mode input directly to
   // registered listeners instead of consistently calling the JavaScript
   // EventEmitter.emit method. Wrap the listener boundary, and the read method
@@ -485,7 +485,7 @@ if (process.stdin.isTTY || process.env.CLAUDEX_TEST_TTY_INPUT === '1') {
     if (typeof listener !== 'function' || wrappedListeners.has(listener)) return listener;
     if (listenerWrappers.has(listener)) return listenerWrappers.get(listener);
     const rewriter = createInputRewriter();
-    const wrapped = function claudexInputListener(chunk, ...rest) {
+    const wrapped = function giccInputListener(chunk, ...rest) {
       return listener.call(this, rewriter.rewrite(chunk), ...rest);
     };
     listenerWrappers.set(listener, wrapped);
@@ -496,7 +496,7 @@ if (process.stdin.isTTY || process.env.CLAUDEX_TEST_TTY_INPUT === '1') {
   for (const method of ['on', 'addListener', 'once', 'prependListener', 'prependOnceListener']) {
     if (typeof process.stdin[method] !== 'function') continue;
     const original = process.stdin[method];
-    process.stdin[method] = function claudexInputRegistration(event, listener, ...rest) {
+    process.stdin[method] = function giccInputRegistration(event, listener, ...rest) {
       if (registeringOnceWrapper) return original.call(this, event, listener, ...rest);
       const registered = event === 'data' ? wrapDataListener(listener) : listener;
       if (event !== 'data' || (method !== 'once' && method !== 'prependOnceListener')) {
@@ -515,7 +515,7 @@ if (process.stdin.isTTY || process.env.CLAUDEX_TEST_TTY_INPUT === '1') {
   for (const method of ['off', 'removeListener']) {
     if (typeof process.stdin[method] !== 'function') continue;
     const original = process.stdin[method];
-    process.stdin[method] = function claudexInputRemoval(event, listener, ...rest) {
+    process.stdin[method] = function giccInputRemoval(event, listener, ...rest) {
       const registered = event === 'data' && listenerWrappers.has(listener) ? listenerWrappers.get(listener) : listener;
       return original.call(this, event, registered, ...rest);
     };
@@ -524,7 +524,7 @@ if (process.stdin.isTTY || process.env.CLAUDEX_TEST_TTY_INPUT === '1') {
   if (typeof process.stdin.read === 'function') {
     const originalRead = process.stdin.read;
     const readableRewriter = createInputRewriter();
-    process.stdin.read = function claudexInputRead(...args) {
+    process.stdin.read = function giccInputRead(...args) {
       const chunk = originalRead.apply(this, args);
       // Data-mode consumers are transformed once at their listener boundary.
       // Native stream machinery may call read() internally before emitting
@@ -545,7 +545,7 @@ module.exports = {
   chatGptPlanLabel,
   createInputRewriter,
   createWelcomePlanStreamFilter,
-  filterClaudexOutput,
+  filterGICCOutput,
   replaceWelcomeBillingColumns,
   rewriteSolplanInput,
 };

@@ -26,20 +26,20 @@ const ownsInteractiveProcessGroup = !isWindows && isInteractive && (() => {
   }
 })();
 const home = isWindows ? process.env.USERPROFILE || homedir() : process.env.HOME || homedir();
-const configDir = process.env.CLAUDEX_CONFIG_DIR || join(home, '.config', 'claudex');
+const configDir = process.env.GICC_CONFIG_DIR || join(home, '.config', 'gpt-in-claude-code');
 const markerPath = join(configDir, 'package-manager.json');
 const setupLockPath = join(configDir, 'package-setup.lock');
 const setupResultPath = join(configDir, 'package-setup-result.json');
 const envPath = join(configDir, 'env');
 
-// A package manager owns the public `claudex` shim. Keep the managed launcher
+// A package manager owns the public `gicc` shim. Keep the managed launcher
 // private so it cannot shadow or overwrite Homebrew, Scoop, or WinGet's
 // command and prevent a later package version from running this bootstrap.
 const binDir = join(configDir, 'package-bin');
-const launcherPath = join(binDir, isWindows ? 'claudex.ps1' : 'claudex');
+const launcherPath = join(binDir, isWindows ? 'gicc.ps1' : 'gicc');
 
 function detectedInstallMethod() {
-  const explicit = process.env.CLAUDEX_INSTALL_METHOD;
+  const explicit = process.env.GICC_INSTALL_METHOD;
   if (['homebrew', 'scoop', 'winget'].includes(explicit)) return explicit;
   const normalizedRoot = packageRoot.replaceAll('\\', '/').toLowerCase();
   // Only a Cellar path proves that Homebrew owns this shim.
@@ -53,12 +53,12 @@ const installMethod = detectedInstallMethod();
 
 function requireInstallMethod() {
   if (!installMethod) {
-    fail('this bootstrap only supports Homebrew, Scoop, or WinGet installations; use the source installer at https://claudex.work instead');
+    fail('this bootstrap only supports Homebrew, Scoop, or WinGet installations; use the source installer at https://github.com/DrPei12/gpt-in-claude-code instead');
   }
 }
 
 function fail(message, code = 1) {
-  process.stderr.write(`claudex: ${message}\n`);
+  process.stderr.write(`gicc: ${message}\n`);
   process.exit(code);
 }
 
@@ -136,7 +136,7 @@ function acquireSetupLock(force) {
     shouldContinue: () => force || needsSetup(),
   });
   if (!generation && (force || needsSetup())) {
-    fail('timed out waiting for another package setup; retry or run claudex --package-setup');
+    fail('timed out waiting for another package setup; retry or run gicc --package-setup');
   }
   return generation;
 }
@@ -279,7 +279,7 @@ function run(command, args, env = process.env) {
         }
         resolveStatus(signalExitCode(forwardedSignal));
       } else if (childSignal) {
-        process.stderr.write(`claudex: ${command} was interrupted by ${childSignal}\n`);
+        process.stderr.write(`gicc: ${command} was interrupted by ${childSignal}\n`);
         resolveStatus(signalExitCode(childSignal));
       } else {
         resolveStatus(status ?? 1);
@@ -301,12 +301,12 @@ function run(command, args, env = process.env) {
 }
 
 async function runInstaller(login) {
-  process.stderr.write(`claudex: preparing ${packageName} ${version}...\n`);
+  process.stderr.write(`gicc: preparing ${packageName} ${version}...\n`);
   const installerEnvironment = {
     ...process.env,
-    CLAUDEX_BIN_DIR: binDir,
-    CLAUDEX_INSTALL_METHOD: installMethod,
-    CLAUDEX_PACKAGE_ROOT: packageRoot,
+    GICC_BIN_DIR: binDir,
+    GICC_INSTALL_METHOD: installMethod,
+    GICC_PACKAGE_ROOT: packageRoot,
   };
   let status;
   if (isWindows) {
@@ -335,7 +335,7 @@ function needsSetup() {
   const managedFiles = isWindows
     ? [
         launcherPath,
-        join(binDir, 'claudex.cmd'),
+        join(binDir, 'gicc.cmd'),
         join(configDir, 'settings.json'),
         join(configDir, 'statusline.ps1'),
         join(configDir, 'usage-limit.ps1'),
@@ -379,7 +379,7 @@ requireInstallMethod();
 if (args[0] === '--package-setup') {
   const setupArgs = args.slice(1);
   if (setupArgs.includes('--help') || setupArgs.includes('-h')) {
-    process.stdout.write('Usage: claudex --package-setup [--login]\n');
+    process.stdout.write('Usage: gicc --package-setup [--login]\n');
     process.stdout.write('  --login  Open the official Codex login during setup.\n');
     process.exit(0);
   }
@@ -387,7 +387,7 @@ if (args[0] === '--package-setup') {
     fail('--package-setup accepts only --login', 2);
   }
   await ensurePackageSetup(setupArgs.includes('--login'), true);
-  process.stdout.write('Claudex package setup is complete. Run: claudex\n');
+  process.stdout.write('GICC package setup is complete. Run: gicc\n');
   process.exit(0);
 }
 

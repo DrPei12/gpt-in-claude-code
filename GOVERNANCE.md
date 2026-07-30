@@ -1,10 +1,10 @@
 # Project governance
 
-Claudex uses a lightweight maintainer led governance model.
+GICC uses a lightweight maintainer led governance model.
 
 ## Roles
 
-- **Users** install Claudex, report problems, and participate in discussions.
+- **Users** install GICC, report problems, and participate in discussions.
 - **Contributors** submit documentation, tests, code, and reviews under the MIT
   License.
 - **Maintainers** are repository collaborators with merge and moderation

@@ -1,13 +1,13 @@
 # Maintainers
 
-Claudex uses a small maintainer led model with transparent decisions in public
+GICC uses a small maintainer led model with transparent decisions in public
 issues, discussions, and pull requests whenever security and privacy permit.
 
 ## Active maintainers
 
 | Maintainer | Responsibilities |
 | --- | --- |
-| [@BeamoINT](https://github.com/BeamoINT) | Repository administration, triage, review, security response, releases, and community moderation |
+| [@DrPei12](https://github.com/DrPei12) | Repository administration, triage, review, security response, releases, and community moderation |
 
 Maintainer status reflects active responsibility rather than ownership of
 community contributions. New maintainers may be invited under the criteria in
@@ -15,7 +15,7 @@ community contributions. New maintainers may be invited under the criteria in
 
 ## Triage and response targets
 
-Claudex is volunteer maintained, so these are targets rather than service level
+GICC is volunteer maintained, so these are targets rather than service level
 agreements:
 
 - acknowledge actionable bugs and pull requests within seven days;

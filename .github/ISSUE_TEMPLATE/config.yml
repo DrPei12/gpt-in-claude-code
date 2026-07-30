@@ -1,10 +1,10 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions and setup help
-    url: https://github.com/BeamoINT/Claudex/discussions
+    url: https://github.com/DrPei12/gpt-in-claude-code/discussions
     about: Ask usage questions and discuss ideas with the community.
   - name: Security vulnerability
-    url: https://github.com/BeamoINT/Claudex/security/advisories/new
+    url: https://github.com/DrPei12/gpt-in-claude-code/security/advisories/new
     about: Report vulnerabilities privately. Do not open a public issue.
   - name: Claude Code support
     url: https://support.anthropic.com/

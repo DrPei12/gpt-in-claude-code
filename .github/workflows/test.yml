@@ -68,7 +68,7 @@ jobs:
       - name: Verify Node 18+ fallback on the oldest supported Ubuntu
         run: |
           node_root="$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")"
-          CLAUDEX_TEST_MODE=1 CLAUDEX_TEST_MANAGED_NODE_DIR="$node_root" ./tests/legacy-linux-node.sh
+          GICC_TEST_MODE=1 GICC_TEST_MANAGED_NODE_DIR="$node_root" ./tests/legacy-linux-node.sh
 
   node-18-shared-runtime:
     name: node-18-shared-runtime

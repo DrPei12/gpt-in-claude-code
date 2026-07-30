@@ -33,13 +33,13 @@ function expandHome(value) {
   return text === '~' ? home : text.startsWith(`~${path.sep}`) || text.startsWith('~/') || text.startsWith('~\\')
     ? path.join(home, text.slice(2)) : text;
 }
-const configDir = path.resolve(expandHome(process.env.CLAUDEX_CONFIG_DIR || path.join(home, '.config', 'claudex')));
-const claudeHome = path.resolve(expandHome(process.env.CLAUDEX_CLAUDE_CONFIG_DIR || path.join(home, '.claude')));
+const configDir = path.resolve(expandHome(process.env.GICC_CONFIG_DIR || path.join(home, '.config', 'gpt-in-claude-code')));
+const claudeHome = path.resolve(expandHome(process.env.GICC_CLAUDE_CONFIG_DIR || path.join(home, '.claude')));
 const codexHome = path.resolve(expandHome(process.env.CODEX_HOME || path.join(home, '.codex')));
-const bridgeEnabled = (process.env.CLAUDEX_SKILL_BRIDGE || 'on') !== 'off';
-const pluginEnabled = (process.env.CLAUDEX_SKILL_PLUGINS || 'on') !== 'off';
-const dollarReferencesEnabled = (process.env.CLAUDEX_SKILL_DOLLAR_REFERENCES || 'on') !== 'off';
-const instructionBridgeEnabled = (process.env.CLAUDEX_INSTRUCTION_BRIDGE || 'on') !== 'off';
+const bridgeEnabled = (process.env.GICC_SKILL_BRIDGE || 'on') !== 'off';
+const pluginEnabled = (process.env.GICC_SKILL_PLUGINS || 'on') !== 'off';
+const dollarReferencesEnabled = (process.env.GICC_SKILL_DOLLAR_REFERENCES || 'on') !== 'off';
+const instructionBridgeEnabled = (process.env.GICC_INSTRUCTION_BRIDGE || 'on') !== 'off';
 
 class SourceChangedError extends Error { }
 
@@ -510,14 +510,14 @@ function splitTomlTopLevel(source) {
 }
 
 function codexSystemConfigFile() {
-  if (process.env.CLAUDEX_CODEX_SYSTEM_CONFIG_FILE) return path.resolve(expandHome(process.env.CLAUDEX_CODEX_SYSTEM_CONFIG_FILE));
+  if (process.env.GICC_CODEX_SYSTEM_CONFIG_FILE) return path.resolve(expandHome(process.env.GICC_CODEX_SYSTEM_CONFIG_FILE));
   return isWindows
     ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'Codex', 'config.toml')
     : '/etc/codex/config.toml';
 }
 
 function codexProjectTrusted(repoRoot) {
-  const forced = String(process.env.CLAUDEX_CODEX_PROJECT_TRUST || '').toLowerCase();
+  const forced = String(process.env.GICC_CODEX_PROJECT_TRUST || '').toLowerCase();
   if (forced === 'trusted') return true;
   if (forced === 'untrusted') return false;
   let trusted = true;
@@ -860,7 +860,7 @@ function discoverNativeNamesAt(root, names) {
 }
 
 function claudeManagedSkillsRoot() {
-  if (process.env.CLAUDEX_CLAUDE_MANAGED_SKILLS_DIR) return path.resolve(expandHome(process.env.CLAUDEX_CLAUDE_MANAGED_SKILLS_DIR));
+  if (process.env.GICC_CLAUDE_MANAGED_SKILLS_DIR) return path.resolve(expandHome(process.env.GICC_CLAUDE_MANAGED_SKILLS_DIR));
   return isWindows
     ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'ClaudeCode', 'skills')
     : process.platform === 'darwin'
@@ -930,7 +930,7 @@ function mergedClaudeSettings(projectDir, repoRoot, globalOnly = false, userSett
     }
     apply(path.join(repoRoot, '.claude', 'settings.local.json'));
   }
-  const managed = process.env.CLAUDEX_CLAUDE_MANAGED_SETTINGS_FILE || (isWindows
+  const managed = process.env.GICC_CLAUDE_MANAGED_SETTINGS_FILE || (isWindows
     ? path.join(process.env.SystemDrive || 'C:', 'Program Files', 'ClaudeCode', 'managed-settings.json')
     : process.platform === 'darwin'
       ? '/Library/Application Support/ClaudeCode/managed-settings.json'
@@ -1124,8 +1124,8 @@ function neutralPluginInventoryCwd() {
 
 function codexPluginInventory(warnings, globalOnly = false) {
   if (!pluginEnabled) return [];
-  if (process.env.CLAUDEX_TEST_CODEX_PLUGIN_LIST_FILE) {
-    const fixture = readJson(process.env.CLAUDEX_TEST_CODEX_PLUGIN_LIST_FILE, {});
+  if (process.env.GICC_TEST_CODEX_PLUGIN_LIST_FILE) {
+    const fixture = readJson(process.env.GICC_TEST_CODEX_PLUGIN_LIST_FILE, {});
     const list = Array.isArray(fixture) ? fixture : fixture && fixture.installed;
     return Array.isArray(list) ? list : [];
   }
@@ -1523,7 +1523,7 @@ function discover(projectDir, scopeMode = SCOPE_PROJECT) {
   const nativeClaudeSettings = mergedClaudeSettings(projectDir, repoRoot, globalOnly, configDir);
   const nativeNames = discoverNativeReservedNames();
   const nativePluginNames = discoverNativePluginNames(projectDir, globalOnly, nativeClaudeSettings);
-  nativePluginNames.add('claudex-codex-skill-references');
+  nativePluginNames.add('gicc-skill-references');
 
   discoverClaudePersonalSkills(path.join(claudeHome, 'skills'), claudeSettings, candidates, disabled, warnings);
   discoverClaudeCommands(path.join(claudeHome, 'commands'), candidates, warnings, {
@@ -1549,20 +1549,20 @@ function discover(projectDir, scopeMode = SCOPE_PROJECT) {
   }, candidates, disabled, warnings);
   // Codex ships its built-in skills below CODEX_HOME/skills/.system rather
   // than directly below the ordinary user skill root. They are visible in
-  // Codex's skill picker and must therefore be visible in Claudex too. Keep
+  // Codex's skill picker and must therefore be visible in GICC too. Keep
   // them lower precedence than user/admin sources so a user-installed skill
   // with the same identity retains the short alias.
   discoverSkillRoot(path.join(codexHome, 'skills', '.system'), {
     provider: 'codex', kind: 'codex-system', sourceTag: 'codex-system', priority: 90,
   }, candidates, disabled, warnings);
-  const adminRoot = process.env.CLAUDEX_CODEX_ADMIN_SKILLS_DIR || (isWindows
+  const adminRoot = process.env.GICC_CODEX_ADMIN_SKILLS_DIR || (isWindows
     ? path.join(process.env.ProgramData || 'C:\\ProgramData', 'Codex', 'skills')
     : '/etc/codex/skills');
   discoverSkillRoot(adminRoot, {
     provider: 'codex', kind: 'codex-admin', sourceTag: 'codex-admin', priority: 65,
   }, candidates, disabled, warnings);
 
-  for (const extra of String(process.env.CLAUDEX_SKILL_EXTRA_DIRS || '').split(path.delimiter).filter(Boolean)) {
+  for (const extra of String(process.env.GICC_SKILL_EXTRA_DIRS || '').split(path.delimiter).filter(Boolean)) {
     discoverSkillRoot(path.resolve(expandHome(extra)), {
       provider: 'shared', kind: 'extra', sourceTag: 'extra', priority: 66,
     }, candidates, disabled, warnings);
@@ -1651,7 +1651,7 @@ process.stdin.on('end', () => {
         markdown = truncateBytes(markdown, MAX_SKILL - bytes(recovery)) + recovery;
       }
       const ecosystem = item.provider === 'claude' ? 'Claude Code' : item.provider === 'codex' ? 'Codex' : 'shared';
-      const block = '\\nThe user explicitly referenced the installed ' + ecosystem + ' skill $' + name + '. Apply these instructions. Skill directory: ' + item.directory + '\\n<claudex-skill name="' + name + '" provider="' + item.provider + '">\\n' + markdown + '\\n</claudex-skill>\\n';
+      const block = '\\nThe user explicitly referenced the installed ' + ecosystem + ' skill $' + name + '. Apply these instructions. Skill directory: ' + item.directory + '\\n<gicc-skill name="' + name + '" provider="' + item.provider + '">\\n' + markdown + '\\n</gicc-skill>\\n';
       if (bytes(context) + bytes(block) > MAX_CONTEXT) {
         omitted.push('$' + name + ' (' + item.file + ')');
         continue;
@@ -1664,7 +1664,7 @@ process.stdin.on('end', () => {
     }
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context } }));
   } catch (error) {
-    process.stderr.write('Claudex skill reference hook: ' + error.message + '\\n');
+    process.stderr.write('GICC skill reference hook: ' + error.message + '\\n');
   }
 });
 `;
@@ -1672,9 +1672,9 @@ process.stdin.on('end', () => {
 
 function materializeDollarReferencePlugin(stage, references, allowPluginDirs = true) {
   if (!allowPluginDirs || !dollarReferencesEnabled || references.length === 0) return null;
-  const relative = path.join('plugins', 'claudex-codex-skill-references');
+  const relative = path.join('plugins', 'gicc-skill-references');
   const root = path.join(stage, relative);
-  writeExclusive(path.join(root, '.claude-plugin', 'plugin.json'), Buffer.from(`${JSON.stringify({ name: 'claudex-codex-skill-references', version: '1.0.0', description: 'Claudex Codex skill reference compatibility' }, null, 2)}\n`), 0o600);
+  writeExclusive(path.join(root, '.claude-plugin', 'plugin.json'), Buffer.from(`${JSON.stringify({ name: 'gicc-skill-references', version: '1.0.0', description: 'GICC Codex skill reference compatibility' }, null, 2)}\n`), 0o600);
   writeExclusive(path.join(root, 'hooks', 'hooks.json'), Buffer.from(`${JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/scripts/prompt-hook.cjs"', timeout: 5 }] }] } }, null, 2)}\n`), 0o600);
   writeExclusive(path.join(root, 'scripts', 'prompt-hook.cjs'), Buffer.from(promptHookSource()), 0o700);
   writeExclusive(path.join(root, 'scripts', 'skill-map.json'), Buffer.from(`${JSON.stringify(Object.fromEntries(references), null, 2)}\n`), 0o600);
@@ -2029,7 +2029,7 @@ function syncOnce(projectDir, scopeMode = SCOPE_PROJECT) {
       contentIntegrity: contentIntegrity(contentFiles),
     };
     fs.writeFileSync(path.join(stage, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
-    if (process.env.NODE_ENV === 'test' && process.env.CLAUDEX_TEST_FAIL_SKILL_PUBLICATION === '1') {
+    if (process.env.NODE_ENV === 'test' && process.env.GICC_TEST_FAIL_SKILL_PUBLICATION === '1') {
       throw new Error('simulated skill snapshot publication failure');
     }
     try { fs.renameSync(stage, generation); }
@@ -2084,10 +2084,10 @@ function sync(projectDir, scopeMode = SCOPE_PROJECT) {
 
 function printList(result) {
   if (!result.enabled) {
-    process.stdout.write('Claudex skill compatibility is disabled (CLAUDEX_SKILL_BRIDGE=off).\n');
+    process.stdout.write('GICC skill compatibility is disabled (GICC_SKILL_BRIDGE=off).\n');
     return;
   }
-  process.stdout.write(`Claudex skills: ${result.skills.length} bridged aliases, ${result.pluginDirs.length} isolated compatibility plugins, ${(result.instructions || []).length} Codex instruction files\n`);
+  process.stdout.write(`GICC skills: ${result.skills.length} bridged aliases, ${result.pluginDirs.length} isolated compatibility plugins, ${(result.instructions || []).length} Codex instruction files\n`);
   for (const skill of result.skills) {
     const qualifier = skill.shortcutFor
       ? ` (shortcut for /${skill.shortcutFor})`
@@ -2103,7 +2103,7 @@ function printList(result) {
     process.stdout.write(`instructions\t${instruction.scope}${qualifier}\t${instruction.source}\n`);
   }
   for (const mapping of result.modelMappings || []) process.stdout.write(`model\t${mapping.from} -> ${mapping.to}\t${mapping.source}\n`);
-  for (const warning of result.warnings || []) process.stderr.write(`claudex skills: ${warning}\n`);
+  for (const warning of result.warnings || []) process.stderr.write(`gicc skills: ${warning}\n`);
 }
 
 function parseArguments(argv) {
@@ -2129,7 +2129,7 @@ function main() {
 if (require.main === module) {
   try { main(); }
   catch (error) {
-    process.stderr.write(`claudex skill bridge: ${safeWarning(error.message)}\n`);
+    process.stderr.write(`gicc skill bridge: ${safeWarning(error.message)}\n`);
     process.exit(1);
   }
 }

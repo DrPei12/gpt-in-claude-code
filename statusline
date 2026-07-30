@@ -83,7 +83,7 @@ prune_statusline_cache() {
 
 stabilize_context_percent() {
   local candidate="$context_percent"
-  local config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.config/claudex}"
+  local config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}"
   local cache_dir cache_file cached tmp_file computed
 
   # A zero/null payload is transient before the first response and briefly
@@ -105,7 +105,7 @@ stabilize_context_percent() {
     fi
   fi
 
-  if [[ "${CLAUDEX_NO_SESSION_PERSISTENCE:-0}" != 1 && "$session_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  if [[ "${GICC_NO_SESSION_PERSISTENCE:-0}" != 1 && "$session_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
     cache_dir="$config_dir/statusline-cache"
     cache_file="$cache_dir/$session_id"
     if [[ -n "$candidate" ]]; then
@@ -137,15 +137,15 @@ stabilize_context_percent
 
 usage_summary=""
 load_usage_summary() {
-  local display="${CLAUDEX_USAGE_DISPLAY:-on}"
-  local config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.config/claudex}"
-  local helper="${CLAUDEX_USAGE_LIMIT_BIN:-$config_dir/usage-limit}"
+  local display="${GICC_USAGE_DISPLAY:-on}"
+  local config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}"
+  local helper="${GICC_USAGE_LIMIT_BIN:-$config_dir/usage-limit}"
   local cache_dir="$config_dir/usage-cache"
   local summary_file="$cache_dir/summary"
   local last_attempt_file="$cache_dir/last-attempt"
   local last_success_file="$cache_dir/last-success"
-  local refresh_seconds="${CLAUDEX_USAGE_REFRESH_SECONDS:-300}"
-  local max_stale_seconds="${CLAUDEX_USAGE_MAX_STALE_SECONDS:-86400}"
+  local refresh_seconds="${GICC_USAGE_REFRESH_SECONDS:-300}"
+  local max_stale_seconds="${GICC_USAGE_MAX_STALE_SECONDS:-86400}"
   local now last_attempt=0 last_success=0
 
   [[ "$display" != off && -x "$helper" ]] || return 0
@@ -168,7 +168,7 @@ load_usage_summary() {
     # Starting an occasional losing helper is cheaper and safer than duplicating
     # lock mutation in the frequently invoked status-line process.
     nohup env \
-        -u CLAUDEX_PROXY_TOKEN -u CLAUDEX_PROXY_URL -u CLAUDEX_PROXY_CONFIG -u CLAUDEX_PROXY_BIN \
+        -u GICC_PROXY_TOKEN -u GICC_PROXY_URL -u GICC_PROXY_CONFIG -u GICC_PROXY_BIN \
         -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL -u CLAUDE_CODE_USE_BEDROCK \
         -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_FOUNDRY \
         -u ANTHROPIC_BEDROCK_BASE_URL -u ANTHROPIC_BEDROCK_MANTLE_BASE_URL \
@@ -197,12 +197,12 @@ usage_summary=$(sanitize_terminal_text "$usage_summary")
 if [[ -z "$effort" ]]; then
   effort="${CLAUDE_CODE_EFFORT_LEVEL:-${CLAUDE_EFFORT:-}}"
 fi
-if [[ -z "$effort" && -r "${CLAUDE_CONFIG_DIR:-$HOME/.config/claudex}/settings.json" ]]; then
+if [[ -z "$effort" && -r "${CLAUDE_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}/settings.json" ]]; then
   effort=$(jq -r '.effortLevel // empty' \
-    "${CLAUDE_CONFIG_DIR:-$HOME/.config/claudex}/settings.json" 2>/dev/null) || effort=""
+    "${CLAUDE_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}/settings.json" 2>/dev/null) || effort=""
 fi
-if [[ -n "${CLAUDEX_SESSION_MODE:-}" ]]; then
-  effort="$CLAUDEX_SESSION_MODE"
+if [[ -n "${GICC_SESSION_MODE:-}" ]]; then
+  effort="$GICC_SESSION_MODE"
 fi
 effort=$(sanitize_terminal_label "$effort")
 readonly effort="${effort:-adaptive}"
@@ -223,15 +223,15 @@ case "$model_id" in
     esac
     ;;
 esac
-selected_model_mode="${CLAUDEX_MODEL_MODE:-}"
-if [[ -z "$selected_model_mode" && -r "${CLAUDE_CONFIG_DIR:-$HOME/.config/claudex}/settings.json" ]]; then
+selected_model_mode="${GICC_MODEL_MODE:-}"
+if [[ -z "$selected_model_mode" && -r "${CLAUDE_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}/settings.json" ]]; then
   selected_model_mode=$(jq -r 'if .model == "opusplan" then "solplan" else "" end' \
-    "${CLAUDE_CONFIG_DIR:-$HOME/.config/claudex}/settings.json" 2>/dev/null) || selected_model_mode=""
+    "${CLAUDE_CONFIG_DIR:-$HOME/.config/gpt-in-claude-code}/settings.json" 2>/dev/null) || selected_model_mode=""
 fi
 if [[ "$selected_model_mode" == solplan ]]; then model_name="GPT-5.6 Solplan"; fi
 model_name=$(sanitize_terminal_label "$model_name")
 
-statusline_columns="${CLAUDEX_STATUSLINE_COLUMNS:-}"
+statusline_columns="${GICC_STATUSLINE_COLUMNS:-}"
 if [[ ! "$statusline_columns" =~ ^[1-9][0-9]*$ ]] && [[ "$input_columns" =~ ^[1-9][0-9]*$ ]]; then
   statusline_columns="$input_columns"
 fi
@@ -248,8 +248,8 @@ if [[ ! "$statusline_columns" =~ ^[1-9][0-9]*$ ]] && [[ -r /dev/tty ]]; then
 fi
 if [[ ! "$statusline_columns" =~ ^[1-9][0-9]*$ ]]; then statusline_columns=0; fi
 
-readonly brand_plain='Claudex'
-readonly brand_ansi=$'\033[38;5;81mClaudex\033[0m'
+readonly brand_plain='GICC'
+readonly brand_ansi=$'\033[38;5;81mGICC\033[0m'
 readonly model_ansi=$'\033[1m'"$model_name"$'\033[0m'
 mandatory_plain="$brand_plain · $model_name"
 mandatory_ansi="$brand_ansi · $model_ansi"

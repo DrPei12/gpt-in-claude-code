@@ -57,7 +57,7 @@ for (const required of [
   "Remove-Item -LiteralPath (Join-Path $quarantine 'generation')",
   'Withdraw-LegacyBarrierGeneration $barrier $legacyOwner $generationNonce',
   'Withdraw-LegacyLockGeneration $LockDirectory $legacyOwner $legacyGeneration',
-  '[Claudex.CredentialSyncCleanup]::TrackLock($sessionSyncLock, $nonce)',
+  '[GICC.CredentialSyncCleanup]::TrackLock($sessionSyncLock, $nonce)',
   'private static void ReleaseExactGeneration',
   'if (!String.Equals(ReadNonce(path), nonce, StringComparison.Ordinal)) return;',
   'if (String.Equals(movedNonce, nonce, StringComparison.Ordinal))',
@@ -70,7 +70,7 @@ assert(!source.includes('function ConvertTo-CodexCmdArgument'),
   'Windows Codex shim paths must not be embedded directly in cmd source text');
 assert(!source.includes(".Replace('%',"),
   'Windows Codex shim environment values must not use ineffective percent doubling');
-assert(!source.includes('CLAUDEX_CODEX_SHIM_PATH'),
+assert(!source.includes('GICC_CODEX_SHIM_PATH'),
   'Windows Codex shim invocation must not feed paths back through cmd expansion');
 assert(!source.includes('owner.EndsWith(" " + lockToken'),
   'legacy PID/token suffix cleanup remains reachable');
@@ -107,7 +107,7 @@ assert(!legacyOwnerIsCurrent('999 old-token\n', new Set([123])),
 // Stable directory identity closes the absent-owner mixed-version window. Keep
 // A's original inode alive while old B installs an empty replacement, making
 // the mismatch deterministic; A must neither publish into nor clean up B.
-const identityTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'claudex-ps-directory-identity-'));
+const identityTemp = fs.mkdtempSync(path.join(os.tmpdir(), 'gicc-ps-directory-identity-'));
 const identityLock = path.join(identityTemp, 'lock');
 const displacedA = path.join(identityTemp, 'displaced-a');
 fs.mkdirSync(identityLock);
@@ -136,7 +136,7 @@ fs.rmSync(identityTemp, { recursive: true, force: true });
 // Executable model of the PowerShell/C# moved-generation validation: even when
 // canonical ownership changes after the stale precheck, cleanup restores and
 // never deletes the replacement it actually moved.
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'claudex-ps-lock-model-'));
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'gicc-ps-lock-model-'));
 const lock = path.join(temp, '.codex-session-sync.lock');
 const writeGeneration = (directory, nonce) => {
   fs.mkdirSync(directory, { recursive: true });

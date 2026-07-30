@@ -2,10 +2,10 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 $root = Split-Path $PSScriptRoot -Parent
-$temporary = Join-Path ([IO.Path]::GetTempPath()) ('claudex-self-update-locks-' + [guid]::NewGuid().ToString('N'))
+$temporary = Join-Path ([IO.Path]::GetTempPath()) ('gicc-self-update-locks-' + [guid]::NewGuid().ToString('N'))
 $config = Join-Path $temporary 'config'
 $fixture = Join-Path $temporary 'fixture'
-$update = Join-Path $config 'update\claudex'
+$update = Join-Path $config 'update\gicc'
 $lock = Join-Path $update 'lock'
 $utf8 = New-Object Text.UTF8Encoding($false)
 $shell = (Get-Process -Id $PID).Path
@@ -30,13 +30,13 @@ function Set-Old([string] $Path) {
 }
 
 function Set-Pause([string] $Stage, [string] $Name) {
-    [Environment]::SetEnvironmentVariable("CLAUDEX_TEST_UPDATE_LOCK_${Stage}_READY", (Join-Path $temporary "$Name-ready"), 'Process')
-    [Environment]::SetEnvironmentVariable("CLAUDEX_TEST_UPDATE_LOCK_${Stage}_CONTINUE", (Join-Path $temporary "$Name-continue"), 'Process')
+    [Environment]::SetEnvironmentVariable("GICC_TEST_UPDATE_LOCK_${Stage}_READY", (Join-Path $temporary "$Name-ready"), 'Process')
+    [Environment]::SetEnvironmentVariable("GICC_TEST_UPDATE_LOCK_${Stage}_CONTINUE", (Join-Path $temporary "$Name-continue"), 'Process')
 }
 
 function Clear-Pause([string] $Stage) {
-    [Environment]::SetEnvironmentVariable("CLAUDEX_TEST_UPDATE_LOCK_${Stage}_READY", $null, 'Process')
-    [Environment]::SetEnvironmentVariable("CLAUDEX_TEST_UPDATE_LOCK_${Stage}_CONTINUE", $null, 'Process')
+    [Environment]::SetEnvironmentVariable("GICC_TEST_UPDATE_LOCK_${Stage}_READY", $null, 'Process')
+    [Environment]::SetEnvironmentVariable("GICC_TEST_UPDATE_LOCK_${Stage}_CONTINUE", $null, 'Process')
 }
 
 function Continue-Pause([string] $Name) {
@@ -82,28 +82,28 @@ try {
         version = '1.3.1'
         method = 'archive'
         binDir = $launcherDirectory
-        repository = 'BeamoINT/Claudex'
+        repository = 'DrPei12/gpt-in-claude-code'
     }
     [IO.File]::WriteAllText((Join-Path $config 'install.json'), (($receipt | ConvertTo-Json -Compress) + "`n"), $utf8)
     $release = [ordered]@{
         tag_name = 'v1.3.2'; draft = $false; prerelease = $false; published_at = '2026-07-16T00:00:00Z'
         assets = @(
-            [ordered]@{ name = 'claudex-1.3.2-windows.zip'; url = 'https://api.github.com/assets/claudex-1.3.2-windows.zip' },
+            [ordered]@{ name = 'gicc-1.3.2-windows.zip'; url = 'https://api.github.com/assets/gicc-1.3.2-windows.zip' },
             [ordered]@{ name = 'SHA256SUMS'; url = 'https://api.github.com/assets/SHA256SUMS' }
         )
     }
     [IO.File]::WriteAllText((Join-Path $fixture 'latest.json'), (($release | ConvertTo-Json -Depth 10) + "`n"), $utf8)
-    $env:CLAUDEX_CONFIG_DIR = $config
-    $env:CLAUDEX_TEST_MODE = '1'
-    $env:CLAUDEX_TEST_UPDATE_FIXTURE_DIR = $fixture
-    $env:CLAUDEX_TEST_UPDATE_LOCK_ATTEMPTS = '12'
+    $env:GICC_CONFIG_DIR = $config
+    $env:GICC_TEST_MODE = '1'
+    $env:GICC_TEST_UPDATE_FIXTURE_DIR = $fixture
+    $env:GICC_TEST_UPDATE_LOCK_ATTEMPTS = '12'
 
     $source = [IO.File]::ReadAllText($scriptPath)
     foreach ($required in @('function Publish-UpdateLockFile', '[IO.FileMode]::CreateNew', 'identity=', 'generation', 'quarantine',
             'Remove-UpdateLockGeneration', 'Recover-OwnedUpdateLock', 'Test-UpdateLockOwnerCurrent',
             'legacy update lock owner appeared during publication', 'Test-LegacyUpdateLockOwnerValid',
             'Get-UpdateLockDirectoryIdentity', 'update lock directory changed during publication',
-            'Claudex.SelfUpdateDirectoryIdentity', 'GetFileInformationByHandle',
+            'GICC.SelfUpdateDirectoryIdentity', 'GetFileInformationByHandle',
             'using (SafeFileHandle handle = CreateFile',
             'Get-UpdateCompatibilityOwnerToken', "Publish-UpdateLockFile `$compatibilityTemporary (Join-Path `$script:LockPath 'owner.json')")) {
         Assert-True ($source.Contains($required)) "PowerShell update lock contains $required"
@@ -216,15 +216,15 @@ try {
 
     # Hardlink denial falls back to CreateNew and an incomplete publication is
     # withdrawn without leaving an owner or quarantine barrier.
-    $env:CLAUDEX_TEST_FORCE_HARDLINK_FAILURE = '1'
+    $env:GICC_TEST_FORCE_HARDLINK_FAILURE = '1'
     & $shell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $scriptPath -Check | Out-Null
     Assert-True ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $lock)) 'CreateNew fallback succeeds'
-    Remove-Item Env:CLAUDEX_TEST_FORCE_HARDLINK_FAILURE
-    $env:CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE = '1'
+    Remove-Item Env:GICC_TEST_FORCE_HARDLINK_FAILURE
+    $env:GICC_TEST_FORCE_PUBLICATION_FAILURE = '1'
     $publicationFailureExit = Invoke-ExpectedFailedCheck
     Assert-True ($publicationFailureExit -ne 0 -and -not (Test-Path -LiteralPath $lock)) 'incomplete publication is removed'
     Assert-True (@(Get-ChildItem -LiteralPath $update -Directory -Filter 'lock.quarantine.*' -ErrorAction SilentlyContinue).Count -eq 0) 'incomplete publication leaves no barrier'
-    Remove-Item Env:CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE
+    Remove-Item Env:GICC_TEST_FORCE_PUBLICATION_FAILURE
 
     # Dead and PID reused owners are reclaimable, but a recent ownerless lock
     # from the legacy format is retained through the transition grace period.
@@ -278,8 +278,8 @@ try {
 
     [Console]::WriteLine('PowerShell self update lock regressions passed')
 } finally {
-    foreach ($name in @('CLAUDEX_CONFIG_DIR', 'CLAUDEX_TEST_MODE', 'CLAUDEX_TEST_UPDATE_FIXTURE_DIR',
-            'CLAUDEX_TEST_UPDATE_LOCK_ATTEMPTS', 'CLAUDEX_TEST_FORCE_HARDLINK_FAILURE', 'CLAUDEX_TEST_FORCE_PUBLICATION_FAILURE')) {
+    foreach ($name in @('GICC_CONFIG_DIR', 'GICC_TEST_MODE', 'GICC_TEST_UPDATE_FIXTURE_DIR',
+            'GICC_TEST_UPDATE_LOCK_ATTEMPTS', 'GICC_TEST_FORCE_HARDLINK_FAILURE', 'GICC_TEST_FORCE_PUBLICATION_FAILURE')) {
         Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue

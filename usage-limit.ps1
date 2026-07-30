@@ -13,7 +13,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $utf8 = New-Object Text.UTF8Encoding($false)
-$configDir = if ($env:CLAUDEX_CONFIG_DIR) { $env:CLAUDEX_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\claudex' }
+$configDir = if ($env:GICC_CONFIG_DIR) { $env:GICC_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\gpt-in-claude-code' }
 $cacheDir = Join-Path $configDir 'usage-cache'
 $cacheFile = Join-Path $cacheDir 'limits.json'
 $summaryFile = Join-Path $cacheDir 'summary'
@@ -23,9 +23,9 @@ $refreshLock = Join-Path $cacheDir 'refresh.lock'
 $refreshOwnerFile = Join-Path $refreshLock 'owner-pid'
 $accountSelectionFile = Join-Path $configDir 'codex-usage-account'
 $usageGenerationFile = Join-Path $configDir 'usage-generation'
-$curlCommand = if ($env:CLAUDEX_CURL_BIN) { $env:CLAUDEX_CURL_BIN } else { 'curl.exe' }
+$curlCommand = if ($env:GICC_CURL_BIN) { $env:GICC_CURL_BIN } else { 'curl.exe' }
 $officialUsageUrl = 'https://chatgpt.com/backend-api/wham/usage'
-$usageUrl = if ($env:CLAUDEX_USAGE_URL) { $env:CLAUDEX_USAGE_URL } else { $officialUsageUrl }
+$usageUrl = if ($env:GICC_USAGE_URL) { $env:GICC_USAGE_URL } else { $officialUsageUrl }
 
 function Get-IntegerSetting([string] $Name, [int] $Default, [int] $Minimum, [int] $Maximum) {
     $raw = [Environment]::GetEnvironmentVariable($Name, 'Process')
@@ -37,12 +37,12 @@ function Get-IntegerSetting([string] $Name, [int] $Default, [int] $Minimum, [int
     return $number
 }
 
-$refreshSeconds = Get-IntegerSetting 'CLAUDEX_USAGE_REFRESH_SECONDS' 300 60 3600
-$timeoutSeconds = Get-IntegerSetting 'CLAUDEX_USAGE_TIMEOUT_SECONDS' 8 1 30
-$maxStaleSeconds = Get-IntegerSetting 'CLAUDEX_USAGE_MAX_STALE_SECONDS' 86400 $refreshSeconds 604800
-$alertPercent = Get-IntegerSetting 'CLAUDEX_USAGE_ALERT_PERCENT' 20 0 100
-$usageSource = if ($env:CLAUDEX_USAGE_SOURCE) { $env:CLAUDEX_USAGE_SOURCE } else { 'auto' }
-if ($usageSource -notin @('auto', 'web', 'app-server')) { throw 'CLAUDEX_USAGE_SOURCE must be auto, web, or app-server.' }
+$refreshSeconds = Get-IntegerSetting 'GICC_USAGE_REFRESH_SECONDS' 300 60 3600
+$timeoutSeconds = Get-IntegerSetting 'GICC_USAGE_TIMEOUT_SECONDS' 8 1 30
+$maxStaleSeconds = Get-IntegerSetting 'GICC_USAGE_MAX_STALE_SECONDS' 86400 $refreshSeconds 604800
+$alertPercent = Get-IntegerSetting 'GICC_USAGE_ALERT_PERCENT' 20 0 100
+$usageSource = if ($env:GICC_USAGE_SOURCE) { $env:GICC_USAGE_SOURCE } else { 'auto' }
+if ($usageSource -notin @('auto', 'web', 'app-server')) { throw 'GICC_USAGE_SOURCE must be auto, web, or app-server.' }
 $ownsRefreshLock = $false
 $ownedRefreshToken = ''
 $legacyRefreshLockMaxAgeSeconds = [Math]::Max(30, ($timeoutSeconds * 3) + 10)
@@ -53,15 +53,15 @@ if ($LockHeld -and ($LockToken -notmatch '^[A-Za-z0-9._-]{8,128}$')) {
 
 function Assert-SafeUsageUrl {
     if ([string]::Equals($usageUrl, $officialUsageUrl, [StringComparison]::Ordinal)) { return }
-    if ($env:CLAUDEX_INSECURE_TEST_ALLOW_USAGE_URL -ne '1') {
-        throw "CLAUDEX_USAGE_URL must remain $officialUsageUrl; only tests may enable a loopback override with CLAUDEX_INSECURE_TEST_ALLOW_USAGE_URL=1."
+    if ($env:GICC_INSECURE_TEST_ALLOW_USAGE_URL -ne '1') {
+        throw "GICC_USAGE_URL must remain $officialUsageUrl; only tests may enable a loopback override with GICC_INSECURE_TEST_ALLOW_USAGE_URL=1."
     }
     $parsed = $null
     $validAbsoluteUrl = [Uri]::TryCreate($usageUrl, [UriKind]::Absolute, [ref] $parsed)
     $validScheme = $validAbsoluteUrl -and ($parsed.Scheme -in @('http', 'https'))
     $validHost = $validAbsoluteUrl -and ($parsed.Host -in @('localhost', '127.0.0.1', '::1', '[::1]'))
     if (-not $validScheme -or -not $validHost -or $parsed.UserInfo) {
-        throw 'CLAUDEX_INSECURE_TEST_ALLOW_USAGE_URL permits only loopback HTTP(S) usage endpoints.'
+        throw 'GICC_INSECURE_TEST_ALLOW_USAGE_URL permits only loopback HTTP(S) usage endpoints.'
     }
 }
 
@@ -85,7 +85,8 @@ function Protect-PrivatePath([string] $Path, [bool] $Directory) {
         )
         [void] $security.AddAccessRule($rule)
     }
-    Set-Acl -LiteralPath $Path -AclObject $security
+    # FileSystemInfo stays idempotent when the DACL is already protected.
+    (Get-Item -LiteralPath $Path -Force).SetAccessControl($security)
 }
 
 function Get-Property($Object, [string] $Name, $Default = $null) {
@@ -150,12 +151,12 @@ function Get-RefreshLockBarriers {
 function Get-RefreshLockDirectoryIdentity([string] $Directory = $refreshLock) {
     if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { return '' }
     if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
-        if (-not ('ClaudexNativeDirectoryIdentity' -as [type])) {
+        if (-not ('GICCNativeDirectoryIdentity' -as [type])) {
             Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 
-public static class ClaudexNativeDirectoryIdentity {
+public static class GICCNativeDirectoryIdentity {
     [StructLayout(LayoutKind.Sequential)]
     private struct FileTime { public uint Low; public uint High; }
 
@@ -199,7 +200,7 @@ public static class ClaudexNativeDirectoryIdentity {
 }
 '@
         }
-        try { return [ClaudexNativeDirectoryIdentity]::GetIdentity($Directory) } catch { return '' }
+        try { return [GICCNativeDirectoryIdentity]::GetIdentity($Directory) } catch { return '' }
     }
     $stat = Get-Command stat -ErrorAction SilentlyContinue
     if (-not $stat) { return '' }
@@ -212,9 +213,9 @@ public static class ClaudexNativeDirectoryIdentity {
 }
 
 function Invoke-RefreshLockTestPause([string] $Stage) {
-    if ($env:CLAUDEX_TEST_MODE -ne '1') { return }
-    $ready = [Environment]::GetEnvironmentVariable("CLAUDEX_TEST_REFRESH_LOCK_${Stage}_READY_FILE", 'Process')
-    $continue = [Environment]::GetEnvironmentVariable("CLAUDEX_TEST_REFRESH_LOCK_${Stage}_CONTINUE_FILE", 'Process')
+    if ($env:GICC_TEST_MODE -ne '1') { return }
+    $ready = [Environment]::GetEnvironmentVariable("GICC_TEST_REFRESH_LOCK_${Stage}_READY_FILE", 'Process')
+    $continue = [Environment]::GetEnvironmentVariable("GICC_TEST_REFRESH_LOCK_${Stage}_CONTINUE_FILE", 'Process')
     if (-not $ready -or -not $continue) { return }
     [IO.File]::WriteAllText($ready, "ready`n", $utf8)
     while (-not (Test-Path -LiteralPath $continue -PathType Leaf)) { Start-Sleep -Milliseconds 20 }
@@ -227,8 +228,8 @@ function Remove-RefreshLockFiles([string] $Directory) {
 }
 
 function Publish-RefreshLockFile([string] $Source, [string] $Destination) {
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_FORCE_REFRESH_PUBLICATION_FAILURE -eq '1') { throw 'forced refresh lock publication failure' }
-    if ($env:CLAUDEX_TEST_MODE -ne '1' -or $env:CLAUDEX_TEST_FORCE_REFRESH_HARDLINK_FAILURE -ne '1') {
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_FORCE_REFRESH_PUBLICATION_FAILURE -eq '1') { throw 'forced refresh lock publication failure' }
+    if ($env:GICC_TEST_MODE -ne '1' -or $env:GICC_TEST_FORCE_REFRESH_HARDLINK_FAILURE -ne '1') {
         try { New-Item -ItemType HardLink -Path $Destination -Target $Source -ErrorAction Stop | Out-Null; return } catch { }
     }
     $input = $null; $output = $null
@@ -356,8 +357,8 @@ function Remove-IncompleteRefreshLock {
 }
 
 function Resolve-RefreshLockContention([int] $AcquisitionElapsedSeconds) {
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_REFRESH_LOCK_CONTENDED_READY_FILE) {
-        [IO.File]::WriteAllText($env:CLAUDEX_TEST_REFRESH_LOCK_CONTENDED_READY_FILE, "ready`n", $utf8)
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_REFRESH_LOCK_CONTENDED_READY_FILE) {
+        [IO.File]::WriteAllText($env:GICC_TEST_REFRESH_LOCK_CONTENDED_READY_FILE, "ready`n", $utf8)
     }
     $age = Get-RefreshLockAgeSeconds
     $observed = Get-RefreshLockField $refreshOwnerFile 'nonce'
@@ -394,8 +395,8 @@ function Acquire-RefreshLock {
     for ($attempt = 0; $attempt -lt 100; $attempt++) {
         Recover-RefreshLockBarriers
         if (@(Get-RefreshLockBarriers).Count -gt 0) {
-            if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_REFRESH_LOCK_CONTENDED_READY_FILE) {
-                [IO.File]::WriteAllText($env:CLAUDEX_TEST_REFRESH_LOCK_CONTENDED_READY_FILE, "ready`n", $utf8)
+            if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_REFRESH_LOCK_CONTENDED_READY_FILE) {
+                [IO.File]::WriteAllText($env:GICC_TEST_REFRESH_LOCK_CONTENDED_READY_FILE, "ready`n", $utf8)
             }
             if ($acquisitionTimer.Elapsed.TotalSeconds -ge 5) { break }
             Start-Sleep -Milliseconds 20
@@ -458,8 +459,8 @@ function Test-UsableCodexCredential($Credential) {
 }
 
 function Get-ProxyAuthDirectory {
-    if ($env:CLAUDEX_CODEX_AUTH_DIR) { return $env:CLAUDEX_CODEX_AUTH_DIR }
-    $proxyConfig = if ($env:CLAUDEX_PROXY_CONFIG) { $env:CLAUDEX_PROXY_CONFIG } else { Join-Path $configDir 'cliproxyapi.yaml' }
+    if ($env:GICC_CODEX_AUTH_DIR) { return $env:GICC_CODEX_AUTH_DIR }
+    $proxyConfig = if ($env:GICC_PROXY_CONFIG) { $env:GICC_PROXY_CONFIG } else { Join-Path $configDir 'cliproxyapi.yaml' }
     if (Test-Path -LiteralPath $proxyConfig -PathType Leaf) {
         foreach ($line in [IO.File]::ReadAllLines($proxyConfig)) {
             if ($line -match '^\s*auth-dir:\s*["'']?(.+?)["'']?\s*$') { return $Matches[1] }
@@ -469,11 +470,11 @@ function Get-ProxyAuthDirectory {
 }
 
 function Find-CodexAuthFile {
-    if ($env:CLAUDEX_CODEX_AUTH_FILE) {
-        if (-not (Test-Path -LiteralPath $env:CLAUDEX_CODEX_AUTH_FILE -PathType Leaf)) { throw 'CLAUDEX_CODEX_AUTH_FILE does not exist.' }
-        $explicit = Get-Content -LiteralPath $env:CLAUDEX_CODEX_AUTH_FILE -Raw | ConvertFrom-Json
-        if (-not (Test-UsableCodexCredential $explicit)) { throw 'CLAUDEX_CODEX_AUTH_FILE is disabled, expired, or invalid.' }
-        return $env:CLAUDEX_CODEX_AUTH_FILE
+    if ($env:GICC_CODEX_AUTH_FILE) {
+        if (-not (Test-Path -LiteralPath $env:GICC_CODEX_AUTH_FILE -PathType Leaf)) { throw 'GICC_CODEX_AUTH_FILE does not exist.' }
+        $explicit = Get-Content -LiteralPath $env:GICC_CODEX_AUTH_FILE -Raw | ConvertFrom-Json
+        if (-not (Test-UsableCodexCredential $explicit)) { throw 'GICC_CODEX_AUTH_FILE is disabled, expired, or invalid.' }
+        return $env:GICC_CODEX_AUTH_FILE
     }
     $authDir = Get-ProxyAuthDirectory
     if (-not (Test-Path -LiteralPath $authDir -PathType Container)) { throw 'CLIProxyAPI Codex OAuth directory was not found.' }
@@ -554,7 +555,7 @@ function Show-CodexAccounts {
             else { '' }
         Write-Output "[$marker] $($index + 1). $email$suffix"
     }
-    Write-Output 'Select one with: claudex --account <number|email|filename>; use auto to follow the newest credential.'
+    Write-Output 'Select one with: gicc --account <number|email|filename>; use auto to follow the newest credential.'
 }
 
 function Select-CodexAccount([string] $Selector) {
@@ -575,7 +576,7 @@ function Select-CodexAccount([string] $Selector) {
             break
         }
     }
-    if ($null -eq $selected) { throw "no Codex account matched '$Selector'. Run: claudex --accounts" }
+    if ($null -eq $selected) { throw "no Codex account matched '$Selector'. Run: gicc --accounts" }
     Write-AtomicText $accountSelectionFile ($selected.File.Name + "`n")
     Clear-UsageCache
     Write-Output "Selected Codex usage account: $([string] (Get-Property $selected.Data 'email' 'unknown account'))"
@@ -734,13 +735,13 @@ function Get-WebUsageResponse {
 }
 
 function Initialize-CappedStreamReader {
-    if ('Claudex.CappedTextReader' -as [type]) { return }
+    if ('GICC.CappedTextReader' -as [type]) { return }
     Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-namespace Claudex {
+namespace GICC {
     public sealed class CappedLine {
         public string Text { get; set; }
         public bool Truncated { get; set; }
@@ -793,7 +794,7 @@ function Stop-AppServerTree($Process) {
 }
 
 function Get-AppServerUsageResponse {
-    if ($env:CLAUDEX_CODEX_AUTH_FILE -or (Test-Path -LiteralPath $accountSelectionFile -PathType Leaf)) {
+    if ($env:GICC_CODEX_AUTH_FILE -or (Test-Path -LiteralPath $accountSelectionFile -PathType Leaf)) {
         throw 'app-server fallback is disabled while an explicit usage account is selected.'
     }
     $codex = Get-Command codex -ErrorAction SilentlyContinue
@@ -827,11 +828,11 @@ function Get-AppServerUsageResponse {
         Initialize-CappedStreamReader
         # Drain stderr independently and retain at most 64 KiB. The drain keeps
         # running after the cap so a noisy child cannot fill the OS pipe.
-        $stderrTask = [Claudex.CappedTextReader]::DrainAsync($process.StandardError, 65536)
+        $stderrTask = [GICC.CappedTextReader]::DrainAsync($process.StandardError, 65536)
         $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSeconds)
         $phase = 1
-        $lineTask = [Claudex.CappedTextReader]::ReadLineAsync($process.StandardOutput, 1048576)
-        $process.StandardInput.WriteLine('{"id":1,"method":"initialize","params":{"clientInfo":{"name":"Claudex","title":"Claudex usage fallback","version":"1.0.0"}}}')
+        $lineTask = [GICC.CappedTextReader]::ReadLineAsync($process.StandardOutput, 1048576)
+        $process.StandardInput.WriteLine('{"id":1,"method":"initialize","params":{"clientInfo":{"name":"GICC","title":"GICC usage fallback","version":"1.0.0"}}}')
         $process.StandardInput.Flush()
         while ([DateTime]::UtcNow -lt $deadline) {
             $remaining = [math]::Max(1, [int] ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
@@ -841,7 +842,7 @@ function Get-AppServerUsageResponse {
             $lineResult = $lineTask.GetAwaiter().GetResult()
             if ($lineResult.Truncated) { throw 'Codex app-server returned an oversized response line.' }
             if ($lineResult.EndOfStream -and -not $lineResult.Text) { throw 'Codex app-server closed before returning rate limits.' }
-            $lineTask = [Claudex.CappedTextReader]::ReadLineAsync($process.StandardOutput, 1048576)
+            $lineTask = [GICC.CappedTextReader]::ReadLineAsync($process.StandardOutput, 1048576)
             try { $message = $lineResult.Text | ConvertFrom-Json } catch { continue }
             if ([int] (Get-Property $message 'id' -1) -ne $phase) { continue }
             $result = Get-Property $message 'result' $null
@@ -1048,8 +1049,8 @@ try {
     if ($ownsRefreshLock -and (Test-Path -LiteralPath $refreshLock -PathType Container)) {
         if ($ownedRefreshToken) { [void] (Remove-OwnedRefreshGeneration $ownedRefreshToken) }
     }
-    if ($env:CLAUDEX_TEST_MODE -eq '1' -and $env:CLAUDEX_TEST_USAGE_REFRESH_EXIT_FILE) {
-        [IO.File]::WriteAllText($env:CLAUDEX_TEST_USAGE_REFRESH_EXIT_FILE, "exited`n", $utf8)
+    if ($env:GICC_TEST_MODE -eq '1' -and $env:GICC_TEST_USAGE_REFRESH_EXIT_FILE) {
+        [IO.File]::WriteAllText($env:GICC_TEST_USAGE_REFRESH_EXIT_FILE, "exited`n", $utf8)
     }
 }
 

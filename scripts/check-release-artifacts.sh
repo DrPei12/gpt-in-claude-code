@@ -3,16 +3,16 @@ set -euo pipefail
 
 readonly root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
 readonly version="$(node -p 'require(process.argv[1]).version' "$root/package.json")"
-temporary=$(mktemp -d "${TMPDIR:-/tmp}/claudex-release-check.XXXXXX")
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/gicc-release-check.XXXXXX")
 trap 'rm -rf "$temporary"' EXIT
 
 # The parent artifact check re-enters a copied checkout whose path contains a
 # quote. Keep that nested probe focused so it verifies this script's version
 # lookup and the builder without recursively running the complete suite.
-if [[ "${CLAUDEX_NESTED_QUOTE_PATH_CHECK:-0}" == 1 ]]; then
+if [[ "${GICC_NESTED_QUOTE_PATH_CHECK:-0}" == 1 ]]; then
   "$root/scripts/build-release.sh" "$version" >/dev/null
-  test -f "$root/dist/claudex-$version.tar.gz"
-  test -f "$root/dist/claudex-$version-windows.zip"
+  test -f "$root/dist/gicc-$version.tar.gz"
+  test -f "$root/dist/gicc-$version-windows.zip"
   exit 0
 fi
 
@@ -20,16 +20,16 @@ fi
 # builder must set TZ on the archive commands themselves; normalizing the
 # staged mtimes alone is not enough for ZIP's local-time metadata.
 TZ=Pacific/Honolulu "$root/scripts/build-release.sh" "$version" >/dev/null
-cp "$root/dist/claudex-$version.tar.gz" "$temporary/first.tar.gz"
-cp "$root/dist/claudex-$version-windows.zip" "$temporary/first-windows.zip"
+cp "$root/dist/gicc-$version.tar.gz" "$temporary/first.tar.gz"
+cp "$root/dist/gicc-$version-windows.zip" "$temporary/first-windows.zip"
 cp "$root/dist/SHA256SUMS" "$temporary/first-SHA256SUMS"
 
 # A wall-clock boundary catches accidental archive timestamps as well as entry
 # ordering and owner metadata drift.
 sleep 2
 TZ=Asia/Kathmandu "$root/scripts/build-release.sh" "$version" >/dev/null
-cmp "$temporary/first.tar.gz" "$root/dist/claudex-$version.tar.gz"
-cmp "$temporary/first-windows.zip" "$root/dist/claudex-$version-windows.zip"
+cmp "$temporary/first.tar.gz" "$root/dist/gicc-$version.tar.gz"
+cmp "$temporary/first-windows.zip" "$root/dist/gicc-$version-windows.zip"
 cmp "$temporary/first-SHA256SUMS" "$root/dist/SHA256SUMS"
 
 # Exercise the bytes users actually download. This installation is isolated,
@@ -42,7 +42,7 @@ archive_bin="$temporary/archive-bin"
 archive_install_bin="$temporary/archive-install-bin"
 archive_config="$temporary/archive-config"
 mkdir -p "$archive_smoke" "$archive_home" "$archive_bin"
-tar -xzf "$root/dist/claudex-$version.tar.gz" -C "$archive_smoke"
+tar -xzf "$root/dist/gicc-$version.tar.gz" -C "$archive_smoke"
 cat > "$archive_bin/codex" <<'EOF'
 #!/usr/bin/env bash
 printf 'artifact-codex'
@@ -57,11 +57,11 @@ printf '\n'
 EOF
 chmod +x "$archive_bin/codex" "$archive_bin/claude"
 
-extracted="$archive_smoke/claudex-$version"
+extracted="$archive_smoke/gicc-$version"
 if ! HOME="$archive_home" PATH="$archive_bin:$PATH" \
-    CLAUDEX_BIN_DIR="$archive_install_bin" CLAUDEX_CONFIG_DIR="$archive_config" \
-    CLAUDEX_PROXY_TOKEN=artifact-test-token CLAUDEX_INSTALL_METHOD=archive \
-    CLAUDEX_SKIP_DEPENDENCY_INSTALL=1 CLAUDEX_SKIP_SERVICE_START=1 \
+    GICC_BIN_DIR="$archive_install_bin" GICC_CONFIG_DIR="$archive_config" \
+    GICC_PROXY_TOKEN=artifact-test-token GICC_INSTALL_METHOD=archive \
+    GICC_SKIP_DEPENDENCY_INSTALL=1 GICC_SKIP_SERVICE_START=1 \
     "$extracted/install.sh" >"$temporary/archive-install.stdout" 2>"$temporary/archive-install.stderr"; then
   printf '%s\n' 'extracted release installer failed; captured output follows' >&2
   cat "$temporary/archive-install.stdout" >&2
@@ -72,11 +72,11 @@ test "$(jq -r '.version // empty' "$archive_config/install.json")" = "$version"
 test "$(jq -r '.method // empty' "$archive_config/install.json")" = archive
 test -f "$archive_config/skill-bridge.cjs"
 node --check "$archive_config/skill-bridge.cjs"
-test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" CLAUDEX_CONFIG_DIR="$archive_config" \
-  "$archive_install_bin/claudex" codex --version 'argument with spaces')" = \
+test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive_config" \
+  "$archive_install_bin/gicc" codex --version 'argument with spaces')" = \
   'artifact-codex|--version|argument with spaces'
-test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" CLAUDEX_CONFIG_DIR="$archive_config" \
-  "$archive_install_bin/claudex" claude --version 'argument with spaces')" = \
+test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive_config" \
+  "$archive_install_bin/gicc" claude --version 'argument with spaces')" = \
   'artifact-claude|--version|argument with spaces'
 
 make_fixture() {
@@ -97,9 +97,9 @@ make_fixture() {
 
 quoted_checkout_fixture="$temporary/checkout-with-'quote"
 make_fixture "$quoted_checkout_fixture"
-CLAUDEX_NESTED_QUOTE_PATH_CHECK=1 \
+GICC_NESTED_QUOTE_PATH_CHECK=1 \
   "$quoted_checkout_fixture/scripts/check-release-artifacts.sh"
-for asset in "claudex-$version.tar.gz" "claudex-$version-windows.zip" SHA256SUMS; do
+for asset in "gicc-$version.tar.gz" "gicc-$version-windows.zip" SHA256SUMS; do
   cmp "$root/dist/$asset" "$quoted_checkout_fixture/dist/$asset"
 done
 
@@ -108,7 +108,7 @@ done
 # text file must become canonical LF, with CRLF reserved for Windows .cmd files.
 eol_fixture="$temporary/eol-fixture"
 make_fixture "$eol_fixture"
-node - "$eol_fixture/claudex.cmd" "$eol_fixture/claudex-package.cmd" \
+node - "$eol_fixture/gicc.cmd" "$eol_fixture/gicc-package.cmd" \
   "$eol_fixture/README.md" "$eol_fixture/package.json" <<'NODE'
 const fs = require('fs');
 const [lfPath, mixedPath, crlfTextPath, mixedTextPath] = process.argv.slice(2);
@@ -121,19 +121,19 @@ line = 0;
 fs.writeFileSync(mixedTextPath, fs.readFileSync(mixedTextPath, 'utf8').replace(/\r\n|\r|\n/g, () => (++line % 2 ? '\r' : '\r\n')));
 NODE
 TZ=Australia/Eucla "$eol_fixture/scripts/build-release.sh" "$version" >/dev/null
-for asset in "claudex-$version.tar.gz" "claudex-$version-windows.zip" SHA256SUMS; do
+for asset in "gicc-$version.tar.gz" "gicc-$version-windows.zip" SHA256SUMS; do
   cmp "$root/dist/$asset" "$eol_fixture/dist/$asset"
 done
 for text_file in README.md package.json; do
-  node - "$eol_fixture/dist/claudex-$version/$text_file" <<'NODE'
+  node - "$eol_fixture/dist/gicc-$version/$text_file" <<'NODE'
 const fs = require('fs');
 const file = process.argv[2];
 const text = fs.readFileSync(file, 'utf8');
 if (/\r/.test(text)) throw new Error(`${file} contains a non-LF newline`);
 NODE
 done
-for command_file in claudex.cmd claudex-package.cmd; do
-  node - "$eol_fixture/dist/claudex-$version/$command_file" <<'NODE'
+for command_file in gicc.cmd gicc-package.cmd; do
+  node - "$eol_fixture/dist/gicc-$version/$command_file" <<'NODE'
 const fs = require('fs');
 const file = process.argv[2];
 const text = fs.readFileSync(file, 'utf8');
@@ -165,16 +165,16 @@ esac
 # process. Restore the caller's tool path only for this read-only delegation so
 # the poison gzip continues to catch archive construction without breaking
 # independent consumption on Linux.
-PATH="$CLAUDEX_TEST_REAL_TOOL_PATH" exec "$CLAUDEX_TEST_REAL_TAR" "$@"
+PATH="$GICC_TEST_REAL_TOOL_PATH" exec "$GICC_TEST_REAL_TAR" "$@"
 EOF
 chmod +x "$canonical_bin/zip" "$canonical_bin/gzip" "$canonical_bin/tar"
-CLAUDEX_TEST_REAL_TAR="$(command -v tar)" CLAUDEX_TEST_REAL_TOOL_PATH="$PATH" \
+GICC_TEST_REAL_TAR="$(command -v tar)" GICC_TEST_REAL_TOOL_PATH="$PATH" \
   PATH="$canonical_bin:$PATH" \
   TZ=Etc/GMT+12 "$canonical_fixture/scripts/build-release.sh" "$version" >/dev/null
-for asset in "claudex-$version.tar.gz" "claudex-$version-windows.zip" SHA256SUMS; do
+for asset in "gicc-$version.tar.gz" "gicc-$version-windows.zip" SHA256SUMS; do
   cmp "$root/dist/$asset" "$canonical_fixture/dist/$asset"
 done
-node - "$root/dist/claudex-$version.tar.gz" "$root/dist/claudex-$version-windows.zip" <<'NODE'
+node - "$root/dist/gicc-$version.tar.gz" "$root/dist/gicc-$version-windows.zip" <<'NODE'
 const fs = require('fs');
 const [gzipPath, zipPath] = process.argv.slice(2);
 const gzip = fs.readFileSync(gzipPath);
@@ -190,19 +190,19 @@ NODE
 # Native Windows filesystems do not expose meaningful POSIX executable bits.
 # Re-archive a fully non-executable stage and require the release-path contract
 # to reproduce both assets and their executable metadata exactly.
-mode_stage="$canonical_fixture/dist/claudex-$version"
+mode_stage="$canonical_fixture/dist/gicc-$version"
 find "$mode_stage" -type f -exec chmod 644 {} +
 node "$canonical_fixture/scripts/create-release-archives.mjs" "$mode_stage" \
   "$temporary/mode-normalized.tar.gz" "$temporary/mode-normalized-windows.zip"
-cmp "$root/dist/claudex-$version.tar.gz" "$temporary/mode-normalized.tar.gz"
-cmp "$root/dist/claudex-$version-windows.zip" "$temporary/mode-normalized-windows.zip"
+cmp "$root/dist/gicc-$version.tar.gz" "$temporary/mode-normalized.tar.gz"
+cmp "$root/dist/gicc-$version-windows.zip" "$temporary/mode-normalized-windows.zip"
 executable_release_files=(
-  bootstrap.sh claudex codex-session install.sh install.zsh self-update statusline usage-limit bin/claudex-package.mjs
+  bootstrap.sh gicc codex-session install.sh install.zsh self-update statusline usage-limit bin/gicc-package.mjs
 )
 for executable in "${executable_release_files[@]}"; do
-  tar_mode=$(tar -tvzf "$temporary/mode-normalized.tar.gz" "claudex-$version/$executable" | awk '{print $1}')
+  tar_mode=$(tar -tvzf "$temporary/mode-normalized.tar.gz" "gicc-$version/$executable" | awk '{print $1}')
   [[ "$tar_mode" == -rwxr-xr-x ]]
-  zip_mode=$(unzip -Z -l "$temporary/mode-normalized-windows.zip" "claudex-$version/$executable" | awk 'NR == 1 {print $1}')
+  zip_mode=$(unzip -Z -l "$temporary/mode-normalized-windows.zip" "gicc-$version/$executable" | awk 'NR == 1 {print $1}')
   [[ "$zip_mode" == -rwxr-xr-x ]]
 done
 
@@ -233,8 +233,8 @@ assert_symlink_rejected "$nested_symlink_fixture" docs/README.md ../README.md ne
 untracked_fixture="$temporary/untracked-fixture"
 make_fixture "$untracked_fixture"
 TZ=Europe/London "$untracked_fixture/scripts/build-release.sh" "$version" >/dev/null
-cp "$untracked_fixture/dist/claudex-$version.tar.gz" "$temporary/allowlist.tar.gz"
-cp "$untracked_fixture/dist/claudex-$version-windows.zip" "$temporary/allowlist-windows.zip"
+cp "$untracked_fixture/dist/gicc-$version.tar.gz" "$temporary/allowlist.tar.gz"
+cp "$untracked_fixture/dist/gicc-$version-windows.zip" "$temporary/allowlist-windows.zip"
 cp "$untracked_fixture/dist/SHA256SUMS" "$temporary/allowlist-SHA256SUMS"
 untracked_files=(
   bin/untracked-release-poison.txt
@@ -245,11 +245,11 @@ for untracked in "${untracked_files[@]}"; do
   printf 'must not ship: %s\n' "$untracked" > "$untracked_fixture/$untracked"
 done
 TZ=America/Adak "$untracked_fixture/scripts/build-release.sh" "$version" >/dev/null
-cmp "$temporary/allowlist.tar.gz" "$untracked_fixture/dist/claudex-$version.tar.gz"
-cmp "$temporary/allowlist-windows.zip" "$untracked_fixture/dist/claudex-$version-windows.zip"
+cmp "$temporary/allowlist.tar.gz" "$untracked_fixture/dist/gicc-$version.tar.gz"
+cmp "$temporary/allowlist-windows.zip" "$untracked_fixture/dist/gicc-$version-windows.zip"
 cmp "$temporary/allowlist-SHA256SUMS" "$untracked_fixture/dist/SHA256SUMS"
-tar_listing=$(tar -tzf "$untracked_fixture/dist/claudex-$version.tar.gz")
-zip_listing=$(unzip -Z1 "$untracked_fixture/dist/claudex-$version-windows.zip")
+tar_listing=$(tar -tzf "$untracked_fixture/dist/gicc-$version.tar.gz")
+zip_listing=$(unzip -Z1 "$untracked_fixture/dist/gicc-$version-windows.zip")
 for untracked in "${untracked_files[@]}"; do
   ! grep -F "/$untracked" <<<"$tar_listing" >/dev/null
   ! grep -F "/$untracked" <<<"$zip_listing" >/dev/null

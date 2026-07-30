@@ -14,16 +14,18 @@ command -v tar >/dev/null 2>&1 || { printf '%s\n' 'tar is required to verify rel
 # these directories would silently publish any untracked editor, credential, or
 # build artifact that happened to be present in a release checkout.
 files=(
-  CHANGELOG.md CODE_OF_CONDUCT.md CONTRIBUTING.md GOVERNANCE.md LICENSE MAINTAINERS.md NOTICE.md README.md ROADMAP.md
+  CHANGELOG.md CODE_OF_CONDUCT.md CONTRIBUTING.md GOVERNANCE.md LICENSE MAINTAINERS.md NOTICE.md README.md ROADMAP.md UPSTREAM.md
   SECURITY.md SUPPORT.md bootstrap.ps1 bootstrap.sh package.json
-  claudex claudex.cmd claudex.ps1 claudex-package.cmd
+  gicc gicc.cmd gicc.ps1 gicc-package.cmd
   codex-session codex-session.ps1 env.example install.ps1 install.sh install.zsh
   preload.cjs skill-bridge.cjs self-update self-update.ps1 settings.json statusline statusline.ps1 usage-limit usage-limit.ps1
-  bin/claudex-package.mjs bin/package-setup-lock.mjs
+  bin/gicc-package.mjs bin/package-setup-lock.mjs
   docs/README.md docs/architecture.md docs/claude-code-compatibility.md docs/configuration.md
   docs/development.md docs/installation.md docs/package-managers.md docs/skills.md
   docs/troubleshooting.md docs/usage.md
   skills/usage-limit/SKILL.md skills/usage-limit/SKILL.windows.md
+  proxy/manifest.json patches/0001-fix-continue-Codex-reasoning-only-incomplete-respons.patch patches/README.md
+  third_party/CLAUDEX_LICENSE.txt third_party/CLIPROXYAPI_LICENSE.txt
 )
 
 # Validate the source, not only the staged copy. A normal cp dereferences a
@@ -37,7 +39,7 @@ for file in "${files[@]}"; do
 done
 
 readonly dist="$root/dist"
-readonly stage="$dist/claudex-$version"
+readonly stage="$dist/gicc-$version"
 rm -rf "$dist"
 mkdir -p "$stage"
 for file in "${files[@]}"; do
@@ -59,45 +61,50 @@ unsupported=$(find "$stage" ! -type f ! -type d -print -quit)
 # entry order, gzip framing, and ZIP metadata without host tar/zip differences.
 find "$stage" -type d -exec chmod 755 {} +
 find "$stage" -type f -exec chmod 644 {} +
-chmod +x "$stage/bootstrap.sh" "$stage/claudex" "$stage/codex-session" "$stage/install.sh" "$stage/install.zsh" "$stage/self-update" \
-  "$stage/statusline" "$stage/usage-limit" "$stage/bin/claudex-package.mjs"
+chmod +x "$stage/bootstrap.sh" "$stage/gicc" "$stage/codex-session" "$stage/install.sh" "$stage/install.zsh" "$stage/self-update" \
+  "$stage/statusline" "$stage/usage-limit" "$stage/bin/gicc-package.mjs"
 TZ=UTC find "$stage" -exec touch -t 200001010000 {} +
 
 node "$root/scripts/create-release-archives.mjs" "$stage" \
-  "$dist/claudex-$version.tar.gz" "$dist/claudex-$version-windows.zip"
+  "$dist/gicc-$version.tar.gz" "$dist/gicc-$version-windows.zip"
 
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$dist" && sha256sum "claudex-$version.tar.gz" "claudex-$version-windows.zip" > SHA256SUMS)
+  (cd "$dist" && sha256sum "gicc-$version.tar.gz" "gicc-$version-windows.zip" > SHA256SUMS)
 else
-  (cd "$dist" && shasum -a 256 "claudex-$version.tar.gz" "claudex-$version-windows.zip" > SHA256SUMS)
+  (cd "$dist" && shasum -a 256 "gicc-$version.tar.gz" "gicc-$version-windows.zip" > SHA256SUMS)
 fi
 
-tar -tzf "$dist/claudex-$version.tar.gz" | awk -v root="claudex-$version/" '
+tar -tzf "$dist/gicc-$version.tar.gz" | awk -v root="gicc-$version/" '
   index($0, root) != 1 || $0 ~ /(^|\/)\.\.($|\/)/ || $0 ~ /^\// { exit 1 }
 ' || { printf '%s\n' 'release archive contains an unsafe path' >&2; exit 1; }
 required_release_files=(
   MAINTAINERS.md
   ROADMAP.md
-  bin/claudex-package.mjs
+  UPSTREAM.md
+  proxy/manifest.json
+  patches/0001-fix-continue-Codex-reasoning-only-incomplete-respons.patch
+  third_party/CLAUDEX_LICENSE.txt
+  third_party/CLIPROXYAPI_LICENSE.txt
+  bin/gicc-package.mjs
   bin/package-setup-lock.mjs
   skill-bridge.cjs
   skills/usage-limit/SKILL.md
   skills/usage-limit/SKILL.windows.md
 )
-tar_listing=$(tar -tzf "$dist/claudex-$version.tar.gz")
-zip_listing=$(unzip -Z1 "$dist/claudex-$version-windows.zip")
+tar_listing=$(tar -tzf "$dist/gicc-$version.tar.gz")
+zip_listing=$(unzip -Z1 "$dist/gicc-$version-windows.zip")
 for required in "${required_release_files[@]}"; do
-  grep -Fx "claudex-$version/$required" <<<"$tar_listing" >/dev/null || {
+  grep -Fx "gicc-$version/$required" <<<"$tar_listing" >/dev/null || {
     printf 'release tarball is missing %s\n' "$required" >&2
     exit 1
   }
-  grep -Fx "claudex-$version/$required" <<<"$zip_listing" >/dev/null || {
+  grep -Fx "gicc-$version/$required" <<<"$zip_listing" >/dev/null || {
     printf 'release Windows archive is missing %s\n' "$required" >&2
     exit 1
   }
 done
 node --check "$stage/skill-bridge.cjs"
-node --check "$stage/bin/claudex-package.mjs"
+node --check "$stage/bin/gicc-package.mjs"
 node --check "$stage/bin/package-setup-lock.mjs"
 (cd "$dist" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1) || \
   (cd "$dist" && sha256sum -c SHA256SUMS >/dev/null)

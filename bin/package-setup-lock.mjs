@@ -38,7 +38,7 @@ function ownerMatches(left, right) {
     return Number(left.pid) === Number(right.pid) &&
       left.generation === right.generation;
   }
-  // Locks from older Claudex releases had no generation. Include startedAt so
+  // Locks from older GICC releases had no generation. Include startedAt so
   // a recycled PID cannot make a changed legacy owner look identical.
   return Number(left.pid) === Number(right.pid) && left.startedAt === right.startedAt;
 }

@@ -1,5 +1,5 @@
 name: Documentation improvement
-description: Report unclear, missing, or incorrect Claudex documentation
+description: Report unclear, missing, or incorrect GICC documentation
 title: "[Docs]: "
 labels:
   - documentation
@@ -8,7 +8,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for improving Claudex documentation. For setup help, start a GitHub Discussion instead. Never include credentials, prompts, session IDs, or unsanitized private paths.
+        Thanks for improving GICC documentation. For setup help, start a GitHub Discussion instead. Never include credentials, prompts, session IDs, or unsanitized private paths.
   - type: checkboxes
     id: prerequisites
     attributes:
