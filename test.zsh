@@ -1584,7 +1584,7 @@ doctor_output=$(run_wrapper --doctor)
 [[ "$doctor_output" == *'Task lifecycle: owned by Sol with final response reconciliation'* ]]
 [[ "$doctor_output" == *'API retries: 4'* ]]
 [[ "$doctor_output" == *'Claude output budget: 128000 tokens (reasoning continuation enabled)'* ]]
-[[ "$doctor_output" == *'Context window: 400000 tokens'* ]]
+[[ "$doctor_output" == *'Context window: 272000 tokens'* ]]
 [[ "$doctor_output" == *'Automatic compaction window: 244800 tokens (precompute enabled)'* ]]
 [[ "$doctor_output" == *'Context status: stable session (transient zero suppressed)'* ]]
 [[ "$doctor_output" == *'Codex usage: status line refresh every 300s'* ]]
