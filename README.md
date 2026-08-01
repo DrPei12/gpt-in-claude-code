@@ -96,7 +96,8 @@ For release downloads, system requirements, updating, and removal, see the [inst
 - Conservative defaults of one active tool batch and one delegated Agent. The
   Agent and dynamic workflow features remain available without the earlier
   request storm behavior.
-- Stable context accounting and automatic compaction near 280k tokens.
+- Codex aware context accounting and automatic compaction near 244800
+  model visible tokens for the GPT-5.6 Sol catalog window.
 - Codex usage limit reporting in the status line and through `/usage-limit`.
 - Automatic, non destructive discovery of already installed Claude Code and
   Codex skills, including Codex bundled/system skills, project skills, legacy
@@ -213,7 +214,8 @@ gicc command
 
 The installer downloads a GICC release asset built from pinned
 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) source plus the
-public reasoning continuation patch. It verifies the SHA-256 digest and binds
+public reasoning continuation and Claude context patches. It verifies the
+SHA-256 digest and binds
 the service to `127.0.0.1` on a dedicated port with a generated local key. The
 source reference, patch, build inputs, licenses, and asset digests are public in
 the [upstream record](UPSTREAM.md), [patch directory](patches), and

@@ -26,11 +26,11 @@ const forbiddenPathSegments = new Set([
 const contentPatterns = [
   {
     label: 'local Windows user path',
-    pattern: /\b[A-Za-z]:\\Users\\[^\\/\r\n"'`<>|?*]+/gi,
+    pattern: /\b[A-Za-z]:[\\/]Users[\\/][^\\/\r\n"'`<>|?*]+/gi,
   },
   {
     label: 'local Windows workspace path',
-    pattern: /\b[A-Za-z]:\\(?:Tools|Desktop|Documents|Downloads|Projects|Repos|Workspaces)\\[^\\/\r\n"'`<>|?*]+/gi,
+    pattern: /\b[A-Za-z]:[\\/](?:Tools|Desktop|Documents|Downloads|Projects|Repos|Workspaces)[\\/][^\\/\r\n"'`<>|?*]+/gi,
   },
   {
     label: 'local POSIX user path',

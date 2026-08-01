@@ -25,7 +25,7 @@ exit 0
 EOF
 cat > "$config/bin/gicc-proxy" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == -version ]]; then printf '%s\n' 'Version: 7.2.91-gicc.1'; fi
+if [[ "${1:-}" == -version ]]; then printf '%s\n' 'Version: 7.2.91-gicc.2'; fi
 exit 0
 EOF
 chmod +x "$fake_bin/codex" "$fake_bin/claude" "$config/bin/gicc-proxy"

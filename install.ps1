@@ -16,8 +16,8 @@ function Get-AbsoluteInstallDirectory([string] $Value, [string] $VariableName) {
 }
 
 $root = $PSScriptRoot
-$proxyVersion = '7.2.91-gicc.1'
-$proxyRelease = 'v0.1.1'
+$proxyVersion = '7.2.91-gicc.2'
+$proxyRelease = 'v0.1.2'
 $requestedBinDir = if ($env:GICC_BIN_DIR) { $env:GICC_BIN_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
 $requestedConfigDir = if ($env:GICC_CONFIG_DIR) { $env:GICC_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.config\gpt-in-claude-code' }
 $binDir = Get-AbsoluteInstallDirectory $requestedBinDir 'GICC_BIN_DIR'
@@ -26,6 +26,7 @@ $managedBinDir = Join-Path $configDir 'bin'
 $managedNodeDir = Join-Path $configDir 'node'
 $managedProxy = Join-Path $managedBinDir "gicc-proxy-$proxyVersion.exe"
 $authDir = Join-Path $configDir 'codex-accounts'
+$contextDir = Join-Path $configDir 'context'
 $envFile = Join-Path $configDir 'env'
 $settingsTarget = Join-Path $configDir 'settings.json'
 $statuslineTarget = Join-Path $configDir 'statusline.ps1'
@@ -524,8 +525,8 @@ function Find-ProxyExecutable {
 function Install-Proxy {
     $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
     switch ($architecture) {
-        'x64' { $arch = 'amd64'; $expected = 'bbaca0d5285be9f3bd2271d01cec089471e6c52f145c99a1c17a6a84bca4bfe2' }
-        'arm64' { $arch = 'aarch64'; $expected = '5b86372895cd2161e18a3b6e7bd68c96986b499264dd12b4b26e30d9041c3ed0' }
+        'x64' { $arch = 'amd64'; $expected = '2116c02aaeaeb1b87a1ba52a29f2aea24b7bfcb92afacc76d678dd092b9de4ee' }
+        'arm64' { $arch = 'aarch64'; $expected = 'a71b11b2ab7dcc20c44bb949d286d1cd0dfce2f04ee7d1c439390d858a90221d' }
         default { Fail "unsupported Windows CPU architecture: $architecture" }
     }
     $asset = "gicc-proxy_${proxyVersion}_windows_${arch}.zip"
@@ -563,6 +564,7 @@ if ($packageManagedInstall) {
 Ensure-PrivateDirectory $configDir
 Ensure-PrivateDirectory $managedBinDir
 Ensure-PrivateDirectory $authDir
+Ensure-PrivateDirectory $contextDir
 # The launcher writes transient bearer headers below run\health-* and the usage
 # helper writes them below usage-cache. Protect their inherited ACLs before any
 # process can create the short-lived credential-bearing files.
@@ -691,6 +693,8 @@ $jsonToken = $proxyToken | ConvertTo-Json -Compress
 $runtimeAuthDir = if ($env:GICC_CODEX_AUTH_DIR) { $env:GICC_CODEX_AUTH_DIR } elseif ($existingVariables['GICC_CODEX_AUTH_DIR']) { $existingVariables['GICC_CODEX_AUTH_DIR'] } else { $authDir }
 Ensure-PrivateDirectory $runtimeAuthDir
 $authPath = $runtimeAuthDir.Replace('\', '/')
+$contextPath = $contextDir.Replace('\', '/')
+$modelCatalogPath = (Join-Path $env:USERPROFILE '.codex\models_cache.json').Replace('\', '/')
 $proxyConfig = @"
 host: "127.0.0.1"
 port: $proxyPort
@@ -708,6 +712,20 @@ transient-error-cooldown-seconds: 1
 streaming:
   keepalive-seconds: 15
   bootstrap-retries: 2
+codex:
+  claude-code-context:
+    enabled: true
+    state-dir: "$contextPath"
+    model-catalog-path: "$modelCatalogPath"
+    context-window: 0
+    effective-context-window-percent: 0
+    auto-compact-percent: 0
+    post-compact-percent: 60
+    local-summary-max-chars: 48000
+    archive-raw-input: false
+    archive-max-files: 8
+    archive-max-bytes: 268435456
+    archive-max-age-days: 14
 "@
 Write-TextAtomic $proxyConfigTarget $proxyConfig
 $managedProxyForEnv = if (Test-Path -LiteralPath $managedProxy -PathType Leaf) { $managedProxy } else { $proxyBinary }

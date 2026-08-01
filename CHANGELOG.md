@@ -4,6 +4,35 @@ All notable changes to this independent distribution are documented here.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-01
+
+### Fixed
+
+- Claude Code sessions now keep Claude's raw transcript as the source of truth
+  while the Codex bridge persists and reapplies a model visible checkpoint per
+  session, agent, and model.
+- New reasoning replay and tool output can trigger another proactive compaction
+  after a prior checkpoint; an emergency local fallback remains one time for an
+  irreducible request.
+- Reasoning only incomplete Responses continue without treating the Claude
+  `max_tokens` value as a cumulative hidden reasoning ceiling.
+- Remote compaction responses are bounded when read, and deterministic summary
+  truncation preserves valid UTF-8 for CJK and other multibyte text.
+
+### Changed
+
+- The v7.2.91 bridge is rebuilt as `7.2.91-gicc.2` from the public upstream
+  archive plus both public GICC patches, with six platform assets and pinned
+  SHA-256 digests.
+- Context defaults follow the GPT-5.6 Sol catalog: a 272000-token model window
+  and automatic compaction near 244800 model visible tokens.
+
+### Security
+
+- Public tree scanning recognizes both slash styles in Windows paths, and the
+  published bridge examples use portable home directory placeholders rather
+  than a developer machine path.
+
 ## [0.1.1] - 2026-07-30
 
 ### Fixed
@@ -47,6 +76,7 @@ All notable changes to this independent distribution are documented here.
 - Installers verify release and bridge assets before extraction or execution.
 - Normal `claude` and `codex` profiles are not modified.
 
-[Unreleased]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DrPei12/gpt-in-claude-code/releases/tag/v0.1.0

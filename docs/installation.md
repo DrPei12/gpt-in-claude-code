@@ -107,7 +107,7 @@ The installer:
    platform package manager is unavailable, unprivileged, or unsuccessful;
 2. installs Codex CLI from OpenAI's official npm package and Claude Code from Anthropic's installer when missing;
 3. updates Claude Code on a best effort basis;
-4. downloads the patched GICC reasoning bridge and verifies its SHA-256 digest;
+4. downloads the patched GICC reasoning/context bridge and verifies its SHA-256 digest;
 5. generates a random localhost only proxy key;
 6. creates private state in `~/.config/gpt-in-claude-code`;
 7. installs `gicc` into `~/.local/bin`;

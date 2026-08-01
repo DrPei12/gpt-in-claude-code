@@ -1,0 +1,3478 @@
+From 69572780ccc16d03654b50e40a3b0d79176d1df0 Mon Sep 17 00:00:00 2001
+From: DrPei12 <DrPei12@users.noreply.github.com>
+Date: Thu, 30 Jul 2026 03:50:51 -0500
+Subject: [PATCH 2/2] fix: manage Claude context with Codex compaction
+
+---
+ config.example.yaml                           |   19 +
+ internal/config/claude_code_context_test.go   |   35 +
+ internal/config/config.go                     |   22 +-
+ .../runtime/executor/codex_claude_context.go  |  365 +++++
+ .../executor/codex_claude_context_test.go     |  552 ++++++++
+ internal/runtime/executor/codex_executor.go   |  470 +++++--
+ ...ex_executor_reasoning_continuation_test.go |    2 +-
+ .../executor/helps/claude_code_context.go     | 1236 +++++++++++++++++
+ .../helps/claude_code_context_test.go         |  336 +++++
+ sdk/api/handlers/claude/code_handlers.go      |   34 +-
+ .../claude/code_handlers_error_test.go        |   27 +-
+ 11 files changed, 3003 insertions(+), 95 deletions(-)
+ create mode 100644 internal/config/claude_code_context_test.go
+ create mode 100644 internal/runtime/executor/codex_claude_context.go
+ create mode 100644 internal/runtime/executor/codex_claude_context_test.go
+ create mode 100644 internal/runtime/executor/helps/claude_code_context.go
+ create mode 100644 internal/runtime/executor/helps/claude_code_context_test.go
+
+diff --git a/config.example.yaml b/config.example.yaml
+index ed9ad6e..9750efe 100644
+--- a/config.example.yaml
++++ b/config.example.yaml
+@@ -185,6 +185,25 @@ codex:
+   # as evidence for TOS enforcement bans; this option only satisfies those odd concerns.
+   identity-confuse: false
+ 
++  # Optional stateful context bridge for running Claude Code against Codex
++  # Responses models. Claude Code remains the transcript owner; this bridge
++  # persists only a model-visible checkpoint per session/agent/model.
++  # claude-code-context:
++  #   enabled: false
++  #   state-dir: "~/.config/gpt-in-claude-code/context"
++  #   model-catalog-path: "~/.codex/models_cache.json"
++  #   # Zero follows the current model catalog and safe runtime defaults.
++  #   context-window: 0
++  #   effective-context-window-percent: 0
++  #   auto-compact-percent: 0
++  #   post-compact-percent: 60
++  #   local-summary-max-chars: 48000
++  #   # Raw transcript duplication is opt-in and bounded.
++  #   archive-raw-input: false
++  #   archive-max-files: 8
++  #   archive-max-bytes: 268435456
++  #   archive-max-age-days: 14
++
+ # When true, enable authentication for the WebSocket API (/v1/ws).
+ ws-auth: true
+ 
+diff --git a/internal/config/claude_code_context_test.go b/internal/config/claude_code_context_test.go
+new file mode 100644
+index 0000000..f38e02f
+--- /dev/null
++++ b/internal/config/claude_code_context_test.go
+@@ -0,0 +1,35 @@
++package config
++
++import "testing"
++
++func TestParseConfigBytesClaudeCodeContext(t *testing.T) {
++	cfg, err := ParseConfigBytes([]byte(`
++codex:
++  claude-code-context:
++    enabled: true
++    state-dir: ~/.config/gpt-in-claude-code/context
++    model-catalog-path: ~/.codex/models_cache.json
++    context-window: 272000
++    effective-context-window-percent: 95
++    auto-compact-percent: 90
++    post-compact-percent: 60
++    local-summary-max-chars: 48000
++    archive-raw-input: true
++    archive-max-files: 7
++    archive-max-bytes: 123456
++    archive-max-age-days: 11
++`))
++	if err != nil {
++		t.Fatalf("ParseConfigBytes() error = %v", err)
++	}
++	got := cfg.Codex.ClaudeCodeContext
++	if !got.Enabled || got.StateDir != "~/.config/gpt-in-claude-code/context" || got.ContextWindow != 272_000 {
++		t.Fatalf("core context config = %+v", got)
++	}
++	if got.EffectiveContextWindowPercent != 95 || got.AutoCompactPercent != 90 || got.PostCompactPercent != 60 || got.LocalSummaryMaxChars != 48_000 {
++		t.Fatalf("budget context config = %+v", got)
++	}
++	if !got.ArchiveRawInput || got.ArchiveMaxFiles != 7 || got.ArchiveMaxBytes != 123_456 || got.ArchiveMaxAgeDays != 11 {
++		t.Fatalf("archive context config = %+v", got)
++	}
++}
+diff --git a/internal/config/config.go b/internal/config/config.go
+index 3ef53ee..958f9fd 100644
+--- a/internal/config/config.go
++++ b/internal/config/config.go
+@@ -284,7 +284,27 @@ type CodexHeaderDefaults struct {
+ 
+ // CodexConfig configures provider-wide Codex request behavior.
+ type CodexConfig struct {
+-	IdentityConfuse bool `yaml:"identity-confuse" json:"identity-confuse"`
++	IdentityConfuse   bool                    `yaml:"identity-confuse" json:"identity-confuse"`
++	ClaudeCodeContext ClaudeCodeContextConfig `yaml:"claude-code-context" json:"claude-code-context"`
++}
++
++// ClaudeCodeContextConfig controls the stateful context bridge used when a
++// Claude Code transcript is executed by a Codex model. The client keeps the
++// authoritative raw transcript; this bridge persists only the model-visible
++// compacted checkpoint and can therefore be disabled without losing history.
++type ClaudeCodeContextConfig struct {
++	Enabled                       bool   `yaml:"enabled" json:"enabled"`
++	StateDir                      string `yaml:"state-dir" json:"state-dir"`
++	ModelCatalogPath              string `yaml:"model-catalog-path" json:"model-catalog-path"`
++	ContextWindow                 int64  `yaml:"context-window" json:"context-window"`
++	EffectiveContextWindowPercent int    `yaml:"effective-context-window-percent" json:"effective-context-window-percent"`
++	AutoCompactPercent            int    `yaml:"auto-compact-percent" json:"auto-compact-percent"`
++	PostCompactPercent            int    `yaml:"post-compact-percent" json:"post-compact-percent"`
++	LocalSummaryMaxChars          int    `yaml:"local-summary-max-chars" json:"local-summary-max-chars"`
++	ArchiveRawInput               bool   `yaml:"archive-raw-input" json:"archive-raw-input"`
++	ArchiveMaxFiles               int    `yaml:"archive-max-files" json:"archive-max-files"`
++	ArchiveMaxBytes               int64  `yaml:"archive-max-bytes" json:"archive-max-bytes"`
++	ArchiveMaxAgeDays             int    `yaml:"archive-max-age-days" json:"archive-max-age-days"`
+ }
+ 
+ // TLSConfig holds HTTPS server settings.
+diff --git a/internal/runtime/executor/codex_claude_context.go b/internal/runtime/executor/codex_claude_context.go
+new file mode 100644
+index 0000000..26f050a
+--- /dev/null
++++ b/internal/runtime/executor/codex_claude_context.go
+@@ -0,0 +1,365 @@
++package executor
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"strings"
++
++	internalcache "github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
++	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
++	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
++	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
++	log "github.com/sirupsen/logrus"
++	"github.com/tidwall/gjson"
++)
++
++// prepareCodexClaudeContext reconciles Claude Code's full transcript with the
++// persisted model-visible checkpoint. Compaction runs after reasoning replay is
++// inserted so the budget reflects the exact upstream request.
++func (e *CodexExecutor) prepareCodexClaudeContext(
++	ctx context.Context,
++	req cliproxyexecutor.Request,
++	opts cliproxyexecutor.Options,
++	baseModel string,
++	body []byte,
++) ([]byte, *helps.ClaudeCodeContextPreparation, error) {
++	if !sourceFormatEqual(opts.SourceFormat, sdktranslator.FormatClaude) {
++		return body, nil, nil
++	}
++	preparation, err := helps.PrepareClaudeCodeContext(ctx, e.cfg, baseModel, req.Payload, opts.Headers, body)
++	if err != nil || preparation == nil {
++		return body, preparation, err
++	}
++	return preparation.Body, preparation, nil
++}
++
++func (e *CodexExecutor) compactCodexClaudeContextIfNeeded(
++	ctx context.Context,
++	auth *cliproxyauth.Auth,
++	req cliproxyexecutor.Request,
++	opts cliproxyexecutor.Options,
++	from sdktranslator.Format,
++	baseModel string,
++	baseURL string,
++	apiKey string,
++	originalPayloadSource []byte,
++	preparation *helps.ClaudeCodeContextPreparation,
++) ([]byte, bool, error) {
++	if preparation == nil || !preparation.Enabled {
++		if preparation == nil {
++			return nil, false, nil
++		}
++		return preparation.Body, false, nil
++	}
++	unlock := preparation.LockCompaction()
++	defer unlock()
++	if err := preparation.RefreshCheckpoint(); err != nil {
++		return nil, false, fmt.Errorf("codex executor: refresh Claude Code context checkpoint: %w", err)
++	}
++	if err := measureCodexClaudeContext(preparation, baseModel); err != nil {
++		return nil, false, err
++	}
++	if !preparation.NeedsCompaction || preparation.CompactionAttempted {
++		return preparation.Body, false, nil
++	}
++	beforeTokens := preparation.InputTokens
++	var body []byte
++	var err error
++
++	method := "remote"
++	var compactErr error
++	semanticOrRemoteInstalled := false
++	if preparation.InputTokens < preparation.Profile.EffectiveWindow {
++		var compactResponse []byte
++		compactResponse, compactErr = e.requestCodexClaudeCompaction(
++			ctx,
++			auth,
++			req,
++			opts,
++			from,
++			baseModel,
++			baseURL,
++			apiKey,
++			originalPayloadSource,
++			preparation,
++		)
++		if compactErr == nil {
++			body, compactErr = preparation.InstallRemoteCompaction(compactResponse)
++			semanticOrRemoteInstalled = compactErr == nil
++		}
++	} else {
++		compactErr = fmt.Errorf("active context estimate %d already exceeds effective window %d", preparation.InputTokens, preparation.Profile.EffectiveWindow)
++	}
++	if compactErr != nil {
++		remoteErr := compactErr
++		method = "semantic"
++		var summary string
++		summary, compactErr = e.requestCodexClaudeSemanticCompaction(
++			ctx,
++			auth,
++			req,
++			opts,
++			from,
++			baseModel,
++			baseURL,
++			apiKey,
++			originalPayloadSource,
++			preparation,
++		)
++		if compactErr == nil {
++			body, compactErr = preparation.InstallSemanticCompaction(summary)
++			semanticOrRemoteInstalled = compactErr == nil
++		}
++		if compactErr != nil {
++			method = "local emergency"
++			log.WithError(remoteErr).WithField("semantic_error", compactErr.Error()).Warn("codex executor: model compaction unavailable; installing deterministic checkpoint")
++			body, err = preparation.InstallLocalCompaction(remoteErr.Error())
++			if err != nil {
++				return nil, false, fmt.Errorf("codex executor: local context compaction failed: %w", err)
++			}
++		}
++	}
++	if err = measureCodexClaudeContext(preparation, baseModel); err != nil {
++		return nil, false, err
++	}
++	body = preparation.Body
++	if semanticOrRemoteInstalled && preparation.NeedsCompaction {
++		// A malformed or unexpectedly large compact response must not be allowed
++		// to enter a permanent 400 loop.
++		method = "local post-compact"
++		body, err = preparation.InstallLocalCompaction("remote checkpoint remained above the proactive threshold")
++		if err != nil {
++			return nil, false, fmt.Errorf("codex executor: post-compact reduction failed: %w", err)
++		}
++		if err = measureCodexClaudeContext(preparation, baseModel); err != nil {
++			return nil, false, err
++		}
++		body = preparation.Body
++	}
++	if err = preparation.PersistMeasuredTokensAfter(); err != nil {
++		return nil, false, fmt.Errorf("codex executor: persist measured checkpoint metadata: %w", err)
++	}
++	if err = internalcache.DeleteCodexReasoningReplayItemRequired(ctx, baseModel, preparation.Scope); err != nil {
++		return nil, false, fmt.Errorf("codex executor: retire pre-checkpoint reasoning: %w", err)
++	}
++	log.Infof(
++		"codex executor: Claude Code context checkpoint installed method=%s scope=%s before=%d after=%d threshold=%d",
++		method,
++		preparation.Scope,
++		beforeTokens,
++		preparation.InputTokens,
++		preparation.Profile.AutoCompactTokens,
++	)
++	return body, true, nil
++}
++
++func measureCodexClaudeContext(preparation *helps.ClaudeCodeContextPreparation, model string) error {
++	if preparation == nil || !preparation.Enabled {
++		return nil
++	}
++	total, fixed, err := countCodexContextTokens(model, preparation.Body)
++	if err != nil {
++		return fmt.Errorf("codex executor: measure Claude Code context: %w", err)
++	}
++	return preparation.SetMeasuredTokenCounts(total, fixed)
++}
++
++func (e *CodexExecutor) requestCodexClaudeCompaction(
++	ctx context.Context,
++	auth *cliproxyauth.Auth,
++	req cliproxyexecutor.Request,
++	opts cliproxyexecutor.Options,
++	from sdktranslator.Format,
++	baseModel string,
++	baseURL string,
++	apiKey string,
++	originalPayloadSource []byte,
++	preparation *helps.ClaudeCodeContextPreparation,
++) ([]byte, error) {
++	compactBody, err := preparation.CompactPayload()
++	if err != nil {
++		return nil, err
++	}
++	url := strings.TrimSuffix(baseURL, "/") + "/responses/compact"
++	httpReq, upstreamBody, identityState, err := e.cacheHelper(ctx, from, url, auth, req, originalPayloadSource, compactBody, opts.Headers)
++	if err != nil {
++		return nil, err
++	}
++	applyCodexHeaders(httpReq, auth, apiKey, true, e.cfg)
++	applyModelHeaderOverrides(httpReq.Header, baseModel)
++	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
++	helpRequest := helps.UpstreamRequestLog{URL: url, Method: http.MethodPost, Headers: httpReq.Header.Clone(), Body: upstreamBody, Provider: e.Identifier()}
++	if auth != nil {
++		helpRequest.AuthID = auth.ID
++		helpRequest.AuthLabel = auth.Label
++		helpRequest.AuthType, helpRequest.AuthValue = auth.AccountInfo()
++	}
++	helps.RecordAPIRequest(ctx, e.cfg, helpRequest)
++
++	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
++	httpResp, err := doCodexRequestWithTransportRetry(ctx, e.cfg, httpClient, httpReq)
++	if err != nil {
++		helps.RecordAPIResponseError(ctx, e.cfg, err)
++		return nil, err
++	}
++	defer func() {
++		if closeErr := httpResp.Body.Close(); closeErr != nil {
++			log.Errorf("codex executor: close compact response body error: %v", closeErr)
++		}
++	}()
++	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
++	data, err := io.ReadAll(io.LimitReader(httpResp.Body, 8*1024*1024))
++	if err != nil {
++		return nil, err
++	}
++	data = applyCodexIdentityConfuseResponsePayload(data, identityState)
++	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
++		return nil, newCodexStatusErr(httpResp.StatusCode, data)
++	}
++	return data, nil
++}
++
++func (e *CodexExecutor) requestCodexClaudeSemanticCompaction(
++	ctx context.Context,
++	auth *cliproxyauth.Auth,
++	req cliproxyexecutor.Request,
++	opts cliproxyexecutor.Options,
++	from sdktranslator.Format,
++	baseModel string,
++	baseURL string,
++	apiKey string,
++	originalPayloadSource []byte,
++	preparation *helps.ClaudeCodeContextPreparation,
++) (string, error) {
++	semanticBody, err := preparation.SemanticCompactPayload()
++	if err != nil {
++		return "", err
++	}
++	url := strings.TrimSuffix(baseURL, "/") + "/responses"
++	httpReq, upstreamBody, identityState, err := e.cacheHelper(ctx, from, url, auth, req, originalPayloadSource, semanticBody, opts.Headers)
++	if err != nil {
++		return "", err
++	}
++	applyCodexHeaders(httpReq, auth, apiKey, true, e.cfg)
++	applyModelHeaderOverrides(httpReq.Header, baseModel)
++	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
++	helpRequest := helps.UpstreamRequestLog{URL: url, Method: http.MethodPost, Headers: httpReq.Header.Clone(), Body: upstreamBody, Provider: e.Identifier()}
++	if auth != nil {
++		helpRequest.AuthID = auth.ID
++		helpRequest.AuthLabel = auth.Label
++		helpRequest.AuthType, helpRequest.AuthValue = auth.AccountInfo()
++	}
++	helps.RecordAPIRequest(ctx, e.cfg, helpRequest)
++	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
++	httpResp, err := doCodexRequestWithTransportRetry(ctx, e.cfg, httpClient, httpReq)
++	if err != nil {
++		helps.RecordAPIResponseError(ctx, e.cfg, err)
++		return "", err
++	}
++	defer func() {
++		if closeErr := httpResp.Body.Close(); closeErr != nil {
++			log.Errorf("codex executor: close semantic compact response body error: %v", closeErr)
++		}
++	}()
++	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
++	data, err := io.ReadAll(io.LimitReader(httpResp.Body, 8*1024*1024))
++	if err != nil {
++		return "", err
++	}
++	data = applyCodexIdentityConfuseResponsePayload(data, identityState)
++	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
++		return "", newCodexStatusErr(httpResp.StatusCode, data)
++	}
++	summary := extractCodexSemanticSummary(data)
++	if strings.TrimSpace(summary) == "" {
++		return "", errors.New("codex executor: semantic compact response contained no output text")
++	}
++	return summary, nil
++}
++
++func extractCodexSemanticSummary(data []byte) string {
++	if root := gjson.ParseBytes(data); root.IsObject() {
++		if text := codexResponseOutputText(root); text != "" {
++			return text
++		}
++	}
++	outputItemsByIndex := make(map[int64][]byte)
++	var outputItemsFallback [][]byte
++	var deltas strings.Builder
++	for _, line := range strings.Split(string(data), "\n") {
++		line = strings.TrimSpace(line)
++		if !strings.HasPrefix(line, "data:") {
++			continue
++		}
++		eventData := []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
++		eventType := gjson.GetBytes(eventData, "type").String()
++		switch eventType {
++		case "response.output_text.delta":
++			deltas.WriteString(gjson.GetBytes(eventData, "delta").String())
++		case "response.output_item.done":
++			collectCodexOutputItemDone(eventData, outputItemsByIndex, &outputItemsFallback)
++		case "response.completed":
++			patched := patchCodexCompletedOutput(eventData, outputItemsByIndex, outputItemsFallback)
++			if text := codexResponseOutputText(gjson.ParseBytes(patched)); text != "" {
++				return text
++			}
++		}
++	}
++	return deltas.String()
++}
++
++func codexResponseOutputText(root gjson.Result) string {
++	output := root.Get("output")
++	if responseOutput := root.Get("response.output"); responseOutput.IsArray() {
++		output = responseOutput
++	}
++	var texts []string
++	for _, item := range output.Array() {
++		if item.Get("type").String() != "message" {
++			continue
++		}
++		for _, part := range item.Get("content").Array() {
++			if part.Get("type").String() == "output_text" {
++				if text := strings.TrimSpace(part.Get("text").String()); text != "" {
++					texts = append(texts, text)
++				}
++			}
++		}
++	}
++	return strings.Join(texts, "\n")
++}
++
++// recoverCodexClaudeContext installs an emergency local checkpoint after an
++// unpredicted upstream context rejection. It is intentionally bounded to one
++// retry by each caller.
++func recoverCodexClaudeContext(ctx context.Context, preparation *helps.ClaudeCodeContextPreparation, model string, reason error) ([]byte, error) {
++	if preparation == nil || !preparation.Enabled {
++		return nil, reason
++	}
++	if preparation.NoFurtherReduction {
++		return nil, fmt.Errorf("claudex context: an emergency checkpoint already reduced this exact raw request as far as possible; the live turn or fixed prompt still exceeds the upstream limit: %w", reason)
++	}
++	body, err := preparation.InstallLocalCompaction("upstream context rejection: " + reason.Error())
++	if err != nil {
++		return nil, err
++	}
++	if err = internalcache.DeleteCodexReasoningReplayItemRequired(ctx, model, preparation.Scope); err != nil {
++		return nil, err
++	}
++	return body, nil
++}
++
++func codexErrorIsContextLength(err error) bool {
++	if err == nil {
++		return false
++	}
++	var upstream statusErr
++	if errors.As(err, &upstream) {
++		return codexTerminalErrorIsContextLength([]byte(upstream.msg))
++	}
++	return codexTerminalErrorIsContextLength([]byte(err.Error()))
++}
+diff --git a/internal/runtime/executor/codex_claude_context_test.go b/internal/runtime/executor/codex_claude_context_test.go
+new file mode 100644
+index 0000000..c8217c5
+--- /dev/null
++++ b/internal/runtime/executor/codex_claude_context_test.go
+@@ -0,0 +1,552 @@
++package executor
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	internalcache "github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
++	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
++	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
++	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
++	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
++	"github.com/tidwall/gjson"
++)
++
++func TestCountCodexContextTokensDoesNotUndercountLargeCJK(t *testing.T) {
++	for _, content := range []any{
++		strings.Repeat("你", 100_000),
++		[]any{map[string]any{"type": "input_text", "text": strings.Repeat("你", 100_000)}},
++	} {
++		body, err := json.Marshal(map[string]any{
++			"model": "gpt-5.6-sol",
++			"input": []any{map[string]any{"type": "message", "role": "user", "content": content}},
++		})
++		if err != nil {
++			t.Fatal(err)
++		}
++		total, _, err := countCodexContextTokens("gpt-5.6-sol", body)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if total < 90_000 {
++			t.Fatalf("100k CJK characters counted as %d tokens; byte/4 undercount has returned", total)
++		}
++	}
++}
++
++func TestCountCodexContextTokensDoesNotUseSerializedByteEstimateAsTruth(t *testing.T) {
++	body, err := json.Marshal(map[string]any{
++		"model": "gpt-5.6-sol",
++		"input": []any{map[string]any{
++			"type": "message", "role": "user", "content": strings.Repeat("x", 200_000),
++		}},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	total, _, err := countCodexContextTokens("gpt-5.6-sol", body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if total >= 40_000 {
++		t.Fatalf("highly compressible ASCII counted as %d tokens; serialized byte/4 estimate is still overriding the tokenizer", total)
++	}
++}
++
++func TestCountCodexContextTokensCountsReasoningCiphertextButNormalizesImages(t *testing.T) {
++	ciphertext := strings.Repeat("Ab9/", 20_000)
++	body, err := json.Marshal(map[string]any{
++		"model": "gpt-5.6-sol",
++		"input": []any{
++			map[string]any{"type": "reasoning", "summary": []any{}, "encrypted_content": ciphertext},
++			map[string]any{"type": "message", "role": "user", "content": []any{
++				map[string]any{"type": "input_image", "image_url": "data:image/png;base64," + strings.Repeat("A", 1_000_000)},
++			}},
++		},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	total, _, err := countCodexContextTokens("gpt-5.6-sol", body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if total < 25_000 {
++		t.Fatalf("reasoning ciphertext was undercounted: %d", total)
++	}
++	if total > 100_000 {
++		t.Fatalf("inline image base64 was counted as text instead of a normalized image: %d", total)
++	}
++}
++
++func TestCodexClaudeContextProactivelyUsesRemoteCompaction(t *testing.T) {
++	internalcache.ClearCodexReasoningReplayCache()
++	t.Cleanup(internalcache.ClearCodexReasoningReplayCache)
++	replayScope := "claude:session-proactive:agent:main"
++	reasoning := []byte(`{"type":"reasoning","summary":[],"content":null,"encrypted_content":"` + validCodexReasoningEncryptedContentForTestSeed(88) + `"}`)
++	if !internalcache.CacheCodexReasoningReplayItem("gpt-5.6-sol", replayScope, reasoning) {
++		t.Fatal("failed to seed reasoning replay cache")
++	}
++	var mu sync.Mutex
++	compactCalls := 0
++	responseCalls := 0
++	var compactBody []byte
++	var responseBody []byte
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body, _ := io.ReadAll(r.Body)
++		mu.Lock()
++		defer mu.Unlock()
++		switch r.URL.Path {
++		case "/responses/compact":
++			compactCalls++
++			compactBody = body
++			w.Header().Set("Content-Type", "application/json")
++			_, _ = w.Write([]byte(`{"id":"cmp_1","object":"response.compaction","output":[{"type":"compaction","encrypted_content":"opaque-summary"}],"usage":{"input_tokens":700,"output_tokens":20,"total_tokens":720}}`))
++		case "/responses":
++			responseCalls++
++			responseBody = body
++			w.Header().Set("Content-Type", "text/event-stream")
++			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":20,\"output_tokens\":1,\"total_tokens\":21}}}\n\n"))
++		default:
++			http.NotFound(w, r)
++		}
++	}))
++	defer server.Close()
++
++	stateDir := t.TempDir()
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(stateDir, 2_000, 50))
++	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
++	payload := `{"model":"gpt-5.6-sol","max_tokens":1024,"metadata":{"user_id":"account_session_session-proactive"},"messages":[{"role":"user","content":"` + strings.Repeat("x ", 1_400) + `"}]}`
++	headers := http.Header{"X-Claude-Code-Session-Id": []string{"session-proactive"}}
++
++	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{Model: "gpt-5.6-sol", Payload: []byte(payload)}, cliproxyexecutor.Options{
++		SourceFormat: sdktranslator.FormatClaude,
++		Headers:      headers,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	mu.Lock()
++	defer mu.Unlock()
++	if compactCalls != 1 || responseCalls != 1 {
++		t.Fatalf("compact/response calls = %d/%d, want 1/1", compactCalls, responseCalls)
++	}
++	if gjson.GetBytes(compactBody, "stream").Exists() || gjson.GetBytes(compactBody, "previous_response_id").Exists() {
++		t.Fatalf("non-canonical compact payload: %s", compactBody)
++	}
++	foundReasoning := false
++	for _, item := range gjson.GetBytes(compactBody, "input").Array() {
++		foundReasoning = foundReasoning || item.Get("type").String() == "reasoning"
++	}
++	if !foundReasoning {
++		t.Fatalf("reasoning replay was not budgeted into compact input: %s", compactBody)
++	}
++	input := gjson.GetBytes(responseBody, "input").Array()
++	if len(input) != 1 || input[0].Get("type").String() != "compaction" {
++		t.Fatalf("normal request did not use compact replacement: %s", responseBody)
++	}
++	checkpoints, _ := filepath.Glob(filepath.Join(stateDir, "*.checkpoint.json"))
++	if len(checkpoints) != 1 {
++		t.Fatalf("checkpoint files = %v, want one", checkpoints)
++	}
++	if _, ok := internalcache.GetCodexReasoningReplayItem("gpt-5.6-sol", replayScope); ok {
++		t.Fatal("pre-checkpoint reasoning replay survived successful compaction")
++	}
++}
++
++func TestCodexClaudeContextRecoversOnceFromUnexpectedContext400(t *testing.T) {
++	var mu sync.Mutex
++	responseCalls := 0
++	var retryBody []byte
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body, _ := io.ReadAll(r.Body)
++		mu.Lock()
++		defer mu.Unlock()
++		if r.URL.Path != "/responses" {
++			http.NotFound(w, r)
++			return
++		}
++		responseCalls++
++		if responseCalls == 1 {
++			w.Header().Set("Content-Type", "application/json")
++			w.WriteHeader(http.StatusBadRequest)
++			_, _ = w.Write([]byte(`{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"invalid_request_error","code":"context_too_large"}}`))
++			return
++		}
++		retryBody = body
++		w.Header().Set("Content-Type", "text/event-stream")
++		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_2\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":20,\"output_tokens\":1,\"total_tokens\":21}}}\n\n"))
++	}))
++	defer server.Close()
++
++	stateDir := t.TempDir()
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(stateDir, 272_000, 90))
++	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
++	payload := []byte(`{"model":"gpt-5.6-sol","max_tokens":1024,"metadata":{"user_id":"account_session_session-recover"},"messages":[{"role":"user","content":"continue the task"}]}`)
++	headers := http.Header{"X-Claude-Code-Session-Id": []string{"session-recover"}}
++
++	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{Model: "gpt-5.6-sol", Payload: payload}, cliproxyexecutor.Options{
++		SourceFormat: sdktranslator.FormatClaude,
++		Headers:      headers,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++
++	mu.Lock()
++	defer mu.Unlock()
++	if responseCalls != 2 {
++		t.Fatalf("response calls = %d, want one automatic retry", responseCalls)
++	}
++	if !strings.Contains(string(retryBody), "Claudex context checkpoint") || !strings.Contains(string(retryBody), "continue the task") {
++		t.Fatalf("retry body lacks recovered checkpoint and live request: %s", retryBody)
++	}
++}
++
++func TestCodexClaudeContextStreamRetriesBeforeOutputWithoutDuplicateClaudeMessage(t *testing.T) {
++	var mu sync.Mutex
++	responseCalls := 0
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		responseCalls++
++		call := responseCalls
++		mu.Unlock()
++		w.Header().Set("Content-Type", "text/event-stream")
++		if call == 1 {
++			_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_rejected\",\"model\":\"gpt-5.6-sol\"}}\n"))
++			_, _ = w.Write([]byte("data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"Your input exceeds the context window of this model.\"}}\n\n"))
++			return
++		}
++		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_recovered\",\"model\":\"gpt-5.6-sol\"}}\n"))
++		_, _ = w.Write([]byte("data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_done\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"recovered\",\"annotations\":[]}]}}\n"))
++		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_recovered\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":20,\"output_tokens\":2,\"total_tokens\":22}}}\n\n"))
++	}))
++	defer server.Close()
++
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(t.TempDir(), 272_000, 90))
++	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
++	payload := []byte(`{"model":"gpt-5.6-sol","max_tokens":1024,"messages":[{"role":"user","content":"continue safely"}],"stream":true}`)
++	result, err := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{Model: "gpt-5.6-sol", Payload: payload}, cliproxyexecutor.Options{
++		SourceFormat: sdktranslator.FormatClaude,
++		Stream:       true,
++		Headers:      http.Header{"X-Claude-Code-Session-Id": []string{"session-stream-recover"}},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	var output strings.Builder
++	for chunk := range result.Chunks {
++		if chunk.Err != nil {
++			t.Fatalf("stream error: %v", chunk.Err)
++		}
++		output.Write(chunk.Payload)
++	}
++	mu.Lock()
++	calls := responseCalls
++	mu.Unlock()
++	if calls != 2 {
++		t.Fatalf("response calls = %d, want one safe retry", calls)
++	}
++	if got := strings.Count(output.String(), `"type":"message_start"`); got != 1 {
++		t.Fatalf("message_start count = %d, want 1; stream=%s", got, output.String())
++	}
++	if !strings.Contains(output.String(), `"text":"recovered"`) {
++		t.Fatalf("recovered output missing: %s", output.String())
++	}
++}
++
++func TestCodexClaudeContextStreamDoesNotReplayAfterClientOutput(t *testing.T) {
++	var mu sync.Mutex
++	responseCalls := 0
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		responseCalls++
++		mu.Unlock()
++		w.Header().Set("Content-Type", "text/event-stream")
++		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_partial\",\"model\":\"gpt-5.6-sol\"}}\n"))
++		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_partial\",\"output_index\":0,\"content_index\":0,\"delta\":\"partial\"}\n"))
++		_, _ = w.Write([]byte("data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"code\":\"context_length_exceeded\",\"message\":\"Your input exceeds the context window of this model.\"}}\n\n"))
++	}))
++	defer server.Close()
++
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(t.TempDir(), 272_000, 90))
++	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
++	payload := []byte(`{"model":"gpt-5.6-sol","max_tokens":1024,"messages":[{"role":"user","content":"do not duplicate"}],"stream":true}`)
++	result, err := executor.ExecuteStream(context.Background(), auth, cliproxyexecutor.Request{Model: "gpt-5.6-sol", Payload: payload}, cliproxyexecutor.Options{
++		SourceFormat: sdktranslator.FormatClaude,
++		Stream:       true,
++		Headers:      http.Header{"X-Claude-Code-Session-Id": []string{"session-stream-no-replay"}},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	var streamErr error
++	var output strings.Builder
++	for chunk := range result.Chunks {
++		if chunk.Err != nil {
++			streamErr = chunk.Err
++			continue
++		}
++		output.Write(chunk.Payload)
++	}
++	if streamErr == nil || !codexErrorIsContextLength(streamErr) {
++		t.Fatalf("stream error = %v, want original context failure", streamErr)
++	}
++	mu.Lock()
++	calls := responseCalls
++	mu.Unlock()
++	if calls != 1 {
++		t.Fatalf("response calls = %d, want no replay after client output", calls)
++	}
++	if !strings.Contains(output.String(), "partial") {
++		t.Fatalf("partial client output missing: %s", output.String())
++	}
++}
++
++func TestCodexClaudeContextDoesNotLoopWhenLiveTurnCannotReachAutoThreshold(t *testing.T) {
++	compactCalls := 0
++	responseCalls := 0
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/responses/compact":
++			compactCalls++
++			w.WriteHeader(http.StatusBadGateway)
++			_, _ = w.Write([]byte(`{"error":{"message":"compact temporarily unavailable"}}`))
++		case "/responses":
++			responseCalls++
++			w.Header().Set("Content-Type", "text/event-stream")
++			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_live\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":1200,\"output_tokens\":1,\"total_tokens\":1201}}}\n\n"))
++		default:
++			http.NotFound(w, r)
++		}
++	}))
++	defer server.Close()
++
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(t.TempDir(), 2_000, 50))
++	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
++	payload := `{"model":"gpt-5.6-sol","max_tokens":1024,"messages":[{"role":"user","content":"` + strings.Repeat("x ", 1_400) + `"}]}`
++	headers := http.Header{"X-Claude-Code-Session-Id": []string{"session-live-floor"}}
++
++	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{Model: "gpt-5.6-sol", Payload: []byte(payload)}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, Headers: headers})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if compactCalls != 1 || responseCalls != 1 {
++		t.Fatalf("compact/response calls = %d/%d, want exactly 1/1 without a compaction loop", compactCalls, responseCalls)
++	}
++}
++
++func TestCodexClaudeContextUsesSemanticFallbackWhenCompactEndpointFails(t *testing.T) {
++	var mu sync.Mutex
++	compactCalls := 0
++	semanticCalls := 0
++	normalCalls := 0
++	var normalBody []byte
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body, _ := io.ReadAll(r.Body)
++		switch r.URL.Path {
++		case "/responses/compact":
++			mu.Lock()
++			compactCalls++
++			mu.Unlock()
++			w.WriteHeader(http.StatusBadGateway)
++			_, _ = w.Write([]byte(`{"error":{"message":"compact endpoint unavailable"}}`))
++		case "/responses":
++			if strings.Contains(gjson.GetBytes(body, "instructions").String(), "compress coding-agent history") {
++				mu.Lock()
++				semanticCalls++
++				mu.Unlock()
++				w.Header().Set("Content-Type", "application/json")
++				_, _ = w.Write([]byte(`{"id":"resp_semantic","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Goal: finish the repository verification.\nCompleted: implementation and five tests.\nRemaining: verify the real demo."}]}]}`))
++				return
++			}
++			mu.Lock()
++			normalCalls++
++			normalBody = append([]byte(nil), body...)
++			mu.Unlock()
++			w.Header().Set("Content-Type", "text/event-stream")
++			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_normal\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":100,\"output_tokens\":1,\"total_tokens\":101}}}\n\n"))
++		default:
++			http.NotFound(w, r)
++		}
++	}))
++	defer server.Close()
++
++	stateDir := t.TempDir()
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(stateDir, 4_000, 25))
++	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
++	payload := `{"model":"gpt-5.6-sol","max_tokens":1024,"messages":[{"role":"user","content":"original goal"},{"role":"assistant","content":"` + strings.Repeat("x ", 2_500) + `"},{"role":"user","content":"verify the real demo now"}]}`
++	headers := http.Header{"X-Claude-Code-Session-Id": []string{"session-semantic"}}
++
++	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{Model: "gpt-5.6-sol", Payload: []byte(payload)}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, Headers: headers})
++	if err != nil {
++		t.Fatal(err)
++	}
++	mu.Lock()
++	defer mu.Unlock()
++	if compactCalls != 1 || semanticCalls != 1 || normalCalls != 1 {
++		t.Fatalf("compact/semantic/normal calls = %d/%d/%d, want 1/1/1", compactCalls, semanticCalls, normalCalls)
++	}
++	if !strings.Contains(string(normalBody), "finish the repository verification") || !strings.Contains(string(normalBody), "verify the real demo now") {
++		t.Fatalf("semantic checkpoint or exact live turn missing from normal request: %s", normalBody)
++	}
++	checkpoints, _ := filepath.Glob(filepath.Join(stateDir, "*.checkpoint.json"))
++	if len(checkpoints) != 1 {
++		t.Fatalf("checkpoint files = %v, want one", checkpoints)
++	}
++	checkpoint, err := os.ReadFile(checkpoints[0])
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := gjson.GetBytes(checkpoint, "method").String(); got != "semantic" {
++		t.Fatalf("checkpoint method = %q, want semantic", got)
++	}
++}
++
++func TestCodexClaudeContextCompactionIsSingleflightPerSession(t *testing.T) {
++	var mu sync.Mutex
++	compactCalls := 0
++	responseCalls := 0
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/responses/compact":
++			mu.Lock()
++			compactCalls++
++			mu.Unlock()
++			time.Sleep(75 * time.Millisecond)
++			w.Header().Set("Content-Type", "application/json")
++			_, _ = w.Write([]byte(`{"output":[{"type":"compaction","encrypted_content":"one-shared-checkpoint"}]}`))
++		case "/responses":
++			mu.Lock()
++			responseCalls++
++			mu.Unlock()
++			w.Header().Set("Content-Type", "text/event-stream")
++			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_concurrent\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":20,\"output_tokens\":1,\"total_tokens\":21}}}\n\n"))
++		default:
++			http.NotFound(w, r)
++		}
++	}))
++	defer server.Close()
++
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(t.TempDir(), 2_000, 50))
++	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
++	payload := []byte(`{"model":"gpt-5.6-sol","max_tokens":1024,"messages":[{"role":"user","content":"` + strings.Repeat("x ", 1_400) + `"}]}`)
++	opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, Headers: http.Header{"X-Claude-Code-Session-Id": []string{"session-singleflight"}}}
++	start := make(chan struct{})
++	errs := make(chan error, 2)
++	for i := 0; i < 2; i++ {
++		go func() {
++			<-start
++			_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{Model: "gpt-5.6-sol", Payload: payload}, opts)
++			errs <- err
++		}()
++	}
++	close(start)
++	for i := 0; i < 2; i++ {
++		if err := <-errs; err != nil {
++			t.Fatal(err)
++		}
++	}
++	mu.Lock()
++	defer mu.Unlock()
++	if compactCalls != 1 || responseCalls != 2 {
++		t.Fatalf("compact/response calls = %d/%d, want one shared compact and two normal responses", compactCalls, responseCalls)
++	}
++}
++
++func TestCodexClaudeContextDoesNotRetryIrreducibleExactRequest(t *testing.T) {
++	var mu sync.Mutex
++	compactCalls := 0
++	responseCalls := 0
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		defer mu.Unlock()
++		switch r.URL.Path {
++		case "/responses/compact":
++			compactCalls++
++			w.WriteHeader(http.StatusBadGateway)
++			_, _ = w.Write([]byte(`{"error":{"message":"compact unavailable"}}`))
++		case "/responses":
++			responseCalls++
++			w.WriteHeader(http.StatusBadRequest)
++			_, _ = w.Write([]byte(`{"error":{"message":"Your input exceeds the context window of this model.","type":"invalid_request_error","code":"context_too_large"}}`))
++		default:
++			http.NotFound(w, r)
++		}
++	}))
++	defer server.Close()
++
++	stateDir := t.TempDir()
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(stateDir, 2_000, 50))
++	auth := &cliproxyauth.Auth{Provider: "codex", Attributes: map[string]string{"base_url": server.URL, "api_key": "test"}}
++	payload := []byte(`{"model":"gpt-5.6-sol","max_tokens":1024,"messages":[{"role":"user","content":"` + strings.Repeat("x ", 1_400) + `"}]}`)
++	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{Model: "gpt-5.6-sol", Payload: payload}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatClaude, Headers: http.Header{"X-Claude-Code-Session-Id": []string{"session-no-repeat"}}})
++	if err == nil || !strings.Contains(err.Error(), "already reduced this exact raw request") {
++		t.Fatalf("error = %v, want explicit irreducible-context failure", err)
++	}
++	mu.Lock()
++	defer mu.Unlock()
++	if compactCalls != 1 || responseCalls != 1 {
++		t.Fatalf("compact/response calls = %d/%d, want no nested checkpoint retry", compactCalls, responseCalls)
++	}
++	checkpoints, _ := filepath.Glob(filepath.Join(stateDir, "*.checkpoint.json"))
++	if len(checkpoints) != 1 {
++		t.Fatalf("checkpoints = %v, want one", checkpoints)
++	}
++	checkpoint, readErr := os.ReadFile(checkpoints[0])
++	if readErr != nil {
++		t.Fatal(readErr)
++	}
++	if got := gjson.GetBytes(checkpoint, "generation").Int(); got != 1 {
++		t.Fatalf("checkpoint generation = %d, want 1", got)
++	}
++}
++
++func TestCodexErrorClassifiesContextWindowWording(t *testing.T) {
++	err := newCodexStatusErr(http.StatusBadRequest, []byte(`{"error":{"message":"Your input exceeds the context window of this model.","type":"invalid_request_error"}}`))
++	if !codexErrorIsContextLength(err) {
++		t.Fatalf("context-window error was not classified: %s", err.Error())
++	}
++	if got := gjson.Get(err.Error(), "error.code").String(); got != "context_too_large" {
++		t.Fatalf("error.code = %q, want context_too_large", got)
++	}
++}
++
++func TestCodexClaudeContextIgnoresNonClaudeSources(t *testing.T) {
++	executor := NewCodexExecutor(testCodexClaudeContextConfig(t.TempDir(), 2_000, 50))
++	body := []byte(`{"input":[{"type":"message","role":"user","content":"hello"}]}`)
++	got, preparation, err := executor.prepareCodexClaudeContext(context.Background(), cliproxyexecutor.Request{Payload: body}, cliproxyexecutor.Options{
++		SourceFormat: sdktranslator.FormatOpenAIResponse,
++		Headers:      http.Header{"X-Claude-Code-Session-Id": []string{"not-claude"}},
++	}, "gpt-5.6-sol", body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if preparation != nil || string(got) != string(body) {
++		t.Fatalf("non-Claude request was modified: preparation=%+v body=%s", preparation, got)
++	}
++}
++
++func testCodexClaudeContextConfig(stateDir string, contextWindow int64, autoPercent int) *config.Config {
++	return &config.Config{
++		SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll},
++		Codex: config.CodexConfig{ClaudeCodeContext: config.ClaudeCodeContextConfig{
++			Enabled:                       true,
++			StateDir:                      stateDir,
++			ContextWindow:                 contextWindow,
++			EffectiveContextWindowPercent: 95,
++			AutoCompactPercent:            autoPercent,
++			PostCompactPercent:            40,
++		}},
++	}
++}
+diff --git a/internal/runtime/executor/codex_executor.go b/internal/runtime/executor/codex_executor.go
+index d6f3a62..24e1b04 100644
+--- a/internal/runtime/executor/codex_executor.go
++++ b/internal/runtime/executor/codex_executor.go
+@@ -13,7 +13,9 @@ import (
+ 	"net/http"
+ 	"sort"
+ 	"strings"
++	"sync"
+ 	"time"
++	"unicode/utf8"
+ 
+ 	codexauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
+ 	internalcache "github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
+@@ -42,11 +44,19 @@ const (
+ 	codexDefaultImageToolModel     = "gpt-image-2"
+ 	codexResponsesLiteHeader       = "X-OpenAI-Internal-Codex-Responses-Lite"
+ 	codexResponsesLiteMetadata     = "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite"
+-	codexMaxReasoningContinuations = 256
++	codexMaxReasoningContinuations = 16
+ )
+ 
+ var dataTag = []byte("data:")
+ 
++const codexTokenCountCacheMaxEntries = 8_192
++
++var codexTokenCountCache = struct {
++	sync.Mutex
++	entries map[[32]byte]int
++	order   [][32]byte
++}{entries: make(map[[32]byte]int)}
++
+ const codexIncompleteStreamMessage = "stream error: stream disconnected before completion: stream closed before response.completed"
+ 
+ type codexIncompleteStreamError struct {
+@@ -64,6 +74,18 @@ func (codexIncompleteStreamError) IsRequestScoped() bool {
+ 	return true
+ }
+ 
++func codexStreamEventCommitsResponse(eventType string, terminalSuccess bool) bool {
++	if terminalSuccess {
++		return true
++	}
++	switch eventType {
++	case "", "response.created", "response.queued", "response.in_progress":
++		return false
++	default:
++		return true
++	}
++}
++
+ // doCodexRequestWithTransportRetry retries only failures returned by
+ // http.Client.Do before an HTTP response exists. Once a response has started,
+ // the stream is never replayed here because doing so could duplicate already
+@@ -381,7 +403,16 @@ func codexTerminalTopLevelErrorBody(eventData []byte) []byte {
+ 
+ func codexTerminalErrorIsContextLength(body []byte) bool {
+ 	errorCode := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.code").String()))
++	if errorCode == "" {
++		errorCode = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "code").String()))
++	}
+ 	message := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.message").String()))
++	if message == "" {
++		message = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "message").String()))
++	}
++	if message == "" {
++		message = strings.ToLower(strings.TrimSpace(string(body)))
++	}
+ 	return errorCode == "context_length_exceeded" ||
+ 		errorCode == "context_too_large" ||
+ 		strings.Contains(message, "context window") ||
+@@ -465,27 +496,27 @@ func sourceFormatEqual(from, want sdktranslator.Format) bool {
+ }
+ 
+ type codexReasoningContinuationState struct {
+-	enabled          bool
+-	maxOutputTokens  int64
+-	usedOutputTokens int64
+-	continuations    int
++	enabled       bool
++	continuations int
+ }
+ 
+ func newCodexReasoningContinuationState(from sdktranslator.Format, originalPayload []byte) codexReasoningContinuationState {
+ 	if !sourceFormatEqual(from, sdktranslator.FormatClaude) {
+ 		return codexReasoningContinuationState{}
+ 	}
+-	maxOutputTokens := gjson.GetBytes(originalPayload, "max_tokens").Int()
+-	if maxOutputTokens <= 0 {
++	if gjson.GetBytes(originalPayload, "max_tokens").Int() <= 0 {
+ 		return codexReasoningContinuationState{}
+ 	}
+-	return codexReasoningContinuationState{enabled: true, maxOutputTokens: maxOutputTokens}
++	return codexReasoningContinuationState{enabled: true}
+ }
+ 
+ // continueReasoning replays an incomplete reasoning-only response into a new
+ // upstream request. Claude Code keeps seeing one logical response, while the
+-// Codex backend can use as many bounded reasoning segments as the caller's
+-// declared output budget permits.
++// Codex backend can use a bounded number of hidden reasoning segments. Hidden
++// Codex reasoning is not Claude-visible answer text, so Claude Code's
++// max_tokens value must not be reused as a cumulative reasoning ceiling; doing
++// so surfaced max_tokens immediately when the first hidden segment consumed
++// exactly that amount.
+ func (s *codexReasoningContinuationState) continueReasoning(body, terminalData []byte) ([]byte, bool) {
+ 	if s == nil || !s.enabled || s.continuations >= codexMaxReasoningContinuations {
+ 		return body, false
+@@ -509,12 +540,6 @@ func (s *codexReasoningContinuationState) continueReasoning(body, terminalData [
+ 		}
+ 	}
+ 
+-	segmentTokens := gjson.GetBytes(terminalData, "response.usage.output_tokens").Int()
+-	if segmentTokens > 0 && s.usedOutputTokens+segmentTokens >= s.maxOutputTokens {
+-		s.usedOutputTokens += segmentTokens
+-		return body, false
+-	}
+-
+ 	updated := body
+ 	seen := make(map[string]struct{})
+ 	for _, existing := range gjson.GetBytes(body, "input").Array() {
+@@ -534,7 +559,6 @@ func (s *codexReasoningContinuationState) continueReasoning(body, terminalData [
+ 		seen[encrypted] = struct{}{}
+ 	}
+ 
+-	s.usedOutputTokens += segmentTokens
+ 	s.continuations++
+ 	return updated, true
+ }
+@@ -1331,10 +1355,27 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
+ 	}
+ 	body = sanitizeOpenAIResponsesReasoningEncryptedContent(ctx, "codex executor", body)
+ 	body = normalizeCodexParallelToolCalls(body, opts.Headers)
++	body, contextPreparation, errContext := e.prepareCodexClaudeContext(ctx, req, opts, baseModel, body)
++	if errContext != nil {
++		return resp, errContext
++	}
+ 	body, replayScope, errReplay := applyCodexReasoningReplayCacheRequired(ctx, from, req, opts, body)
+ 	if errReplay != nil {
+ 		return resp, errReplay
+ 	}
++	if contextPreparation != nil {
++		if errObserve := contextPreparation.ObserveBody(body); errObserve != nil {
++			return resp, errObserve
++		}
++		var compacted bool
++		body, compacted, errContext = e.compactCodexClaudeContextIfNeeded(ctx, auth, req, opts, from, baseModel, baseURL, apiKey, originalPayloadSource, contextPreparation)
++		if errContext != nil {
++			return resp, errContext
++		}
++		if compacted {
++			replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++		}
++	}
+ 	reporter.SetTranslatedReasoningEffort(body, to.String())
+ 
+ 	url := strings.TrimSuffix(baseURL, "/") + "/responses"
+@@ -1386,10 +1427,33 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
+ 	}
+ 
+ 	continuation := newCodexReasoningContinuationState(from, originalPayload)
++	contextRecoveryAttempted := false
+ requestLoop:
+ 	for {
++		if contextPreparation != nil {
++			if errObserve := contextPreparation.ObserveBody(body); errObserve != nil {
++				return resp, errObserve
++			}
++			var compacted bool
++			body, compacted, errContext = e.compactCodexClaudeContextIfNeeded(ctx, auth, req, opts, from, baseModel, baseURL, apiKey, originalPayloadSource, contextPreparation)
++			if errContext != nil {
++				return resp, errContext
++			}
++			if compacted {
++				replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++			}
++		}
+ 		httpResp, identityState, requestErr := requestResponse(body)
+ 		if requestErr != nil {
++			if !contextRecoveryAttempted && contextPreparation != nil && codexErrorIsContextLength(requestErr) {
++				body, errContext = recoverCodexClaudeContext(ctx, contextPreparation, baseModel, requestErr)
++				if errContext != nil {
++					return resp, fmt.Errorf("codex executor: context recovery failed after upstream rejection: %w", errContext)
++				}
++				replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++				contextRecoveryAttempted = true
++				continue requestLoop
++			}
+ 			return resp, requestErr
+ 		}
+ 		data, errRead := io.ReadAll(httpResp.Body)
+@@ -1411,6 +1475,15 @@ requestLoop:
+ 				if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
+ 					return resp, errClearReplay
+ 				}
++				if !contextRecoveryAttempted && contextPreparation != nil && codexErrorIsContextLength(streamErr) {
++					body, errContext = recoverCodexClaudeContext(ctx, contextPreparation, baseModel, streamErr)
++					if errContext != nil {
++						return resp, fmt.Errorf("codex executor: context recovery failed after terminal rejection: %w", errContext)
++					}
++					replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++					contextRecoveryAttempted = true
++					continue requestLoop
++				}
+ 				return resp, streamErr
+ 			}
+ 			if eventType == "response.output_item.done" {
+@@ -1593,10 +1666,27 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 	}
+ 	body = sanitizeOpenAIResponsesReasoningEncryptedContent(ctx, "codex executor", body)
+ 	body = normalizeCodexParallelToolCalls(body, opts.Headers)
++	body, contextPreparation, errContext := e.prepareCodexClaudeContext(ctx, req, opts, baseModel, body)
++	if errContext != nil {
++		return nil, errContext
++	}
+ 	body, replayScope, errReplay := applyCodexReasoningReplayCacheRequired(ctx, from, req, opts, body)
+ 	if errReplay != nil {
+ 		return nil, errReplay
+ 	}
++	if contextPreparation != nil {
++		if errObserve := contextPreparation.ObserveBody(body); errObserve != nil {
++			return nil, errObserve
++		}
++		var compacted bool
++		body, compacted, errContext = e.compactCodexClaudeContextIfNeeded(ctx, auth, req, opts, from, baseModel, baseURL, apiKey, originalPayloadSource, contextPreparation)
++		if errContext != nil {
++			return nil, errContext
++		}
++		if compacted {
++			replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++		}
++	}
+ 	reporter.SetTranslatedReasoningEffort(body, to.String())
+ 
+ 	url := strings.TrimSuffix(baseURL, "/") + "/responses"
+@@ -1646,9 +1736,23 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 		return nil, identityState, newCodexStatusErr(httpResp.StatusCode, data)
+ 	}
+ 
+-	httpResp, identityState, err := requestResponse(body)
+-	if err != nil {
+-		return nil, err
++	contextRecoveryAttempted := false
++	var httpResp *http.Response
++	var identityState codexIdentityConfuseState
++	for {
++		httpResp, identityState, err = requestResponse(body)
++		if err == nil {
++			break
++		}
++		if contextRecoveryAttempted || contextPreparation == nil || !codexErrorIsContextLength(err) {
++			return nil, err
++		}
++		body, errContext = recoverCodexClaudeContext(ctx, contextPreparation, baseModel, err)
++		if errContext != nil {
++			return nil, fmt.Errorf("codex executor: context recovery failed after upstream rejection: %w", errContext)
++		}
++		replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++		contextRecoveryAttempted = true
+ 	}
+ 	initialHeaders := httpResp.Header.Clone()
+ 	out := make(chan cliproxyexecutor.StreamChunk)
+@@ -1658,6 +1762,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 		continuation := newCodexReasoningContinuationState(from, originalPayload)
+ 		currentResp := httpResp
+ 		currentIdentityState := identityState
++		clientOutputEmitted := false
+ 
+ 		for {
+ 			continueRequest, done, processErr := func() (bool, bool, error) {
+@@ -1670,19 +1775,45 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 				scanner.Buffer(nil, 52_428_800) // 50MB
+ 				outputItemsByIndex := make(map[int64][]byte)
+ 				var outputItemsFallback [][]byte
++				var pendingCreatedLine []byte
++				emitTranslatedLine := func(translatedLine []byte) error {
++					translatedLine = applyCodexIdentityExposeResponsePayload(translatedLine, currentIdentityState)
++					chunks := sdktranslator.TranslateStream(ctx, to, responseFormat, req.Model, originalPayload, body, translatedLine, &param)
++					for i := range chunks {
++						select {
++						case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
++							if len(chunks[i]) > 0 {
++								clientOutputEmitted = true
++							}
++						case <-ctx.Done():
++							return ctx.Err()
++						}
++					}
++					return nil
++				}
+ 				for scanner.Scan() {
+ 					line := applyCodexIdentityConfuseResponsePayload(scanner.Bytes(), currentIdentityState)
+ 					helps.AppendAPIResponseChunk(ctx, e.cfg, line)
+ 					translatedLine := bytes.Clone(line)
+ 					terminalSuccess := false
++					eventType := ""
+ 
+ 					if bytes.HasPrefix(line, dataTag) {
+ 						data := bytes.TrimSpace(line[5:])
+-						eventType := gjson.GetBytes(data, "type").String()
++						eventType = gjson.GetBytes(data, "type").String()
+ 						if streamErr, terminalBody, ok := codexTerminalFailureErr(data); ok {
+ 							if errClearReplay := clearCodexReasoningReplayOnInvalidSignature(ctx, replayScope, streamErr.StatusCode(), terminalBody); errClearReplay != nil {
+ 								return false, false, errClearReplay
+ 							}
++							if !clientOutputEmitted && !contextRecoveryAttempted && contextPreparation != nil && codexErrorIsContextLength(streamErr) {
++								body, errContext = recoverCodexClaudeContext(ctx, contextPreparation, baseModel, streamErr)
++								if errContext != nil {
++									return false, false, errContext
++								}
++								replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++								contextRecoveryAttempted = true
++								return true, false, nil
++							}
+ 							return false, false, streamErr
+ 						}
+ 						switch eventType {
+@@ -1690,6 +1821,12 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 							if continuation.continuations > 0 {
+ 								continue
+ 							}
++							// Delay message_start until the upstream produces actual output
++							// or a successful terminal event. A context rejection commonly
++							// follows response.created; buffering this preamble lets us retry
++							// without emitting two Claude messages or corrupting translator state.
++							pendingCreatedLine = bytes.Clone(translatedLine)
++							continue
+ 						case "response.output_item.done":
+ 							collectCodexOutputItemDone(data, outputItemsByIndex, &outputItemsFallback)
+ 						case "response.completed", "response.incomplete":
+@@ -1710,14 +1847,14 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 						}
+ 					}
+ 
+-					translatedLine = applyCodexIdentityExposeResponsePayload(translatedLine, currentIdentityState)
+-					chunks := sdktranslator.TranslateStream(ctx, to, responseFormat, req.Model, originalPayload, body, translatedLine, &param)
+-					for i := range chunks {
+-						select {
+-						case out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}:
+-						case <-ctx.Done():
+-							return false, false, ctx.Err()
++					if pendingCreatedLine != nil && codexStreamEventCommitsResponse(eventType, terminalSuccess) {
++						if errEmit := emitTranslatedLine(pendingCreatedLine); errEmit != nil {
++							return false, false, errEmit
+ 						}
++						pendingCreatedLine = nil
++					}
++					if errEmit := emitTranslatedLine(translatedLine); errEmit != nil {
++						return false, false, errEmit
+ 					}
+ 					if terminalSuccess {
+ 						return false, true, nil
+@@ -1750,8 +1887,46 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
+ 			if !continueRequest {
+ 				return
+ 			}
+-			nextResp, nextIdentityState, requestErr := requestResponse(body)
+-			if requestErr != nil {
++			if contextPreparation != nil {
++				if errObserve := contextPreparation.ObserveBody(body); errObserve != nil {
++					reporter.PublishFailure(ctx, errObserve)
++					select {
++					case out <- cliproxyexecutor.StreamChunk{Err: errObserve}:
++					case <-ctx.Done():
++					}
++					return
++				}
++				var compacted bool
++				body, compacted, errContext = e.compactCodexClaudeContextIfNeeded(ctx, auth, req, opts, from, baseModel, baseURL, apiKey, originalPayloadSource, contextPreparation)
++				if errContext != nil {
++					reporter.PublishFailure(ctx, errContext)
++					select {
++					case out <- cliproxyexecutor.StreamChunk{Err: errContext}:
++					case <-ctx.Done():
++					}
++					return
++				}
++				if compacted {
++					replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++				}
++			}
++			var nextResp *http.Response
++			var nextIdentityState codexIdentityConfuseState
++			for {
++				var requestErr error
++				nextResp, nextIdentityState, requestErr = requestResponse(body)
++				if requestErr == nil {
++					break
++				}
++				if !contextRecoveryAttempted && contextPreparation != nil && codexErrorIsContextLength(requestErr) {
++					body, errContext = recoverCodexClaudeContext(ctx, contextPreparation, baseModel, requestErr)
++					if errContext == nil {
++						replayScope = codexReasoningReplayScopeFromRequest(ctx, from, req, opts, body)
++						contextRecoveryAttempted = true
++						continue
++					}
++					requestErr = errContext
++				}
+ 				reporter.PublishFailure(ctx, requestErr)
+ 				select {
+ 				case out <- cliproxyexecutor.StreamChunk{Err: requestErr}:
+@@ -1787,14 +1962,9 @@ func (e *CodexExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth
+ 	body, _ = sjson.SetBytes(body, "stream", false)
+ 	body = normalizeCodexInstructions(body)
+ 
+-	enc, err := tokenizerForCodexModel(baseModel)
+-	if err != nil {
+-		return cliproxyexecutor.Response{}, fmt.Errorf("codex executor: tokenizer init failed: %w", err)
+-	}
+-
+-	count, err := countCodexInputTokens(enc, body)
+-	if err != nil {
+-		return cliproxyexecutor.Response{}, fmt.Errorf("codex executor: token counting failed: %w", err)
++	count, _, errCount := countCodexContextTokens(baseModel, body)
++	if errCount != nil {
++		return cliproxyexecutor.Response{}, fmt.Errorf("codex executor: token counting failed: %w", errCount)
+ 	}
+ 
+ 	usageJSON := fmt.Sprintf(`{"response":{"usage":{"input_tokens":%d,"output_tokens":0,"total_tokens":%d}}}`, count, count)
+@@ -1822,7 +1992,7 @@ func tokenizerForCodexModel(model string) (tokenizer.Codec, error) {
+ 	}
+ }
+ 
+-func countCodexInputTokens(enc tokenizer.Codec, body []byte) (int64, error) {
++func countCodexInputTokens(model string, enc tokenizer.Codec, body []byte) (int64, error) {
+ 	if enc == nil {
+ 		return 0, fmt.Errorf("encoder is nil")
+ 	}
+@@ -1832,11 +2002,21 @@ func countCodexInputTokens(enc tokenizer.Codec, body []byte) (int64, error) {
+ 
+ 	root := gjson.ParseBytes(body)
+ 	var segments []string
+-
+-	if inst := strings.TrimSpace(root.Get("instructions").String()); inst != "" {
+-		segments = append(segments, inst)
++	appendValue := func(value gjson.Result) {
++		if !value.Exists() || value.Type == gjson.Null {
++			return
++		}
++		text := value.Raw
++		if value.Type == gjson.String {
++			text = value.String()
++		}
++		if text = strings.TrimSpace(text); text != "" {
++			segments = append(segments, text)
++		}
+ 	}
+ 
++	appendValue(root.Get("instructions"))
++
+ 	inputItems := root.Get("input")
+ 	if inputItems.IsArray() {
+ 		arr := inputItems.Array()
+@@ -1849,28 +2029,44 @@ func countCodexInputTokens(enc tokenizer.Codec, body []byte) (int64, error) {
+ 					parts := content.Array()
+ 					for j := range parts {
+ 						part := parts[j]
+-						if text := strings.TrimSpace(part.Get("text").String()); text != "" {
+-							segments = append(segments, text)
++						if text := part.Get("text"); text.Exists() {
++							appendValue(text)
++							continue
++						}
++						switch part.Get("type").String() {
++						case "input_image", "image_url":
++							// Counted as a normalized image below, not as base64 transport.
++						default:
++							appendValue(part)
+ 						}
+ 					}
++				} else {
++					appendValue(content)
+ 				}
+ 			case "function_call":
+-				if name := strings.TrimSpace(item.Get("name").String()); name != "" {
+-					segments = append(segments, name)
+-				}
+-				if args := strings.TrimSpace(item.Get("arguments").String()); args != "" {
+-					segments = append(segments, args)
+-				}
+-			case "function_call_output":
+-				if out := strings.TrimSpace(item.Get("output").String()); out != "" {
+-					segments = append(segments, out)
++				appendValue(item.Get("call_id"))
++				appendValue(item.Get("name"))
++				appendValue(item.Get("arguments"))
++			case "custom_tool_call":
++				appendValue(item.Get("call_id"))
++				appendValue(item.Get("name"))
++				appendValue(item.Get("input"))
++			case "function_call_output", "custom_tool_call_output", "tool_search_output":
++				appendValue(item.Get("call_id"))
++				appendValue(item.Get("output"))
++			case "reasoning":
++				for _, summary := range item.Get("summary").Array() {
++					appendValue(summary.Get("text"))
+ 				}
++				appendValue(item.Get("encrypted_content"))
++			case "compaction", "compaction_summary":
++				appendValue(item.Get("encrypted_content"))
+ 			default:
+-				if text := strings.TrimSpace(item.Get("text").String()); text != "" {
+-					segments = append(segments, text)
+-				}
++				appendValue(item)
+ 			}
+ 		}
++	} else {
++		appendValue(inputItems)
+ 	}
+ 
+ 	tools := root.Get("tools")
+@@ -1878,50 +2074,154 @@ func countCodexInputTokens(enc tokenizer.Codec, body []byte) (int64, error) {
+ 		tarr := tools.Array()
+ 		for i := range tarr {
+ 			tool := tarr[i]
+-			if name := strings.TrimSpace(tool.Get("name").String()); name != "" {
+-				segments = append(segments, name)
+-			}
+-			if desc := strings.TrimSpace(tool.Get("description").String()); desc != "" {
+-				segments = append(segments, desc)
+-			}
+-			if params := tool.Get("parameters"); params.Exists() {
+-				val := params.Raw
+-				if params.Type == gjson.String {
+-					val = params.String()
+-				}
+-				if trimmed := strings.TrimSpace(val); trimmed != "" {
+-					segments = append(segments, trimmed)
+-				}
+-			}
++			appendValue(tool.Get("name"))
++			appendValue(tool.Get("description"))
++			appendValue(tool.Get("parameters"))
+ 		}
+ 	}
+ 
+ 	textFormat := root.Get("text.format")
+ 	if textFormat.Exists() {
+-		if name := strings.TrimSpace(textFormat.Get("name").String()); name != "" {
+-			segments = append(segments, name)
++		appendValue(textFormat.Get("name"))
++		appendValue(textFormat.Get("schema"))
++	}
++
++	var total int64
++	for _, segment := range segments {
++		count, err := countCodexTextTokensCached(model, enc, segment)
++		if err != nil {
++			return 0, err
+ 		}
+-		if schema := textFormat.Get("schema"); schema.Exists() {
+-			val := schema.Raw
+-			if schema.Type == gjson.String {
+-				val = schema.String()
++		total += int64(count)
++	}
++	return total, nil
++}
++
++const codexNormalizedImageTokens int64 = 1_844
++
++func estimateCodexStructuralTokens(body []byte) int64 {
++	root := gjson.ParseBytes(body)
++	var total int64 = 8
++	if root.Get("instructions").Exists() {
++		total += 4
++	}
++	if input := root.Get("input"); input.IsArray() {
++		for _, item := range input.Array() {
++			total += 8
++			if item.Get("type").String() != "message" {
++				continue
+ 			}
+-			if trimmed := strings.TrimSpace(val); trimmed != "" {
+-				segments = append(segments, trimmed)
++			content := item.Get("content")
++			if content.IsArray() {
++				for _, part := range content.Array() {
++					total += 4
++					switch part.Get("type").String() {
++					case "input_image", "image_url":
++						total += codexNormalizedImageTokens
++					}
++				}
++			} else if content.Exists() {
++				total += 4
+ 			}
+ 		}
+ 	}
++	if tools := root.Get("tools"); tools.IsArray() {
++		total += int64(len(tools.Array())) * 12
++	}
++	if root.Get("text.format").Exists() {
++		total += 8
++	}
++	return total
++}
+ 
+-	text := strings.Join(segments, "\n")
+-	if text == "" {
+-		return 0, nil
++func countCodexTextTokensCached(model string, enc tokenizer.Codec, text string) (int, error) {
++	if len(text) < 64 {
++		return countCodexTextTokensChunked(enc, text)
++	}
++	hash := sha256.New()
++	_, _ = io.WriteString(hash, strings.ToLower(strings.TrimSpace(model)))
++	_, _ = hash.Write([]byte{0})
++	_, _ = io.WriteString(hash, text)
++	var key [32]byte
++	copy(key[:], hash.Sum(nil))
++
++	codexTokenCountCache.Lock()
++	count, ok := codexTokenCountCache.entries[key]
++	codexTokenCountCache.Unlock()
++	if ok {
++		return count, nil
+ 	}
+ 
+-	count, err := enc.Count(text)
++	count, err := countCodexTextTokensChunked(enc, text)
+ 	if err != nil {
+ 		return 0, err
+ 	}
+-	return int64(count), nil
++	codexTokenCountCache.Lock()
++	if existing, exists := codexTokenCountCache.entries[key]; exists {
++		count = existing
++	} else {
++		if len(codexTokenCountCache.entries) >= codexTokenCountCacheMaxEntries {
++			evict := codexTokenCountCacheMaxEntries / 4
++			for _, oldKey := range codexTokenCountCache.order[:evict] {
++				delete(codexTokenCountCache.entries, oldKey)
++			}
++			codexTokenCountCache.order = append([][32]byte(nil), codexTokenCountCache.order[evict:]...)
++		}
++		codexTokenCountCache.entries[key] = count
++		codexTokenCountCache.order = append(codexTokenCountCache.order, key)
++	}
++	codexTokenCountCache.Unlock()
++	return count, nil
++}
++
++const codexTokenizerChunkBytes = 16 * 1024
++
++// countCodexTextTokensChunked bounds the tokenizer's working set. Splitting a
++// string can only prevent BPE merges across a boundary, so the sum is a safe
++// upper estimate while remaining linear for multi-megabyte logs and CJK text.
++func countCodexTextTokensChunked(enc tokenizer.Codec, text string) (int, error) {
++	total := 0
++	for len(text) > 0 {
++		end := len(text)
++		if end > codexTokenizerChunkBytes {
++			end = codexTokenizerChunkBytes
++			for end > 0 && !utf8.RuneStart(text[end]) {
++				end--
++			}
++			if end == 0 {
++				end = codexTokenizerChunkBytes
++			}
++		}
++		count, err := enc.Count(text[:end])
++		if err != nil {
++			return 0, err
++		}
++		total += count
++		text = text[end:]
++	}
++	return total, nil
++}
++
++func countCodexContextTokens(model string, body []byte) (total, fixed int64, err error) {
++	enc, err := tokenizerForCodexModel(model)
++	if err != nil {
++		return 0, 0, err
++	}
++	exact, err := countCodexInputTokens(model, enc, body)
++	if err != nil {
++		return 0, 0, err
++	}
++	total = exact + estimateCodexStructuralTokens(body)
++	fixedBody, setErr := sjson.SetRawBytes(body, "input", []byte("[]"))
++	if setErr != nil {
++		return 0, 0, setErr
++	}
++	exactFixed, err := countCodexInputTokens(model, enc, fixedBody)
++	if err != nil {
++		return 0, 0, err
++	}
++	fixed = exactFixed + estimateCodexStructuralTokens(fixedBody)
++	return total, fixed, nil
+ }
+ 
+ func (e *CodexExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*cliproxyauth.Auth, error) {
+@@ -2280,7 +2580,7 @@ func codexStatusErrorClassification(statusCode int, body []byte) (code string, e
+ 	isInvalidRequest := upstreamType == "" || upstreamType == "invalid_request_error"
+ 
+ 	switch {
+-	case statusCode == http.StatusRequestEntityTooLarge || upstreamCode == "context_length_exceeded" || upstreamCode == "context_too_large" || isInvalidRequest && (strings.Contains(errorMessage, "context length") || strings.Contains(errorMessage, "context_length") || strings.Contains(errorMessage, "maximum context") || strings.Contains(errorMessage, "too many tokens")):
++	case statusCode == http.StatusRequestEntityTooLarge || upstreamCode == "context_length_exceeded" || upstreamCode == "context_too_large" || isInvalidRequest && (strings.Contains(errorMessage, "context window") || strings.Contains(errorMessage, "context length") || strings.Contains(errorMessage, "context_length") || strings.Contains(errorMessage, "maximum context") || strings.Contains(errorMessage, "too many tokens")):
+ 		return "context_too_large", "invalid_request_error", true
+ 	case strings.Contains(lower, "invalid signature in thinking block") || strings.Contains(lower, "invalid_encrypted_content"):
+ 		return "thinking_signature_invalid", "invalid_request_error", true
+diff --git a/internal/runtime/executor/codex_executor_reasoning_continuation_test.go b/internal/runtime/executor/codex_executor_reasoning_continuation_test.go
+index d402c32..2d71dc5 100644
+--- a/internal/runtime/executor/codex_executor_reasoning_continuation_test.go
++++ b/internal/runtime/executor/codex_executor_reasoning_continuation_test.go
+@@ -139,7 +139,7 @@ func newCodexReasoningContinuationTestServer(t *testing.T, encryptedContent stri
+ 			_, _ = w.Write([]byte(`data: {"type":"response.reasoning_summary_part.done"}` + "\n"))
+ 			reasoningItem := `{"id":"rs_reasoning","type":"reasoning","status":"incomplete","summary":[{"type":"summary_text","text":"Still analyzing"}],"encrypted_content":"` + encryptedContent + `"}`
+ 			_, _ = w.Write([]byte(`data: {"type":"response.output_item.done","output_index":0,"item":` + reasoningItem + `}` + "\n"))
+-			_, _ = w.Write([]byte(`data: {"type":"response.incomplete","response":{"id":"resp_reasoning","model":"gpt-5.6-sol","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[],"usage":{"input_tokens":689,"output_tokens":701,"total_tokens":1390}}}` + "\n\n"))
++			_, _ = w.Write([]byte(`data: {"type":"response.incomplete","response":{"id":"resp_reasoning","model":"gpt-5.6-sol","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[],"usage":{"input_tokens":689,"output_tokens":128000,"total_tokens":128689}}}` + "\n\n"))
+ 			return
+ 		}
+ 
+diff --git a/internal/runtime/executor/helps/claude_code_context.go b/internal/runtime/executor/helps/claude_code_context.go
+new file mode 100644
+index 0000000..8993777
+--- /dev/null
++++ b/internal/runtime/executor/helps/claude_code_context.go
+@@ -0,0 +1,1236 @@
++package helps
++
++import (
++	"bytes"
++	"compress/gzip"
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++	"sync"
++	"time"
++	"unicode/utf8"
++
++	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
++	"github.com/tidwall/gjson"
++	"github.com/tidwall/sjson"
++)
++
++const (
++	claudeContextCheckpointVersion        = 2
++	defaultClaudeContextWindow      int64 = 200_000
++	defaultClaudeEffectivePercent         = 95
++	defaultClaudeAutoCompactPercent       = 90
++	defaultClaudePostCompactPercent       = 60
++	defaultClaudeLocalSummaryChars        = 48_000
++	defaultClaudeArchiveMaxFiles          = 8
++	defaultClaudeArchiveMaxBytes    int64 = 256 * 1024 * 1024
++	defaultClaudeArchiveMaxAgeDays        = 14
++	modelVisibleBytesPerToken       int64 = 4
++	localToolOutputMaxChars               = 12_000
++)
++
++var claudeContextStateLocks sync.Map
++var claudeContextWorkflowLocks sync.Map
++
++// ClaudeCodeContextProfile is the effective model budget used by the bridge.
++type ClaudeCodeContextProfile struct {
++	ContextWindow       int64
++	EffectiveWindow     int64
++	AutoCompactTokens   int64
++	PostCompactTokens   int64
++	ModelCatalogMatched bool
++}
++
++// ClaudeCodeContextPreparation describes the model-visible request after a
++// persisted checkpoint has been reconciled with Claude Code's raw transcript.
++type ClaudeCodeContextPreparation struct {
++	Enabled             bool
++	Body                []byte
++	NeedsCompaction     bool
++	CompactionAttempted bool
++	NoFurtherReduction  bool
++	InputTokens         int64
++	FixedPrefixTokens   int64
++	Profile             ClaudeCodeContextProfile
++	Scope               string
++	Model               string
++
++	stateDir        string
++	checkpointPath  string
++	rawItems        []json.RawMessage
++	activeItems     []json.RawMessage
++	generation      int
++	maxSummaryChars int
++	archiveRawInput bool
++	archiveMaxFiles int
++	archiveMaxBytes int64
++	archiveMaxAge   time.Duration
++}
++
++type claudeCodeContextCheckpoint struct {
++	Version              int               `json:"version"`
++	Scope                string            `json:"scope"`
++	Model                string            `json:"model"`
++	Generation           int               `json:"generation"`
++	RawPrefixItems       int               `json:"raw_prefix_items"`
++	RawPrefixFingerprint string            `json:"raw_prefix_fingerprint"`
++	Replacement          []json.RawMessage `json:"replacement"`
++	Method               string            `json:"method"`
++	InputTokensBefore    int64             `json:"input_tokens_before"`
++	InputTokensAfter     int64             `json:"input_tokens_after"`
++	NoFurtherReduction   bool              `json:"no_further_reduction,omitempty"`
++	CreatedAt            time.Time         `json:"created_at"`
++}
++
++type codexModelCatalog struct {
++	Models []struct {
++		Slug                          string `json:"slug"`
++		ContextWindow                 int64  `json:"context_window"`
++		MaxContextWindow              int64  `json:"max_context_window"`
++		EffectiveContextWindowPercent int    `json:"effective_context_window_percent"`
++		AutoCompactTokenLimit         int64  `json:"auto_compact_token_limit"`
++	} `json:"models"`
++}
++
++// PrepareClaudeCodeContext applies a matching persisted checkpoint and decides
++// whether the active model-visible history should be compacted before sampling.
++func PrepareClaudeCodeContext(ctx context.Context, cfg *config.Config, model string, claudePayload []byte, headers http.Header, body []byte) (*ClaudeCodeContextPreparation, error) {
++	if cfg == nil || !cfg.Codex.ClaudeCodeContext.Enabled {
++		return nil, nil
++	}
++	scope, ok := ClaudeCodeExecutionScope(ctx, claudePayload, headers)
++	if !ok {
++		return nil, nil
++	}
++	input := gjson.GetBytes(body, "input")
++	if !input.IsArray() {
++		return nil, nil
++	}
++
++	settings := cfg.Codex.ClaudeCodeContext
++	stateDir := expandClaudeContextPath(settings.StateDir)
++	if stateDir == "" {
++		stateDir = filepath.Join(claudeContextHomeDir(), ".config", "gpt-in-claude-code", "context")
++	}
++	profile := resolveClaudeCodeContextProfile(settings, model)
++	fixedTokens := estimateClaudeFixedPrefixTokens(body)
++	if fixedTokens >= profile.EffectiveWindow {
++		return nil, fmt.Errorf("claudex context: fixed instructions and tool schemas require about %d tokens, exceeding the %d-token effective model window", fixedTokens, profile.EffectiveWindow)
++	}
++
++	rawItems := rawMessages(input.Array())
++	checkpointPath := claudeContextCheckpointPath(stateDir, scope, model)
++	activeItems := cloneRawMessages(rawItems)
++	generation := 0
++	compactionAttempted := false
++	noFurtherReduction := false
++
++	stateMu := claudeContextMutex(&claudeContextStateLocks, checkpointPath)
++	stateMu.Lock()
++	checkpoint, errCheckpoint := readClaudeContextCheckpoint(checkpointPath)
++	if errCheckpoint != nil && !errors.Is(errCheckpoint, os.ErrNotExist) {
++		_ = quarantineClaudeContextCheckpoint(checkpointPath)
++		checkpoint = nil
++		errCheckpoint = nil
++	}
++	stateMu.Unlock()
++	if checkpoint != nil && checkpointMatches(checkpoint, scope, model, rawItems) {
++		activeItems = append(cloneRawMessages(checkpoint.Replacement), cloneRawMessages(rawItems[checkpoint.RawPrefixItems:])...)
++		generation = checkpoint.Generation
++		// A local fallback may be unable to shrink one oversized live turn below
++		// the proactive threshold. Do not wrap the same raw prefix in another
++		// synthetic checkpoint on every retry or `continue` request.
++		compactionAttempted = checkpoint.RawPrefixItems == len(rawItems) &&
++			(checkpoint.NoFurtherReduction || strings.HasPrefix(checkpoint.Method, "local"))
++		noFurtherReduction = compactionAttempted
++	}
++
++	activeBody, err := replaceResponsesInput(body, activeItems)
++	if err != nil {
++		return nil, fmt.Errorf("claudex context: install checkpoint: %w", err)
++	}
++	inputTokens := EstimateCodexModelVisibleTokens(activeBody)
++	maxSummaryChars := settings.LocalSummaryMaxChars
++	if maxSummaryChars <= 0 {
++		maxSummaryChars = defaultClaudeLocalSummaryChars
++	}
++	archiveMaxFiles := settings.ArchiveMaxFiles
++	if archiveMaxFiles <= 0 {
++		archiveMaxFiles = defaultClaudeArchiveMaxFiles
++	}
++	archiveMaxBytes := settings.ArchiveMaxBytes
++	if archiveMaxBytes <= 0 {
++		archiveMaxBytes = defaultClaudeArchiveMaxBytes
++	}
++	archiveMaxAgeDays := settings.ArchiveMaxAgeDays
++	if archiveMaxAgeDays <= 0 {
++		archiveMaxAgeDays = defaultClaudeArchiveMaxAgeDays
++	}
++	return &ClaudeCodeContextPreparation{
++		Enabled:             true,
++		Body:                activeBody,
++		NeedsCompaction:     inputTokens >= profile.AutoCompactTokens,
++		CompactionAttempted: compactionAttempted,
++		NoFurtherReduction:  noFurtherReduction,
++		InputTokens:         inputTokens,
++		FixedPrefixTokens:   fixedTokens,
++		Profile:             profile,
++		Scope:               scope,
++		Model:               model,
++		stateDir:            stateDir,
++		checkpointPath:      checkpointPath,
++		rawItems:            rawItems,
++		activeItems:         activeItems,
++		generation:          generation,
++		maxSummaryChars:     maxSummaryChars,
++		archiveRawInput:     settings.ArchiveRawInput,
++		archiveMaxFiles:     archiveMaxFiles,
++		archiveMaxBytes:     archiveMaxBytes,
++		archiveMaxAge:       time.Duration(archiveMaxAgeDays) * 24 * time.Hour,
++	}, nil
++}
++
++func claudeContextMutex(registry *sync.Map, key string) *sync.Mutex {
++	value, _ := registry.LoadOrStore(key, &sync.Mutex{})
++	return value.(*sync.Mutex)
++}
++
++// LockCompaction serializes compaction for one session/agent/model scope while
++// allowing unrelated Claude Code sessions and background agents to proceed.
++func (p *ClaudeCodeContextPreparation) LockCompaction() func() {
++	if p == nil || p.checkpointPath == "" {
++		return func() {}
++	}
++	mu := claudeContextMutex(&claudeContextWorkflowLocks, p.checkpointPath)
++	mu.Lock()
++	return mu.Unlock
++}
++
++// RefreshCheckpoint observes a checkpoint installed by an earlier concurrent
++// request after the caller acquired LockCompaction. This is the singleflight
++// recheck that prevents duplicate remote compaction and stale checkpoint writes.
++func (p *ClaudeCodeContextPreparation) RefreshCheckpoint() error {
++	if p == nil || !p.Enabled {
++		return nil
++	}
++	stateMu := claudeContextMutex(&claudeContextStateLocks, p.checkpointPath)
++	stateMu.Lock()
++	checkpoint, err := readClaudeContextCheckpoint(p.checkpointPath)
++	stateMu.Unlock()
++	if errors.Is(err, os.ErrNotExist) {
++		return nil
++	}
++	if err != nil {
++		return err
++	}
++	if checkpoint.Generation <= p.generation || !checkpointMatches(checkpoint, p.Scope, p.Model, p.rawItems) {
++		return nil
++	}
++	p.activeItems = append(cloneRawMessages(checkpoint.Replacement), cloneRawMessages(p.rawItems[checkpoint.RawPrefixItems:])...)
++	p.generation = checkpoint.Generation
++	p.CompactionAttempted = checkpoint.RawPrefixItems == len(p.rawItems) &&
++		(checkpoint.NoFurtherReduction || strings.HasPrefix(checkpoint.Method, "local"))
++	p.NoFurtherReduction = p.CompactionAttempted
++	updated, err := replaceResponsesInput(p.Body, p.activeItems)
++	if err != nil {
++		return err
++	}
++	p.Body = updated
++	p.InputTokens = EstimateCodexModelVisibleTokens(updated)
++	p.NeedsCompaction = p.InputTokens >= p.Profile.AutoCompactTokens
++	return nil
++}
++
++// SetMeasuredTokenCounts installs the executor's tokenizer-backed count. The
++// helpers package keeps a fast byte estimate as a fallback, while the executor
++// can use the model tokenizer without introducing a package dependency cycle.
++func (p *ClaudeCodeContextPreparation) SetMeasuredTokenCounts(total, fixed int64) error {
++	if p == nil || !p.Enabled {
++		return nil
++	}
++	if total > 0 {
++		p.InputTokens = total
++	}
++	if fixed > 0 {
++		p.FixedPrefixTokens = fixed
++	}
++	if p.FixedPrefixTokens >= p.Profile.EffectiveWindow {
++		return fmt.Errorf("claudex context: fixed instructions and tool schemas require about %d tokens, exceeding the %d-token effective model window", p.FixedPrefixTokens, p.Profile.EffectiveWindow)
++	}
++	if p.NoFurtherReduction && p.InputTokens >= p.Profile.EffectiveWindow {
++		return fmt.Errorf("claudex context: the exact live turn and fixed prompt still require about %d tokens after emergency reduction; effective model limit is %d", p.InputTokens, p.Profile.EffectiveWindow)
++	}
++	p.NeedsCompaction = p.InputTokens >= p.Profile.AutoCompactTokens
++	return nil
++}
++
++// PersistMeasuredTokensAfter replaces the checkpoint's fast post-install
++// estimate with the executor's tokenizer-backed count. It is called only after
++// a new checkpoint has been installed, so later status output remains useful
++// without rewriting state on every ordinary turn.
++func (p *ClaudeCodeContextPreparation) PersistMeasuredTokensAfter() error {
++	if p == nil || !p.Enabled || p.generation <= 0 {
++		return nil
++	}
++	stateMu := claudeContextMutex(&claudeContextStateLocks, p.checkpointPath)
++	stateMu.Lock()
++	defer stateMu.Unlock()
++	checkpoint, err := readClaudeContextCheckpoint(p.checkpointPath)
++	if err != nil {
++		return err
++	}
++	if checkpoint.Generation != p.generation || checkpoint.Scope != p.Scope || checkpoint.Model != p.Model {
++		return errors.New("claudex context: checkpoint changed before measured token metadata could be persisted")
++	}
++	checkpoint.InputTokensAfter = p.InputTokens
++	return writeClaudeContextCheckpoint(p.checkpointPath, checkpoint)
++}
++
++// CompactPayload returns the canonical body accepted by /responses/compact.
++func (p *ClaudeCodeContextPreparation) CompactPayload() ([]byte, error) {
++	if p == nil || !p.Enabled {
++		return nil, errors.New("claudex context: preparation is disabled")
++	}
++	root := gjson.ParseBytes(p.Body)
++	out := []byte(`{"model":"","input":[],"instructions":"","parallel_tool_calls":false}`)
++	var err error
++	out, err = sjson.SetBytes(out, "model", p.Model)
++	if err != nil {
++		return nil, err
++	}
++	out, err = sjson.SetRawBytes(out, "input", []byte(rawMessagesJSON(p.activeItems)))
++	if err != nil {
++		return nil, err
++	}
++	if instructions := root.Get("instructions"); instructions.Exists() && instructions.Type == gjson.String {
++		out, _ = sjson.SetBytes(out, "instructions", instructions.String())
++	}
++	if tools := root.Get("tools"); tools.IsArray() {
++		out, _ = sjson.SetRawBytes(out, "tools", []byte(tools.Raw))
++	}
++	if value := root.Get("parallel_tool_calls"); value.Exists() {
++		out, _ = sjson.SetBytes(out, "parallel_tool_calls", value.Bool())
++	}
++	for _, path := range []string{"reasoning", "service_tier", "prompt_cache_key", "text"} {
++		if value := root.Get(path); value.Exists() && value.Type != gjson.Null {
++			out, _ = sjson.SetRawBytes(out, path, []byte(value.Raw))
++		}
++	}
++	return out, nil
++}
++
++const claudeSemanticCompactInstructions = `You compress coding-agent history for a continuation request. Return only a concise factual checkpoint. Preserve: the user's goal, explicit constraints, decisions, completed work, exact file paths and commands, test evidence, failures, and the next unfinished action. Do not answer the user's task, invent facts, or repeat raw logs. Use these headings: Goal, Constraints, Completed, Files and commands, Evidence, Remaining.`
++
++// SemanticCompactPayload builds a normal Responses request used when the
++// dedicated compact endpoint is unavailable. Only history before the current
++// user turn is summarized; the exact live turn is retained by the installer.
++func (p *ClaudeCodeContextPreparation) SemanticCompactPayload() ([]byte, error) {
++	if p == nil || !p.Enabled {
++		return nil, errors.New("claudex context: preparation is disabled")
++	}
++	userIndex := lastUserMessageIndex(p.activeItems)
++	if userIndex <= 0 {
++		return nil, errors.New("claudex context: no historical prefix is available for semantic compaction")
++	}
++	prefix := normalizeToolPairs(truncateLocalTail(p.activeItems[:userIndex]))
++	if len(prefix) == 0 {
++		return nil, errors.New("claudex context: semantic compact prefix is empty")
++	}
++	request := []byte(`{"model":"","instructions":"","input":[],"parallel_tool_calls":false,"reasoning":{"effort":"low","summary":"auto"},"stream":true,"store":false,"include":["reasoning.encrypted_content"]}`)
++	var err error
++	request, err = sjson.SetBytes(request, "model", p.Model)
++	if err != nil {
++		return nil, err
++	}
++	request, err = sjson.SetBytes(request, "instructions", claudeSemanticCompactInstructions)
++	if err != nil {
++		return nil, err
++	}
++	request, err = sjson.SetRawBytes(request, "input", []byte(rawMessagesJSON(prefix)))
++	if err != nil {
++		return nil, err
++	}
++	request, err = sjson.SetRawBytes(request, "input.-1", []byte(`{"type":"message","role":"user","content":[{"type":"input_text","text":"Create the continuation checkpoint now."}]}`))
++	if err != nil {
++		return nil, err
++	}
++	return request, nil
++}
++
++// ObserveBody updates the active model-visible request after transient state
++// such as encrypted reasoning replay has been inserted. The raw transcript
++// fingerprint remains unchanged, so a resulting checkpoint still reconciles
++// against Claude Code's authoritative history on the next request.
++func (p *ClaudeCodeContextPreparation) ObserveBody(body []byte) error {
++	if p == nil || !p.Enabled {
++		return nil
++	}
++	input := gjson.GetBytes(body, "input")
++	if !input.IsArray() {
++		return errors.New("claudex context: observed body has no input array")
++	}
++	previousNeedsCompaction := p.NeedsCompaction
++	p.Body = bytes.Clone(body)
++	p.activeItems = rawMessages(input.Array())
++	p.InputTokens = EstimateCodexModelVisibleTokens(body)
++	p.NeedsCompaction = p.InputTokens >= p.Profile.AutoCompactTokens
++	// Reasoning replay and tool output can grow a previously compacted request
++	// past the proactive boundary again. Re-arm remote/semantic compaction for
++	// that new crossing, while keeping an emergency local fallback one-shot.
++	if p.NeedsCompaction && !previousNeedsCompaction && !p.NoFurtherReduction {
++		p.CompactionAttempted = false
++	}
++	return nil
++}
++
++// InstallRemoteCompaction validates, persists, and activates a compact endpoint
++// response. The checkpoint covers the complete raw input in this request.
++func (p *ClaudeCodeContextPreparation) InstallRemoteCompaction(response []byte) ([]byte, error) {
++	output := gjson.GetBytes(response, "output")
++	if !output.IsArray() || len(output.Array()) == 0 {
++		return nil, errors.New("claudex context: compact response has no replacement output")
++	}
++	replacement := filterRemoteCompactionOutput(rawMessages(output.Array()))
++	if len(replacement) == 0 {
++		return nil, errors.New("claudex context: compact response replacement is empty")
++	}
++	return p.installReplacement(replacement, "remote", false)
++}
++
++// InstallLocalCompaction is the non-recursive safety net used when the remote
++// compact endpoint is unavailable or the upstream reports a context overflow.
++func (p *ClaudeCodeContextPreparation) InstallLocalCompaction(reason string) ([]byte, error) {
++	if p == nil || !p.Enabled {
++		return nil, errors.New("claudex context: preparation is disabled")
++	}
++	replacement := buildLocalCompactionReplacement(p.activeItems, p.maxSummaryChars, reason)
++	if len(replacement) == 0 {
++		return nil, errors.New("claudex context: local replacement is empty")
++	}
++	updated, err := replaceResponsesInput(p.Body, replacement)
++	if err != nil {
++		return nil, err
++	}
++	target := p.Profile.PostCompactTokens
++	if minimum := p.FixedPrefixTokens + 8_192; target < minimum {
++		target = minimum
++	}
++	if EstimateCodexModelVisibleTokens(updated) > target {
++		replacement = buildAggressiveLocalCompactionReplacement(p.activeItems, minInt(p.maxSummaryChars, 16_000), reason)
++		updated, err = replaceResponsesInput(p.Body, replacement)
++		if err != nil {
++			return nil, err
++		}
++	}
++	if tokens := EstimateCodexModelVisibleTokens(updated); tokens >= p.Profile.EffectiveWindow {
++		return nil, fmt.Errorf("claudex context: the live user turn and fixed prefix still require about %d tokens after emergency reduction; effective model limit is %d", tokens, p.Profile.EffectiveWindow)
++	}
++	return p.installReplacement(replacement, "local", true)
++}
++
++// InstallSemanticCompaction persists a model-generated fallback summary while
++// retaining the current user turn and its complete, pair-normalized tool tail.
++func (p *ClaudeCodeContextPreparation) InstallSemanticCompaction(summary string) ([]byte, error) {
++	if p == nil || !p.Enabled {
++		return nil, errors.New("claudex context: preparation is disabled")
++	}
++	if p.maxSummaryChars > 0 && len(summary) > p.maxSummaryChars {
++		summary = truncateUTF8(summary, p.maxSummaryChars)
++	}
++	replacement := buildSemanticCompactionReplacement(p.activeItems, summary)
++	if len(replacement) == 0 {
++		return nil, errors.New("claudex context: semantic compact summary is empty")
++	}
++	return p.installReplacement(replacement, "semantic", false)
++}
++
++func (p *ClaudeCodeContextPreparation) installReplacement(replacement []json.RawMessage, method string, noFurtherReduction bool) ([]byte, error) {
++	updated, err := replaceResponsesInput(p.Body, replacement)
++	if err != nil {
++		return nil, err
++	}
++	afterTokens := EstimateCodexModelVisibleTokens(updated)
++	checkpoint := &claudeCodeContextCheckpoint{
++		Version:              claudeContextCheckpointVersion,
++		Scope:                p.Scope,
++		Model:                p.Model,
++		Generation:           p.generation + 1,
++		RawPrefixItems:       len(p.rawItems),
++		RawPrefixFingerprint: fingerprintRawMessages(p.rawItems),
++		Replacement:          cloneRawMessages(replacement),
++		Method:               method,
++		InputTokensBefore:    p.InputTokens,
++		InputTokensAfter:     afterTokens,
++		NoFurtherReduction:   noFurtherReduction,
++		CreatedAt:            time.Now().UTC(),
++	}
++
++	stateMu := claudeContextMutex(&claudeContextStateLocks, p.checkpointPath)
++	stateMu.Lock()
++	defer stateMu.Unlock()
++	if err = os.MkdirAll(p.stateDir, 0o700); err != nil {
++		return nil, fmt.Errorf("create state directory: %w", err)
++	}
++	if p.archiveRawInput {
++		if err = archiveClaudeContextInput(p.stateDir, checkpoint.Generation, p.Scope, p.Model, p.rawItems); err != nil {
++			return nil, fmt.Errorf("archive raw input: %w", err)
++		}
++		if err = pruneClaudeContextArchives(p.stateDir, p.archiveMaxFiles, p.archiveMaxBytes, p.archiveMaxAge); err != nil {
++			return nil, fmt.Errorf("prune raw input archives: %w", err)
++		}
++	}
++	if err = writeClaudeContextCheckpoint(p.checkpointPath, checkpoint); err != nil {
++		return nil, fmt.Errorf("write checkpoint: %w", err)
++	}
++	p.Body = updated
++	p.activeItems = cloneRawMessages(replacement)
++	p.generation = checkpoint.Generation
++	p.InputTokens = afterTokens
++	p.NeedsCompaction = afterTokens >= p.Profile.AutoCompactTokens
++	p.CompactionAttempted = true
++	p.NoFurtherReduction = noFurtherReduction
++	return updated, nil
++}
++
++// EstimateCodexModelVisibleTokens follows Codex's conservative serialized-byte
++// heuristic. It includes instructions, tool schemas, reasoning ciphertext, and
++// tool outputs, avoiding the under-count that caused the original overflow.
++func EstimateCodexModelVisibleTokens(body []byte) int64 {
++	root := gjson.ParseBytes(body)
++	var visibleBytes int64
++	if instructions := root.Get("instructions"); instructions.Type == gjson.String {
++		visibleBytes += int64(len(instructions.String()))
++	}
++	if input := root.Get("input"); input.IsArray() {
++		for _, item := range input.Array() {
++			visibleBytes += estimateResponseItemVisibleBytes(item)
++		}
++	}
++	for _, path := range []string{"tools", "text.format"} {
++		if value := root.Get(path); value.Exists() && value.Type != gjson.Null {
++			visibleBytes += int64(len(value.Raw))
++		}
++	}
++	if visibleBytes <= 0 {
++		return 0
++	}
++	return (visibleBytes + modelVisibleBytesPerToken - 1) / modelVisibleBytesPerToken
++}
++
++func estimateClaudeFixedPrefixTokens(body []byte) int64 {
++	root := gjson.ParseBytes(body)
++	var visibleBytes int64
++	if instructions := root.Get("instructions"); instructions.Type == gjson.String {
++		visibleBytes += int64(len(instructions.String()))
++	}
++	for _, path := range []string{"tools", "text.format"} {
++		if value := root.Get(path); value.Exists() && value.Type != gjson.Null {
++			visibleBytes += int64(len(value.Raw))
++		}
++	}
++	return (visibleBytes + modelVisibleBytesPerToken - 1) / modelVisibleBytesPerToken
++}
++
++func estimateResponseItemVisibleBytes(item gjson.Result) int64 {
++	// Inline images should be budgeted like Codex's normalized resized image,
++	// not by their base64 transport size.
++	if item.Get("type").String() == "message" {
++		var total int64 = 32
++		for _, part := range item.Get("content").Array() {
++			switch part.Get("type").String() {
++			case "input_image", "image_url":
++				total += 7_373
++			default:
++				total += int64(len(part.Raw))
++			}
++		}
++		if total > 32 {
++			return total
++		}
++	}
++	return int64(len(item.Raw))
++}
++
++func resolveClaudeCodeContextProfile(settings config.ClaudeCodeContextConfig, model string) ClaudeCodeContextProfile {
++	contextWindow := settings.ContextWindow
++	effectivePercent := settings.EffectiveContextWindowPercent
++	autoCompactTokens := int64(0)
++	matched := false
++	if settings.ModelCatalogPath != "" {
++		if profile, ok := readCodexModelProfile(expandClaudeContextPath(settings.ModelCatalogPath), model); ok {
++			if contextWindow <= 0 {
++				contextWindow = profile.ContextWindow
++			}
++			if effectivePercent <= 0 {
++				effectivePercent = profile.EffectivePercent
++			}
++			if settings.AutoCompactPercent <= 0 {
++				autoCompactTokens = profile.AutoCompactTokens
++			}
++			matched = true
++		}
++	}
++	if contextWindow <= 0 {
++		if strings.EqualFold(strings.TrimSpace(model), "gpt-5.6-sol") {
++			contextWindow = 272_000
++		} else {
++			contextWindow = defaultClaudeContextWindow
++		}
++	}
++	if effectivePercent <= 0 || effectivePercent > 100 {
++		effectivePercent = defaultClaudeEffectivePercent
++	}
++	effectiveWindow := contextWindow * int64(effectivePercent) / 100
++	if autoCompactTokens <= 0 {
++		autoPercent := settings.AutoCompactPercent
++		if autoPercent <= 0 || autoPercent >= effectivePercent {
++			autoPercent = defaultClaudeAutoCompactPercent
++			if autoPercent >= effectivePercent {
++				autoPercent = maxInt(1, effectivePercent-5)
++			}
++		}
++		autoCompactTokens = contextWindow * int64(autoPercent) / 100
++	}
++	maxAutoCompactTokens := contextWindow * int64(defaultClaudeAutoCompactPercent) / 100
++	if autoCompactTokens > maxAutoCompactTokens {
++		autoCompactTokens = maxAutoCompactTokens
++	}
++	if autoCompactTokens >= effectiveWindow {
++		autoCompactTokens = maxInt64(1, effectiveWindow-8_192)
++	}
++	postPercent := settings.PostCompactPercent
++	autoPercentEquivalent := int(autoCompactTokens * 100 / contextWindow)
++	if postPercent <= 0 || postPercent >= autoPercentEquivalent {
++		postPercent = defaultClaudePostCompactPercent
++		if postPercent >= autoPercentEquivalent {
++			postPercent = maxInt(1, autoPercentEquivalent*2/3)
++		}
++	}
++	return ClaudeCodeContextProfile{
++		ContextWindow:       contextWindow,
++		EffectiveWindow:     effectiveWindow,
++		AutoCompactTokens:   autoCompactTokens,
++		PostCompactTokens:   contextWindow * int64(postPercent) / 100,
++		ModelCatalogMatched: matched,
++	}
++}
++
++type codexModelProfile struct {
++	ContextWindow     int64
++	EffectivePercent  int
++	AutoCompactTokens int64
++}
++
++func readCodexModelProfile(path, model string) (codexModelProfile, bool) {
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return codexModelProfile{}, false
++	}
++	var catalog codexModelCatalog
++	if json.Unmarshal(data, &catalog) != nil {
++		return codexModelProfile{}, false
++	}
++	for _, candidate := range catalog.Models {
++		if !strings.EqualFold(strings.TrimSpace(candidate.Slug), strings.TrimSpace(model)) {
++			continue
++		}
++		window := candidate.ContextWindow
++		if window <= 0 {
++			window = candidate.MaxContextWindow
++		}
++		if window <= 0 {
++			return codexModelProfile{}, false
++		}
++		return codexModelProfile{
++			ContextWindow:     window,
++			EffectivePercent:  candidate.EffectiveContextWindowPercent,
++			AutoCompactTokens: candidate.AutoCompactTokenLimit,
++		}, true
++	}
++	return codexModelProfile{}, false
++}
++
++func checkpointMatches(checkpoint *claudeCodeContextCheckpoint, scope, model string, rawItems []json.RawMessage) bool {
++	if checkpoint == nil || checkpoint.Version < 1 || checkpoint.Version > claudeContextCheckpointVersion || checkpoint.Scope != scope || checkpoint.Model != model {
++		return false
++	}
++	if checkpoint.RawPrefixItems <= 0 || checkpoint.RawPrefixItems > len(rawItems) || len(checkpoint.Replacement) == 0 {
++		return false
++	}
++	return checkpoint.RawPrefixFingerprint == fingerprintRawMessages(rawItems[:checkpoint.RawPrefixItems])
++}
++
++func readClaudeContextCheckpoint(path string) (*claudeCodeContextCheckpoint, error) {
++	data, err := os.ReadFile(path)
++	if errors.Is(err, os.ErrNotExist) {
++		data, err = os.ReadFile(path + ".previous")
++	}
++	if err != nil {
++		return nil, err
++	}
++	var checkpoint claudeCodeContextCheckpoint
++	if err = json.Unmarshal(data, &checkpoint); err != nil {
++		return nil, err
++	}
++	return &checkpoint, nil
++}
++
++func writeClaudeContextCheckpoint(path string, checkpoint *claudeCodeContextCheckpoint) error {
++	data, err := json.MarshalIndent(checkpoint, "", "  ")
++	if err != nil {
++		return err
++	}
++	temp, err := os.CreateTemp(filepath.Dir(path), ".checkpoint-*.tmp")
++	if err != nil {
++		return err
++	}
++	tempPath := temp.Name()
++	defer func() { _ = os.Remove(tempPath) }()
++	if err = temp.Chmod(0o600); err == nil {
++		_, err = temp.Write(data)
++	}
++	if closeErr := temp.Close(); err == nil {
++		err = closeErr
++	}
++	if err != nil {
++		return err
++	}
++	backupPath := path + ".previous"
++	_ = os.Remove(backupPath)
++	if _, statErr := os.Stat(path); statErr == nil {
++		if err = os.Rename(path, backupPath); err != nil {
++			return err
++		}
++	}
++	if err = os.Rename(tempPath, path); err != nil {
++		_ = os.Rename(backupPath, path)
++		return err
++	}
++	_ = os.Remove(backupPath)
++	return nil
++}
++
++func quarantineClaudeContextCheckpoint(path string) error {
++	if _, err := os.Stat(path); err != nil {
++		return err
++	}
++	quarantinePath := path + ".corrupt-" + time.Now().UTC().Format("20060102T150405.000000000Z")
++	return os.Rename(path, quarantinePath)
++}
++
++func archiveClaudeContextInput(stateDir string, generation int, scope, model string, rawItems []json.RawMessage) error {
++	archiveDir := filepath.Join(stateDir, "archive")
++	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
++		return err
++	}
++	identity := sha256.Sum256([]byte(scope + "\x00" + model))
++	name := fmt.Sprintf("%s-g%04d-%s.json.gz", hex.EncodeToString(identity[:8]), generation, time.Now().UTC().Format("20060102T150405.000000000Z"))
++	file, err := os.OpenFile(filepath.Join(archiveDir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
++	if err != nil {
++		return err
++	}
++	gz := gzip.NewWriter(file)
++	_, writeErr := io.WriteString(gz, rawMessagesJSON(rawItems))
++	closeGzipErr := gz.Close()
++	closeFileErr := file.Close()
++	if writeErr != nil {
++		return writeErr
++	}
++	if closeGzipErr != nil {
++		return closeGzipErr
++	}
++	return closeFileErr
++}
++
++func pruneClaudeContextArchives(stateDir string, maxFiles int, maxBytes int64, maxAge time.Duration) error {
++	archiveDir := filepath.Join(stateDir, "archive")
++	entries, err := os.ReadDir(archiveDir)
++	if errors.Is(err, os.ErrNotExist) {
++		return nil
++	}
++	if err != nil {
++		return err
++	}
++	type archiveFile struct {
++		path    string
++		size    int64
++		modTime time.Time
++	}
++	files := make([]archiveFile, 0, len(entries))
++	cutoff := time.Time{}
++	if maxAge > 0 {
++		cutoff = time.Now().Add(-maxAge)
++	}
++	for _, entry := range entries {
++		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json.gz") {
++			continue
++		}
++		info, infoErr := entry.Info()
++		if infoErr != nil {
++			return infoErr
++		}
++		path := filepath.Join(archiveDir, entry.Name())
++		if !cutoff.IsZero() && info.ModTime().Before(cutoff) {
++			if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
++				return removeErr
++			}
++			continue
++		}
++		files = append(files, archiveFile{path: path, size: info.Size(), modTime: info.ModTime()})
++	}
++	sort.Slice(files, func(i, j int) bool { return files[i].modTime.After(files[j].modTime) })
++	var keptBytes int64
++	for index, file := range files {
++		keepByCount := maxFiles <= 0 || index < maxFiles
++		keepByBytes := maxBytes <= 0 || keptBytes+file.size <= maxBytes
++		if keepByCount && keepByBytes {
++			keptBytes += file.size
++			continue
++		}
++		if removeErr := os.Remove(file.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
++			return removeErr
++		}
++	}
++	return nil
++}
++
++func claudeContextCheckpointPath(stateDir, scope, model string) string {
++	hash := sha256.Sum256([]byte(scope + "\x00" + model))
++	return filepath.Join(stateDir, hex.EncodeToString(hash[:16])+".checkpoint.json")
++}
++
++func fingerprintRawMessages(items []json.RawMessage) string {
++	hash := sha256.New()
++	for _, item := range items {
++		_, _ = fmt.Fprintf(hash, "%d:", len(item))
++		_, _ = hash.Write(item)
++		_, _ = hash.Write([]byte{0})
++	}
++	return hex.EncodeToString(hash.Sum(nil))
++}
++
++func replaceResponsesInput(body []byte, items []json.RawMessage) ([]byte, error) {
++	return sjson.SetRawBytes(body, "input", []byte(rawMessagesJSON(items)))
++}
++
++func rawMessages(results []gjson.Result) []json.RawMessage {
++	items := make([]json.RawMessage, 0, len(results))
++	for _, result := range results {
++		items = append(items, json.RawMessage(bytes.Clone([]byte(result.Raw))))
++	}
++	return items
++}
++
++func cloneRawMessages(items []json.RawMessage) []json.RawMessage {
++	cloned := make([]json.RawMessage, 0, len(items))
++	for _, item := range items {
++		cloned = append(cloned, json.RawMessage(bytes.Clone(item)))
++	}
++	return cloned
++}
++
++func rawMessagesJSON(items []json.RawMessage) string {
++	parts := make([]string, 0, len(items))
++	for _, item := range items {
++		parts = append(parts, string(item))
++	}
++	return "[" + strings.Join(parts, ",") + "]"
++}
++
++func filterRemoteCompactionOutput(items []json.RawMessage) []json.RawMessage {
++	filtered := make([]json.RawMessage, 0, len(items))
++	for _, item := range items {
++		result := gjson.ParseBytes(item)
++		switch result.Get("type").String() {
++		case "compaction", "compaction_summary":
++			filtered = append(filtered, item)
++		case "message":
++			role := result.Get("role").String()
++			if role == "user" || role == "assistant" {
++				filtered = append(filtered, item)
++			}
++		}
++	}
++	return filtered
++}
++
++func buildLocalCompactionReplacement(items []json.RawMessage, maxSummaryChars int, reason string) []json.RawMessage {
++	return buildBoundedLocalCompactionReplacement(items, maxSummaryChars, reason, 24, localToolOutputMaxChars, false)
++}
++
++func lastUserMessageIndex(items []json.RawMessage) int {
++	for i := len(items) - 1; i >= 0; i-- {
++		item := gjson.ParseBytes(items[i])
++		if item.Get("type").String() == "message" && item.Get("role").String() == "user" {
++			return i
++		}
++	}
++	return -1
++}
++
++func truncateLocalTail(items []json.RawMessage) []json.RawMessage {
++	return truncateLocalTailWithLimit(items, localToolOutputMaxChars)
++}
++
++func truncateLocalTailWithLimit(items []json.RawMessage, toolOutputMaxChars int) []json.RawMessage {
++	out := cloneRawMessages(items)
++	for i, raw := range out {
++		item := gjson.ParseBytes(raw)
++		switch item.Get("type").String() {
++		case "function_call_output", "custom_tool_call_output":
++			output := item.Get("output")
++			if output.Type == gjson.String && len(output.String()) > toolOutputMaxChars {
++				trimmed := truncateUTF8(output.String(), toolOutputMaxChars) + "\n[Claudex omitted the remainder of this tool output from model-visible context.]"
++				updated, err := sjson.SetBytes(raw, "output", trimmed)
++				if err == nil {
++					out[i] = json.RawMessage(updated)
++				}
++			}
++		case "reasoning":
++			// A compact checkpoint supersedes old opaque reasoning state. Keeping
++			// only its visible summary prevents ciphertext from refilling context.
++			if summary := item.Get("summary"); summary.IsArray() && len(summary.Array()) > 0 {
++				message := []byte(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":""}]}`)
++				message, _ = sjson.SetBytes(message, "content.0.text", extractItemText(item))
++				out[i] = json.RawMessage(message)
++			} else {
++				out[i] = json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"[Earlier hidden reasoning was retired at the context checkpoint.]"}]}`)
++			}
++		}
++	}
++	return out
++}
++
++func buildAggressiveLocalCompactionReplacement(items []json.RawMessage, maxSummaryChars int, reason string) []json.RawMessage {
++	return buildBoundedLocalCompactionReplacement(items, maxSummaryChars, reason, 15, 4_000, true)
++}
++
++func buildBoundedLocalCompactionReplacement(items []json.RawMessage, maxSummaryChars int, reason string, tailLimit, toolOutputMaxChars int, aggressive bool) []json.RawMessage {
++	if len(items) == 0 {
++		return nil
++	}
++	if maxSummaryChars <= 0 {
++		maxSummaryChars = defaultClaudeLocalSummaryChars
++	}
++	userIndex := lastUserMessageIndex(items)
++	if userIndex < 0 {
++		tailStart := expandTailStartForToolPairs(items, maxInt(0, len(items)-tailLimit), 0)
++		summary := summarizeContextItems(items[:tailStart], maxSummaryChars)
++		text := localCheckpointText(summary, reason, aggressive)
++		return append([]json.RawMessage{localCheckpointMessage(text)}, normalizeToolPairs(truncateLocalTailWithLimit(items[tailStart:], toolOutputMaxChars))...)
++	}
++	tailStart := maxInt(userIndex+1, len(items)-tailLimit)
++	tailStart = expandTailStartForToolPairs(items, tailStart, userIndex+1)
++	summaryItems := make([]json.RawMessage, 0, tailStart-1)
++	summaryItems = append(summaryItems, items[:userIndex]...)
++	if userIndex+1 < tailStart {
++		summaryItems = append(summaryItems, items[userIndex+1:tailStart]...)
++	}
++	summary := summarizeContextItems(summaryItems, maxSummaryChars)
++	text := localCheckpointText(summary, reason, aggressive)
++	replacement := []json.RawMessage{localCheckpointMessage(text), json.RawMessage(bytes.Clone(items[userIndex]))}
++	tail := append(replacement, truncateLocalTailWithLimit(items[tailStart:], toolOutputMaxChars)...)
++	return normalizeToolPairs(tail)
++}
++
++func buildSemanticCompactionReplacement(items []json.RawMessage, summary string) []json.RawMessage {
++	summary = strings.TrimSpace(summary)
++	if len(items) == 0 || summary == "" {
++		return nil
++	}
++	userIndex := lastUserMessageIndex(items)
++	if userIndex < 0 {
++		return []json.RawMessage{localCheckpointMessage("[Claudex semantic context checkpoint]\n" + summary)}
++	}
++	tailStart := expandTailStartForToolPairs(items, maxInt(userIndex+1, len(items)-24), userIndex+1)
++	replacement := []json.RawMessage{
++		localCheckpointMessage("[Claudex semantic context checkpoint]\n" + summary + "\n\nThe following user message and tool tail are authoritative."),
++		json.RawMessage(bytes.Clone(items[userIndex])),
++	}
++	replacement = append(replacement, truncateLocalTail(items[tailStart:])...)
++	return normalizeToolPairs(replacement)
++}
++
++func localCheckpointText(summary, reason string, aggressive bool) string {
++	reason = compactWhitespace(reason)
++	if len(reason) > 512 {
++		reason = truncateUTF8(reason, 512)
++	}
++	if reason == "" {
++		if aggressive {
++			reason = "emergency context checkpoint"
++		} else {
++			reason = "automatic context checkpoint"
++		}
++	}
++	prefix := "[Claudex context checkpoint: "
++	if aggressive {
++		prefix = "[Claudex compact emergency checkpoint: "
++	}
++	return prefix + reason + "]\n" + summary + "\n\nThe next user message and tool tail are authoritative. Continue the current task without redoing completed work."
++}
++
++func localCheckpointMessage(text string) json.RawMessage {
++	message := []byte(`{"type":"message","role":"user","content":[{"type":"input_text","text":""}]}`)
++	message, _ = sjson.SetBytes(message, "content.0.text", text)
++	return json.RawMessage(message)
++}
++
++func expandTailStartForToolPairs(items []json.RawMessage, start, minimum int) int {
++	if start < minimum {
++		start = minimum
++	}
++	if start > len(items) {
++		start = len(items)
++	}
++	callPositions := make(map[string]int)
++	for index, raw := range items {
++		if key, ok := contextToolCallKey(gjson.ParseBytes(raw)); ok {
++			callPositions[key] = index
++		}
++	}
++	for {
++		expanded := start
++		for _, raw := range items[start:] {
++			key, ok := contextToolOutputKey(gjson.ParseBytes(raw))
++			if !ok {
++				continue
++			}
++			if position, exists := callPositions[key]; exists && position >= minimum && position < expanded {
++				expanded = position
++			}
++		}
++		if expanded == start {
++			return start
++		}
++		start = expanded
++	}
++}
++
++func normalizeToolPairs(items []json.RawMessage) []json.RawMessage {
++	calls := make(map[string]gjson.Result)
++	outputs := make(map[string]struct{})
++	for _, raw := range items {
++		item := gjson.ParseBytes(raw)
++		if key, ok := contextToolCallKey(item); ok {
++			calls[key] = item
++		}
++		if key, ok := contextToolOutputKey(item); ok {
++			outputs[key] = struct{}{}
++		}
++	}
++	normalized := make([]json.RawMessage, 0, len(items)+4)
++	for _, raw := range items {
++		item := gjson.ParseBytes(raw)
++		if key, ok := contextToolOutputKey(item); ok {
++			if _, exists := calls[key]; !exists {
++				continue
++			}
++		}
++		normalized = append(normalized, json.RawMessage(bytes.Clone(raw)))
++		if key, ok := contextToolCallKey(item); ok {
++			if _, exists := outputs[key]; !exists {
++				normalized = append(normalized, abortedToolOutput(item))
++			}
++		}
++	}
++	return normalized
++}
++
++func contextToolCallKey(item gjson.Result) (string, bool) {
++	callID := strings.TrimSpace(item.Get("call_id").String())
++	if callID == "" {
++		return "", false
++	}
++	switch item.Get("type").String() {
++	case "function_call", "local_shell_call":
++		return "function:" + callID, true
++	case "custom_tool_call":
++		return "custom:" + callID, true
++	case "tool_search_call":
++		return "tool-search:" + callID, true
++	default:
++		return "", false
++	}
++}
++
++func contextToolOutputKey(item gjson.Result) (string, bool) {
++	callID := strings.TrimSpace(item.Get("call_id").String())
++	if callID == "" {
++		return "", false
++	}
++	switch item.Get("type").String() {
++	case "function_call_output":
++		return "function:" + callID, true
++	case "custom_tool_call_output":
++		return "custom:" + callID, true
++	case "tool_search_output":
++		return "tool-search:" + callID, true
++	default:
++		return "", false
++	}
++}
++
++func abortedToolOutput(call gjson.Result) json.RawMessage {
++	callID := call.Get("call_id").String()
++	message := "[Claudex omitted this tool result while normalizing a context checkpoint; treat the call as aborted.]"
++	switch call.Get("type").String() {
++	case "custom_tool_call":
++		output := []byte(`{"type":"custom_tool_call_output","call_id":"","output":""}`)
++		output, _ = sjson.SetBytes(output, "call_id", callID)
++		output, _ = sjson.SetBytes(output, "output", message)
++		if name := call.Get("name").String(); name != "" {
++			output, _ = sjson.SetBytes(output, "name", name)
++		}
++		return json.RawMessage(output)
++	case "tool_search_call":
++		output := []byte(`{"type":"tool_search_output","call_id":"","status":"completed","execution":"client","tools":[]}`)
++		output, _ = sjson.SetBytes(output, "call_id", callID)
++		return json.RawMessage(output)
++	default:
++		output := []byte(`{"type":"function_call_output","call_id":"","output":""}`)
++		output, _ = sjson.SetBytes(output, "call_id", callID)
++		output, _ = sjson.SetBytes(output, "output", message)
++		return json.RawMessage(output)
++	}
++}
++
++func truncateUTF8(value string, maxBytes int) string {
++	if maxBytes <= 0 || len(value) <= maxBytes {
++		return value
++	}
++	cut := maxBytes
++	for cut > 0 && !utf8.RuneStart(value[cut]) {
++		cut--
++	}
++	return value[:cut]
++}
++
++func summarizeContextItems(items []json.RawMessage, maxChars int) string {
++	if len(items) == 0 {
++		return "No earlier model-visible items required summarization."
++	}
++	lines := make([]string, 0, len(items))
++	for _, raw := range items {
++		item := gjson.ParseBytes(raw)
++		kind := item.Get("type").String()
++		var line string
++		switch kind {
++		case "message":
++			line = strings.ToUpper(item.Get("role").String()) + ": " + extractItemText(item)
++		case "function_call", "custom_tool_call":
++			line = "TOOL CALL " + item.Get("name").String() + ": " + firstNonEmpty(item.Get("arguments").String(), item.Get("input").Raw)
++		case "function_call_output", "custom_tool_call_output":
++			line = "TOOL RESULT " + firstNonEmpty(item.Get("call_id").String(), item.Get("id").String()) + ": " + item.Get("output").String()
++		case "compaction", "compaction_summary":
++			line = "EARLIER COMPACTION CHECKPOINT PRESENT"
++		case "reasoning":
++			if text := extractItemText(item); text != "" {
++				line = "REASONING SUMMARY: " + text
++			}
++		}
++		line = compactWhitespace(line)
++		if line != "" {
++			if len(line) > 2_000 {
++				line = truncateUTF8(line, 2_000) + " ..."
++			}
++			lines = append(lines, line)
++		}
++	}
++	// Keep the most recent evidence when the deterministic fallback must cap
++	// its summary. Remote compaction remains the primary semantic path.
++	var selected []string
++	used := 0
++	for i := len(lines) - 1; i >= 0; i-- {
++		cost := len(lines[i]) + 1
++		if used+cost > maxChars && len(selected) > 0 {
++			break
++		}
++		selected = append(selected, lines[i])
++		used += cost
++	}
++	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
++		selected[left], selected[right] = selected[right], selected[left]
++	}
++	return strings.Join(selected, "\n")
++}
++
++func extractItemText(item gjson.Result) string {
++	var texts []string
++	content := item.Get("content")
++	if content.Type == gjson.String {
++		return content.String()
++	}
++	for _, part := range content.Array() {
++		if text := part.Get("text").String(); text != "" {
++			texts = append(texts, text)
++		}
++	}
++	for _, part := range item.Get("summary").Array() {
++		if text := part.Get("text").String(); text != "" {
++			texts = append(texts, text)
++		}
++	}
++	return strings.Join(texts, "\n")
++}
++
++func compactWhitespace(value string) string {
++	return strings.Join(strings.Fields(value), " ")
++}
++
++func firstNonEmpty(values ...string) string {
++	for _, value := range values {
++		if strings.TrimSpace(value) != "" {
++			return value
++		}
++	}
++	return ""
++}
++
++func expandClaudeContextPath(path string) string {
++	path = strings.TrimSpace(os.ExpandEnv(path))
++	if path == "~" {
++		return claudeContextHomeDir()
++	}
++	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
++		return filepath.Join(claudeContextHomeDir(), path[2:])
++	}
++	return path
++}
++
++func claudeContextHomeDir() string {
++	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
++		return home
++	}
++	return firstNonEmpty(os.Getenv("USERPROFILE"), os.Getenv("HOME"))
++}
++
++func maxInt(left, right int) int {
++	if left > right {
++		return left
++	}
++	return right
++}
++
++func minInt(left, right int) int {
++	if left < right {
++		return left
++	}
++	return right
++}
++
++func maxInt64(left, right int64) int64 {
++	if left > right {
++		return left
++	}
++	return right
++}
+diff --git a/internal/runtime/executor/helps/claude_code_context_test.go b/internal/runtime/executor/helps/claude_code_context_test.go
+new file mode 100644
+index 0000000..e0db25e
+--- /dev/null
++++ b/internal/runtime/executor/helps/claude_code_context_test.go
+@@ -0,0 +1,336 @@
++package helps
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"unicode/utf8"
++
++	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
++	"github.com/tidwall/gjson"
++)
++
++func TestResolveClaudeCodeContextProfilePrefersCodexCatalog(t *testing.T) {
++	dir := t.TempDir()
++	catalogPath := filepath.Join(dir, "models_cache.json")
++	catalog := `{"models":[{"slug":"gpt-5.6-sol","context_window":272000,"max_context_window":272000,"effective_context_window_percent":95}]}`
++	if err := os.WriteFile(catalogPath, []byte(catalog), 0o600); err != nil {
++		t.Fatal(err)
++	}
++
++	profile := resolveClaudeCodeContextProfile(config.ClaudeCodeContextConfig{
++		ModelCatalogPath: catalogPath,
++	}, "gpt-5.6-sol")
++
++	if !profile.ModelCatalogMatched {
++		t.Fatal("model catalog was not used")
++	}
++	if profile.ContextWindow != 272_000 || profile.EffectiveWindow != 258_400 || profile.AutoCompactTokens != 244_800 {
++		t.Fatalf("unexpected profile: %+v", profile)
++	}
++}
++
++func TestExpandClaudeContextPathUsesCurrentUserHome(t *testing.T) {
++	home := claudeContextHomeDir()
++	if home == "" {
++		t.Fatal("current user home is empty")
++	}
++	got := expandClaudeContextPath("~/.config/gpt-in-claude-code/context")
++	want := filepath.Join(home, ".config", "gpt-in-claude-code", "context")
++	if got != want {
++		t.Fatalf("expanded context path = %q, want %q", got, want)
++	}
++}
++
++func TestClaudeCodeContextRearmsAfterNewRequestCrossesThreshold(t *testing.T) {
++	cfg := testClaudeContextConfig(t.TempDir())
++	cfg.Codex.ClaudeCodeContext.ContextWindow = 2_000
++	cfg.Codex.ClaudeCodeContext.EffectiveContextWindowPercent = 95
++	cfg.Codex.ClaudeCodeContext.AutoCompactPercent = 50
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-rearm"}}
++	body := []byte(`{"input":[{"type":"message","role":"user","content":"small"}]}`)
++	prepared, err := PrepareClaudeCodeContext(context.Background(), cfg, "test-model", nil, headers, body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if prepared.NeedsCompaction {
++		t.Fatalf("small request unexpectedly needs compaction: %d tokens", prepared.InputTokens)
++	}
++	if _, err = prepared.InstallRemoteCompaction([]byte(`{"output":[{"type":"compaction","encrypted_content":"opaque"}]}`)); err != nil {
++		t.Fatal(err)
++	}
++	if !prepared.CompactionAttempted || prepared.NoFurtherReduction {
++		t.Fatalf("remote compaction state = attempted=%v noFurtherReduction=%v", prepared.CompactionAttempted, prepared.NoFurtherReduction)
++	}
++	largeBody := []byte(fmt.Sprintf(`{"input":[{"type":"compaction","encrypted_content":"opaque"},{"type":"reasoning","encrypted_content":"%s"}]}`, strings.Repeat("r", 10_000)))
++	if err = prepared.ObserveBody(largeBody); err != nil {
++		t.Fatal(err)
++	}
++	if !prepared.NeedsCompaction || prepared.CompactionAttempted {
++		t.Fatalf("new threshold crossing was not rearmed: needs=%v attempted=%v", prepared.NeedsCompaction, prepared.CompactionAttempted)
++	}
++}
++
++func TestSummarizeContextItemsPreservesUTF8(t *testing.T) {
++	raw := json.RawMessage(fmt.Sprintf(`{"type":"message","role":"user","content":[{"type":"input_text","text":"%s"}]}`, strings.Repeat("你", 2_000)))
++	summary := summarizeContextItems([]json.RawMessage{raw}, 8_000)
++	if !utf8.ValidString(summary) {
++		t.Fatalf("summary is not valid UTF-8: %q", summary)
++	}
++}
++
++func TestClaudeCodeContextCheckpointReplacesMatchingRawPrefix(t *testing.T) {
++	stateDir := t.TempDir()
++	cfg := testClaudeContextConfig(stateDir)
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-checkpoint"}}
++	payload := []byte(`{"metadata":{"user_id":"account_session_session-checkpoint"}}`)
++	firstBody := []byte(`{"model":"gpt-5.6-sol","instructions":"rules","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`)
++
++	first, err := PrepareClaudeCodeContext(context.Background(), cfg, "gpt-5.6-sol", payload, headers, firstBody)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if first == nil || !first.Enabled {
++		t.Fatal("context preparation is disabled")
++	}
++	remote := []byte(`{"output":[{"type":"message","role":"user","content":[{"type":"input_text","text":"retained"}]},{"type":"compaction","encrypted_content":"opaque-summary"}]}`)
++	if _, err = first.InstallRemoteCompaction(remote); err != nil {
++		t.Fatal(err)
++	}
++
++	secondBody := []byte(`{"model":"gpt-5.6-sol","instructions":"rules","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}]}`)
++	second, err := PrepareClaudeCodeContext(context.Background(), cfg, "gpt-5.6-sol", payload, headers, secondBody)
++	if err != nil {
++		t.Fatal(err)
++	}
++	items := gjson.GetBytes(second.Body, "input").Array()
++	if len(items) != 3 {
++		t.Fatalf("active input len = %d, want compact replacement plus new tail; body=%s", len(items), second.Body)
++	}
++	if got := items[1].Get("type").String(); got != "compaction" {
++		t.Fatalf("input[1].type = %q, want compaction", got)
++	}
++	if got := items[2].Get("content.0.text").String(); got != "next" {
++		t.Fatalf("new tail = %q, want next", got)
++	}
++	archives, err := filepath.Glob(filepath.Join(stateDir, "archive", "*.json.gz"))
++	if err != nil || len(archives) != 0 {
++		t.Fatalf("raw transcript archives should be disabled by default: archives=%v err=%v", archives, err)
++	}
++}
++
++func TestClaudeCodeContextRawArchiveIsExplicitAndBounded(t *testing.T) {
++	stateDir := t.TempDir()
++	cfg := testClaudeContextConfig(stateDir)
++	cfg.Codex.ClaudeCodeContext.ArchiveRawInput = true
++	cfg.Codex.ClaudeCodeContext.ArchiveMaxFiles = 1
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-archive"}}
++	body := []byte(`{"input":[{"type":"message","role":"user","content":"first"}]}`)
++	for generation := 0; generation < 2; generation++ {
++		prepared, err := PrepareClaudeCodeContext(context.Background(), cfg, "gpt-5.6-sol", nil, headers, body)
++		if err != nil {
++			t.Fatal(err)
++		}
++		prepared.CompactionAttempted = false
++		if _, err = prepared.InstallRemoteCompaction([]byte(`{"output":[{"type":"compaction","encrypted_content":"opaque"}]}`)); err != nil {
++			t.Fatal(err)
++		}
++	}
++	archives, err := filepath.Glob(filepath.Join(stateDir, "archive", "*.json.gz"))
++	if err != nil || len(archives) != 1 {
++		t.Fatalf("bounded archives = %v, err=%v; want exactly one", archives, err)
++	}
++}
++
++func TestClaudeCodeContextCheckpointRejectsChangedPrefix(t *testing.T) {
++	stateDir := t.TempDir()
++	cfg := testClaudeContextConfig(stateDir)
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-mismatch"}}
++	payload := []byte(`{"metadata":{"user_id":"account_session_session-mismatch"}}`)
++	body := []byte(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]}]}`)
++	first, err := PrepareClaudeCodeContext(context.Background(), cfg, "gpt-5.6-sol", payload, headers, body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = first.InstallRemoteCompaction([]byte(`{"output":[{"type":"compaction","encrypted_content":"opaque"}]}`)); err != nil {
++		t.Fatal(err)
++	}
++
++	changed := []byte(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"edited"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"next"}]}]}`)
++	prepared, err := PrepareClaudeCodeContext(context.Background(), cfg, "gpt-5.6-sol", payload, headers, changed)
++	if err != nil {
++		t.Fatal(err)
++	}
++	items := gjson.GetBytes(prepared.Body, "input").Array()
++	if len(items) != 2 || items[0].Get("content.0.text").String() != "edited" {
++		t.Fatalf("stale checkpoint was applied: %s", prepared.Body)
++	}
++}
++
++func TestClaudeCodeContextQuarantinesCorruptCheckpoint(t *testing.T) {
++	stateDir := t.TempDir()
++	cfg := testClaudeContextConfig(stateDir)
++	scope := "claude:session-corrupt:agent:main"
++	checkpointPath := claudeContextCheckpointPath(stateDir, scope, "gpt-5.6-sol")
++	if err := os.WriteFile(checkpointPath, []byte(`{"broken":`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-corrupt"}}
++	body := []byte(`{"input":[{"type":"message","role":"user","content":"hello"}]}`)
++
++	prepared, err := PrepareClaudeCodeContext(context.Background(), cfg, "gpt-5.6-sol", nil, headers, body)
++	if err != nil {
++		t.Fatalf("corrupt checkpoint should self-heal, got %v", err)
++	}
++	if prepared == nil || len(gjson.GetBytes(prepared.Body, "input").Array()) != 1 {
++		t.Fatalf("raw input was not preserved after self-heal: %+v", prepared)
++	}
++	quarantined, _ := filepath.Glob(checkpointPath + ".corrupt-*")
++	if len(quarantined) != 1 {
++		t.Fatalf("quarantined checkpoints = %v, want one", quarantined)
++	}
++}
++
++func TestClaudeCodeContextTriggersBeforeEffectiveBoundary(t *testing.T) {
++	cfg := testClaudeContextConfig(t.TempDir())
++	cfg.Codex.ClaudeCodeContext.ContextWindow = 1_000
++	cfg.Codex.ClaudeCodeContext.EffectiveContextWindowPercent = 95
++	cfg.Codex.ClaudeCodeContext.AutoCompactPercent = 80
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-trigger"}}
++	text := strings.Repeat("x", 3_400)
++	body, _ := json.Marshal(map[string]any{
++		"input": []any{map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": text}}}},
++	})
++	prepared, err := PrepareClaudeCodeContext(context.Background(), cfg, "test-model", nil, headers, body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if prepared.InputTokens < 800 || !prepared.NeedsCompaction {
++		t.Fatalf("input tokens/trigger = %d/%v, want proactive compact", prepared.InputTokens, prepared.NeedsCompaction)
++	}
++}
++
++func TestClaudeCodeContextFixedPrefixFailsExplicitly(t *testing.T) {
++	cfg := testClaudeContextConfig(t.TempDir())
++	cfg.Codex.ClaudeCodeContext.ContextWindow = 1_000
++	cfg.Codex.ClaudeCodeContext.EffectiveContextWindowPercent = 50
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-prefix"}}
++	body, _ := json.Marshal(map[string]any{
++		"instructions": strings.Repeat("r", 2_100),
++		"input":        []any{map[string]any{"type": "message", "role": "user", "content": "hello"}},
++	})
++	_, err := PrepareClaudeCodeContext(context.Background(), cfg, "test-model", nil, headers, body)
++	if err == nil || !strings.Contains(err.Error(), "fixed instructions and tool schemas") {
++		t.Fatalf("error = %v, want fixed-prefix diagnostic", err)
++	}
++}
++
++func TestClaudeCodeLocalCompactionRetiresReasoningAndBoundsToolOutput(t *testing.T) {
++	cfg := testClaudeContextConfig(t.TempDir())
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-local"}}
++	items := []any{
++		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "old goal"}}},
++		map[string]any{"type": "reasoning", "encrypted_content": strings.Repeat("z", 100_000), "summary": []any{}},
++		map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "old result"}}},
++		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "current request"}}},
++		map[string]any{"type": "function_call", "call_id": "call-1", "name": "read_file", "arguments": "{}"},
++		map[string]any{"type": "function_call_output", "call_id": "call-1", "output": strings.Repeat("o", 30_000)},
++	}
++	body, _ := json.Marshal(map[string]any{"input": items})
++	prepared, err := PrepareClaudeCodeContext(context.Background(), cfg, "gpt-5.6-sol", nil, headers, body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	compacted, err := prepared.InstallLocalCompaction("test fallback")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if strings.Contains(string(compacted), strings.Repeat("z", 1_000)) {
++		t.Fatal("opaque reasoning ciphertext survived local compaction")
++	}
++	var toolOutput string
++	for _, item := range gjson.GetBytes(compacted, "input").Array() {
++		if item.Get("type").String() == "function_call_output" {
++			toolOutput = item.Get("output").String()
++		}
++	}
++	if len(toolOutput) == 0 || len(toolOutput) > localToolOutputMaxChars+200 {
++		t.Fatalf("tool output chars = %d, want present and bounded", len(toolOutput))
++	}
++	if !strings.Contains(string(compacted), "current request") {
++		t.Fatal("live user request was not retained")
++	}
++}
++
++func TestClaudeCodeContextDoesNotRecompactSameIrreducibleRawPrefix(t *testing.T) {
++	stateDir := t.TempDir()
++	cfg := testClaudeContextConfig(stateDir)
++	cfg.Codex.ClaudeCodeContext.ContextWindow = 2_000
++	cfg.Codex.ClaudeCodeContext.EffectiveContextWindowPercent = 95
++	cfg.Codex.ClaudeCodeContext.AutoCompactPercent = 50
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-irreducible"}}
++	body, _ := json.Marshal(map[string]any{
++		"input": []any{map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": strings.Repeat("x", 5_000)}}}},
++	})
++	first, err := PrepareClaudeCodeContext(context.Background(), cfg, "test-model", nil, headers, body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = first.InstallLocalCompaction("test irreducible turn"); err != nil {
++		t.Fatal(err)
++	}
++	second, err := PrepareClaudeCodeContext(context.Background(), cfg, "test-model", nil, headers, body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !second.NeedsCompaction || !second.CompactionAttempted {
++		t.Fatalf("same raw prefix should be marked already attempted: needs=%v attempted=%v", second.NeedsCompaction, second.CompactionAttempted)
++	}
++}
++
++func TestClaudeCodeLocalCompactionPreservesToolPairsAcrossTailBoundary(t *testing.T) {
++	cfg := testClaudeContextConfig(t.TempDir())
++	headers := http.Header{ClaudeCodeSessionHeader: []string{"session-pairs"}}
++	items := []any{
++		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "inspect the repository"}}},
++		map[string]any{"type": "function_call", "call_id": "call-boundary", "name": "read_file", "arguments": "{}"},
++	}
++	for index := 0; index < 30; index++ {
++		items = append(items, map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": fmt.Sprintf("progress %d", index)}}})
++	}
++	items = append(items, map[string]any{"type": "function_call_output", "call_id": "call-boundary", "output": "done"})
++	body, _ := json.Marshal(map[string]any{"input": items})
++	prepared, err := PrepareClaudeCodeContext(context.Background(), cfg, "gpt-5.6-sol", nil, headers, body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	compacted, err := prepared.InstallLocalCompaction("pair test")
++	if err != nil {
++		t.Fatal(err)
++	}
++	callFound := false
++	outputFound := false
++	for _, item := range gjson.GetBytes(compacted, "input").Array() {
++		callFound = callFound || (item.Get("type").String() == "function_call" && item.Get("call_id").String() == "call-boundary")
++		outputFound = outputFound || (item.Get("type").String() == "function_call_output" && item.Get("call_id").String() == "call-boundary")
++	}
++	if !callFound || !outputFound {
++		t.Fatalf("tool pair was split by compaction: call=%v output=%v body=%s", callFound, outputFound, compacted)
++	}
++}
++
++func testClaudeContextConfig(stateDir string) *config.Config {
++	return &config.Config{Codex: config.CodexConfig{ClaudeCodeContext: config.ClaudeCodeContextConfig{
++		Enabled:                       true,
++		StateDir:                      stateDir,
++		ContextWindow:                 272_000,
++		EffectiveContextWindowPercent: 95,
++		AutoCompactPercent:            90,
++		PostCompactPercent:            60,
++	}}}
++}
+diff --git a/sdk/api/handlers/claude/code_handlers.go b/sdk/api/handlers/claude/code_handlers.go
+index 16a75d8..0dba45f 100644
+--- a/sdk/api/handlers/claude/code_handlers.go
++++ b/sdk/api/handlers/claude/code_handlers.go
+@@ -446,18 +446,26 @@ func claudeErrorDetailFromText(status int, errText string) (string, string) {
+ 		message = http.StatusText(status)
+ 	}
+ 	errType := claudeErrorTypeFromStatus(status)
++	errCode := ""
+ 
+ 	var payload map[string]any
+ 	if json.Valid([]byte(message)) {
+ 		if err := json.Unmarshal([]byte(message), &payload); err == nil {
+ 			if e, ok := payload["error"].(map[string]any); ok {
++				nestedMessage := ""
+ 				if t, ok := e["type"].(string); ok && strings.TrimSpace(t) != "" {
+ 					errType = strings.TrimSpace(t)
+ 				}
+ 				if m, ok := e["message"].(string); ok && strings.TrimSpace(m) != "" {
+-					message = strings.TrimSpace(m)
+-				} else if c, ok := e["code"].(string); ok && strings.TrimSpace(c) != "" {
+-					message = strings.TrimSpace(c)
++					nestedMessage = strings.TrimSpace(m)
++				}
++				if c, ok := e["code"].(string); ok && strings.TrimSpace(c) != "" {
++					errCode = strings.TrimSpace(c)
++				}
++				if nestedMessage != "" {
++					message = nestedMessage
++				} else if errCode != "" {
++					message = errCode
+ 				}
+ 			} else {
+ 				if t, ok := payload["type"].(string); ok && strings.TrimSpace(t) != "" && strings.TrimSpace(t) != "error" {
+@@ -469,10 +477,30 @@ func claudeErrorDetailFromText(status int, errText string) (string, string) {
+ 			}
+ 		}
+ 	}
++	if claudeContextWindowError(errCode, message) {
++		// Claude Code uses this stable phrase to enter its compaction path. Codex
++		// emits context_too_large with different prose, which Claude otherwise
++		// treats as an ordinary API failure and retries without shrinking history.
++		errType = "invalid_request_error"
++		message = "prompt is too long"
++	}
+ 
+ 	return errType, message
+ }
+ 
++func claudeContextWindowError(code, message string) bool {
++	switch strings.ToLower(strings.TrimSpace(code)) {
++	case "context_length_exceeded", "context_too_large", "prompt_too_long":
++		return true
++	}
++
++	lower := strings.ToLower(strings.TrimSpace(message))
++	return strings.Contains(lower, "context window") ||
++		strings.Contains(lower, "context length") ||
++		strings.Contains(lower, "prompt is too long") ||
++		strings.Contains(lower, "too many input tokens")
++}
++
+ func claudeErrorTypeFromStatus(status int) string {
+ 	switch status {
+ 	case http.StatusUnauthorized:
+diff --git a/sdk/api/handlers/claude/code_handlers_error_test.go b/sdk/api/handlers/claude/code_handlers_error_test.go
+index 5ba9dd0..5fb71a0 100644
+--- a/sdk/api/handlers/claude/code_handlers_error_test.go
++++ b/sdk/api/handlers/claude/code_handlers_error_test.go
+@@ -11,7 +11,7 @@ import (
+ 	"github.com/tidwall/gjson"
+ )
+ 
+-func TestClaudeErrorExtractsOpenAIStyleUpstreamJSON(t *testing.T) {
++func TestClaudeErrorNormalizesOpenAIContextOverflowForClaudeCode(t *testing.T) {
+ 	handler := &ClaudeCodeAPIHandler{}
+ 	msg := &interfaces.ErrorMessage{
+ 		StatusCode: http.StatusBadRequest,
+@@ -26,8 +26,8 @@ func TestClaudeErrorExtractsOpenAIStyleUpstreamJSON(t *testing.T) {
+ 	if got.Error.Type != "invalid_request_error" {
+ 		t.Fatalf("error.type = %q, want invalid_request_error", got.Error.Type)
+ 	}
+-	if got.Error.Message != "Your input exceeds the context window of this model. Please adjust your input and try again." {
+-		t.Fatalf("error.message = %q", got.Error.Message)
++	if got.Error.Message != "prompt is too long" {
++		t.Fatalf("error.message = %q, want Claude Code compact trigger", got.Error.Message)
+ 	}
+ }
+ 
+@@ -70,8 +70,25 @@ func TestWriteClaudeErrorResponseUsesClaudeEnvelope(t *testing.T) {
+ 	if got := gjson.GetBytes(body, "error.type").String(); got != "invalid_request_error" {
+ 		t.Fatalf("error.type = %q, want invalid_request_error; body=%s", got, body)
+ 	}
+-	if got := gjson.GetBytes(body, "error.message").String(); got != "Your input exceeds the context window of this model. Please adjust your input and try again." {
+-		t.Fatalf("error.message = %q; body=%s", got, body)
++	if got := gjson.GetBytes(body, "error.message").String(); got != "prompt is too long" {
++		t.Fatalf("error.message = %q, want Claude Code compact trigger; body=%s", got, body)
++	}
++}
++
++func TestClaudeErrorNormalizesPlainContextWindowMessageForClaudeCode(t *testing.T) {
++	handler := &ClaudeCodeAPIHandler{}
++	msg := &interfaces.ErrorMessage{
++		StatusCode: http.StatusBadRequest,
++		Error:      errors.New("maximum context length exceeded"),
++	}
++
++	got := handler.toClaudeError(msg)
++
++	if got.Error.Type != "invalid_request_error" {
++		t.Fatalf("error.type = %q, want invalid_request_error", got.Error.Type)
++	}
++	if got.Error.Message != "prompt is too long" {
++		t.Fatalf("error.message = %q, want Claude Code compact trigger", got.Error.Message)
+ 	}
+ }
+ 
+-- 
+2.44.0.windows.1
+

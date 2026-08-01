@@ -7,7 +7,10 @@ version="${1:-$(node -p 'require(process.argv[1]).version' "$root/package.json")
 manifest_version=$(node -p 'require(process.argv[1]).version' "$root/package.json")
 [[ "$version" == "$manifest_version" ]] || { printf 'release version %s does not match package.json %s\n' "$version" "$manifest_version" >&2; exit 2; }
 
-command -v unzip >/dev/null 2>&1 || { printf '%s\n' 'unzip is required to verify release assets' >&2; exit 1; }
+if ! command -v unzip >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+  printf '%s\n' 'unzip or Python 3 is required to verify release assets' >&2
+  exit 1
+fi
 command -v tar >/dev/null 2>&1 || { printf '%s\n' 'tar is required to verify release assets' >&2; exit 1; }
 
 # This is the complete release payload. Keep it explicit: recursively copying
@@ -24,7 +27,7 @@ files=(
   docs/development.md docs/installation.md docs/package-managers.md docs/skills.md
   docs/troubleshooting.md docs/usage.md
   skills/usage-limit/SKILL.md skills/usage-limit/SKILL.windows.md
-  proxy/manifest.json patches/0001-fix-continue-Codex-reasoning-only-incomplete-respons.patch patches/README.md
+  proxy/manifest.json patches/0001-fix-continue-Codex-reasoning-only-incomplete-respons.patch patches/0002-fix-manage-Claude-context-with-Codex-compaction.patch patches/README.md
   third_party/CLAUDEX_LICENSE.txt third_party/CLIPROXYAPI_LICENSE.txt
 )
 
@@ -83,6 +86,7 @@ required_release_files=(
   UPSTREAM.md
   proxy/manifest.json
   patches/0001-fix-continue-Codex-reasoning-only-incomplete-respons.patch
+  patches/0002-fix-manage-Claude-context-with-Codex-compaction.patch
   third_party/CLAUDEX_LICENSE.txt
   third_party/CLIPROXYAPI_LICENSE.txt
   bin/gicc-package.mjs
@@ -92,7 +96,18 @@ required_release_files=(
   skills/usage-limit/SKILL.windows.md
 )
 tar_listing=$(tar -tzf "$dist/gicc-$version.tar.gz")
-zip_listing=$(unzip -Z1 "$dist/gicc-$version-windows.zip")
+if command -v unzip >/dev/null 2>&1; then
+  zip_listing=$(unzip -Z1 "$dist/gicc-$version-windows.zip")
+else
+  zip_listing=$(python3 - "$dist/gicc-$version-windows.zip" <<'PY'
+import sys
+from zipfile import ZipFile
+
+with ZipFile(sys.argv[1]) as archive_file:
+    print("\n".join(archive_file.namelist()))
+PY
+  )
+fi
 for required in "${required_release_files[@]}"; do
   grep -Fx "gicc-$version/$required" <<<"$tar_listing" >/dev/null || {
     printf 'release tarball is missing %s\n' "$required" >&2

@@ -1237,8 +1237,8 @@ process.stdout.write(JSON.stringify({ addDirs: [], pluginDirs: [], instructions:
     Assert-True ($output.Contains('CONCURRENCY=1')) 'stable tool concurrency'
     Assert-True ($output.Contains('RETRIES=4')) 'bounded retries cover bridge recovery'
     Assert-True ($output.Contains('OUTPUT_TOKENS=128000')) 'maximum tested Claude output budget'
-    Assert-True ($output.Contains('CONTEXT=400000')) 'context window'
-    Assert-True ($output.Contains('COMPACT=280000')) 'compaction window'
+    Assert-True ($output.Contains('CONTEXT=272000')) 'context window'
+    Assert-True ($output.Contains('COMPACT=244800')) 'compaction window'
     Assert-True ($output.Contains('NO_FLICKER=1')) 'stable rendering'
     Assert-True ($output.Contains('ACCESSIBILITY=1')) 'native terminal cursor'
     Assert-True ($output.Contains('DISABLE_1M=1')) 'proxied sessions hide the unsupported Anthropic 1M selector'
@@ -2451,7 +2451,7 @@ process.stdout.write(JSON.stringify({
     $doctor = (& (Join-Path $root 'gicc.ps1') --doctor | Out-String)
     Assert-True ($doctor.Contains('CLIProxyAPI: CLIProxyAPI test')) 'proxy version first line'
     Assert-True (-not $doctor.Contains('extra version detail')) 'proxy version extra lines hidden'
-    Assert-True ($doctor.Contains('Automatic compaction window: 280000 tokens')) 'doctor compaction'
+    Assert-True ($doctor.Contains('Automatic compaction window: 244800 tokens')) 'doctor compaction'
     Assert-True ($doctor.Contains('Task lifecycle: owned by Sol with final response reconciliation')) 'doctor task lifecycle'
     Assert-True ($doctor.Contains('Managed agents: Terra (high), Luna (medium)')) 'doctor managed agent efforts'
     Assert-True ($doctor.Contains('Context status: stable session')) 'doctor context stabilization'
@@ -3204,7 +3204,7 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
         (Join-Path $env:GICC_BIN_DIR 'gicc.cmd'),
         (Join-Path $env:GICC_CONFIG_DIR 'env'),
         (Join-Path $env:GICC_CONFIG_DIR 'cliproxyapi.yaml'),
-        (Join-Path $env:GICC_CONFIG_DIR 'bin\gicc-proxy-7.2.91-gicc.1.exe'),
+        (Join-Path $env:GICC_CONFIG_DIR 'bin\gicc-proxy-7.2.91-gicc.2.exe'),
         (Join-Path $env:GICC_CONFIG_DIR 'settings.json'),
         (Join-Path $env:GICC_CONFIG_DIR 'statusline.ps1'),
         (Join-Path $env:GICC_CONFIG_DIR 'usage-limit.ps1'),

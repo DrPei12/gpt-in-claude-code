@@ -946,8 +946,8 @@ $toolConcurrency = Env-OrDefault 'GICC_MAX_TOOL_USE_CONCURRENCY' '1'
 $agentConcurrency = Env-OrDefault 'GICC_MAX_AGENT_CONCURRENCY' '1'
 $maxRetries = Env-OrDefault 'GICC_MAX_RETRIES' '4'
 $maxOutputTokens = Env-OrDefault 'GICC_MAX_OUTPUT_TOKENS' '128000'
-$contextWindow = Env-OrDefault 'GICC_CONTEXT_WINDOW' '400000'
-$compactWindow = Env-OrDefault 'GICC_AUTO_COMPACT_WINDOW' '280000'
+$contextWindow = Env-OrDefault 'GICC_CONTEXT_WINDOW' '272000'
+$compactWindow = Env-OrDefault 'GICC_AUTO_COMPACT_WINDOW' '244800'
 $mousePointer = Env-OrDefault 'GICC_MOUSE_POINTER_SHAPE' 'pointer'
 $usageDisplay = Env-OrDefault 'GICC_USAGE_DISPLAY' 'on'
 $usageRefresh = Env-OrDefault 'GICC_USAGE_REFRESH_SECONDS' '300'
@@ -1106,7 +1106,7 @@ if (-not $earlyRuntimeBypass) {
     if ($instructionBridgeMode -notin @('on', 'off')) { Fail 'GICC_INSTRUCTION_BRIDGE must be on or off.' 2 }
 } else {
     $toolConcurrencyNumber = 1; $agentConcurrencyNumber = 1; $maxRetriesNumber = 4; $maxOutputTokensNumber = 128000
-    $contextWindowNumber = 400000; $compactWindowNumber = 280000
+    $contextWindowNumber = 272000; $compactWindowNumber = 244800
     $usageRefreshNumber = 300; $usageTimeoutNumber = 8; $usageMaxStaleNumber = 86400; $usageAlertNumber = 20
     $claudeUpdateIntervalNumber = 86400; $giccUpdateIntervalNumber = 86400
     if ($mousePointer -notin @('pointer', 'default', 'off')) { $mousePointer = 'pointer' }

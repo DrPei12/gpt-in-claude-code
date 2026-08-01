@@ -98,12 +98,12 @@ jobs:
           assets=(
             "gicc-$version.tar.gz"
             "gicc-$version-windows.zip"
-            gicc-proxy_7.2.91-gicc.1_darwin_aarch64.tar.gz
-            gicc-proxy_7.2.91-gicc.1_darwin_amd64.tar.gz
-            gicc-proxy_7.2.91-gicc.1_linux_aarch64.tar.gz
-            gicc-proxy_7.2.91-gicc.1_linux_amd64.tar.gz
-            gicc-proxy_7.2.91-gicc.1_windows_aarch64.zip
-            gicc-proxy_7.2.91-gicc.1_windows_amd64.zip
+            gicc-proxy_7.2.91-gicc.2_darwin_aarch64.tar.gz
+            gicc-proxy_7.2.91-gicc.2_darwin_amd64.tar.gz
+            gicc-proxy_7.2.91-gicc.2_linux_aarch64.tar.gz
+            gicc-proxy_7.2.91-gicc.2_linux_amd64.tar.gz
+            gicc-proxy_7.2.91-gicc.2_windows_aarch64.zip
+            gicc-proxy_7.2.91-gicc.2_windows_amd64.zip
             SHA256SUMS
           )
           release=$(gh release view "$RELEASE_TAG" --json isDraft,assets)
@@ -143,12 +143,12 @@ jobs:
           assets=(
             "gicc-$version.tar.gz"
             "gicc-$version-windows.zip"
-            gicc-proxy_7.2.91-gicc.1_darwin_aarch64.tar.gz
-            gicc-proxy_7.2.91-gicc.1_darwin_amd64.tar.gz
-            gicc-proxy_7.2.91-gicc.1_linux_aarch64.tar.gz
-            gicc-proxy_7.2.91-gicc.1_linux_amd64.tar.gz
-            gicc-proxy_7.2.91-gicc.1_windows_aarch64.zip
-            gicc-proxy_7.2.91-gicc.1_windows_amd64.zip
+            gicc-proxy_7.2.91-gicc.2_darwin_aarch64.tar.gz
+            gicc-proxy_7.2.91-gicc.2_darwin_amd64.tar.gz
+            gicc-proxy_7.2.91-gicc.2_linux_aarch64.tar.gz
+            gicc-proxy_7.2.91-gicc.2_linux_amd64.tar.gz
+            gicc-proxy_7.2.91-gicc.2_windows_aarch64.zip
+            gicc-proxy_7.2.91-gicc.2_windows_amd64.zip
             SHA256SUMS
           )
           for asset in "${assets[@]}"; do

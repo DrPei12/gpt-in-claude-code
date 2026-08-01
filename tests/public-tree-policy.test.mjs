@@ -4,6 +4,8 @@ import { inspectPublicContent, inspectPublicPath } from '../scripts/public-tree-
 const slash = String.fromCharCode(92);
 const windowsUserPath = ['C:', 'Users', 'example-user', 'auth.json'].join(slash);
 const windowsToolPath = ['D:', 'Tools', 'private-bridge', 'config.yaml'].join(slash);
+const windowsUserForwardSlashPath = ['C:', 'Users', 'example-user', 'auth.json'].join('/');
+const windowsToolForwardSlashPath = ['D:', 'Tools', 'private-bridge', 'config.yaml'].join('/');
 const posixUserPath = ['', 'home', 'example-user', '.config', 'service', 'auth.json'].join('/');
 
 function inspect(text, environment = {}) {
@@ -12,6 +14,8 @@ function inspect(text, environment = {}) {
 
 assert(inspect(windowsUserPath).includes('detected local Windows user path'));
 assert(inspect(windowsToolPath).includes('detected local Windows workspace path'));
+assert(inspect(windowsUserForwardSlashPath).includes('detected local Windows user path'));
+assert(inspect(windowsToolForwardSlashPath).includes('detected local Windows workspace path'));
 assert(inspect(`config=${posixUserPath}`).includes('detected local POSIX user path'));
 assert(inspect(`path=${windowsUserPath}`, { USERPROFILE: windowsUserPath })
   .includes('detected current machine identifier'));

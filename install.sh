@@ -41,6 +41,7 @@ readonly managed_bin_dir="$config_dir/bin"
 readonly managed_node_dir="$config_dir/node"
 readonly managed_proxy="$managed_bin_dir/gicc-proxy"
 readonly auth_dir="$config_dir/codex-accounts"
+readonly context_dir="$config_dir/context"
 readonly env_file="$config_dir/env"
 readonly settings_target="$config_dir/settings.json"
 readonly statusline_target="$config_dir/statusline"
@@ -53,8 +54,8 @@ readonly self_update_target="$config_dir/self-update"
 readonly install_receipt_target="$config_dir/install.json"
 readonly proxy_config_target="$config_dir/cliproxyapi.yaml"
 readonly launcher_target="$bin_dir/gicc"
-readonly proxy_version="7.2.91-gicc.1"
-readonly proxy_release="v0.1.1"
+readonly proxy_version="7.2.91-gicc.2"
+readonly proxy_release="v0.1.2"
 readonly proxy_port="${GICC_PROXY_PORT:-8318}"
 readonly skip_deps="${GICC_SKIP_DEPENDENCY_INSTALL:-0}"
 readonly skip_service="${GICC_SKIP_SERVICE_START:-0}"
@@ -460,10 +461,10 @@ proxy_asset_details() {
     *) fail "unsupported CPU architecture: $(uname -m)" ;;
   esac
   case "${os}_${arch}" in
-    darwin_aarch64) checksum=8bfba8bebc2183c980c35e59dfe65c3b50b254e05708befec4141cd289319fde ;;
-    darwin_amd64) checksum=a7955ea10475574dfbd33107428aa9a29105101f318178e032d5da0beb4544a8 ;;
-    linux_aarch64) checksum=b9fde58933b58bbf0032d8085a2cefb8eb38dc53497c0e0f9abdecbb447abe04 ;;
-    linux_amd64) checksum=0f8c0ffb79992c1e6d9471800d541b85c87c017168b5c30456206e7f153db07d ;;
+    darwin_aarch64) checksum=392d410f5df293a67fede554feec433d70118120996ce26d7c42e4c0c505c226 ;;
+    darwin_amd64) checksum=de9ecf49a62c437da1d2bfd99af55640b8cf989b337595cdc74717293954fd1c ;;
+    linux_aarch64) checksum=bd68d8536c8cf37f5abba45cb7822cbce5fd8624b77cdf1551160b65c2612e49 ;;
+    linux_amd64) checksum=80c5356a9522ee3ae43f7f3ac85d7bc329dcc46eeda5a6c77fa04e7fa7cf5ecf ;;
   esac
   printf '%s %s %s\n' "$os" "$arch" "$checksum"
 }
@@ -508,8 +509,8 @@ else
   # broad write/DeleteChild access. Direct/archive installs own this directory.
   protect_private_launcher_directory "$bin_dir"
 fi
-mkdir -p "$config_dir" "$managed_bin_dir" "$auth_dir"
-chmod 700 "$config_dir" "$managed_bin_dir" "$auth_dir"
+mkdir -p "$config_dir" "$managed_bin_dir" "$auth_dir" "$context_dir"
+chmod 700 "$config_dir" "$managed_bin_dir" "$auth_dir" "$context_dir"
 acquire_install_lock
 trap cleanup EXIT
 recover_incomplete_install_transactions
@@ -582,6 +583,8 @@ fi
 
 json_token=$(printf '%s' "$proxy_token" | jq -Rs '.')
 json_auth_dir=$(printf '%s' "$runtime_auth_dir" | jq -Rs '.')
+json_context_dir=$(printf '%s' "$context_dir" | jq -Rs '.')
+json_model_catalog=$(printf '%s' "$HOME/.codex/models_cache.json" | jq -Rs '.')
 umask 077
 proxy_config_tmp=$(mktemp "$config_dir/.cliproxyapi.yaml.tmp.XXXXXX")
 {
@@ -593,6 +596,14 @@ proxy_config_tmp=$(mktemp "$config_dir/.cliproxyapi.yaml.tmp.XXXXXX")
   printf 'usage-statistics-enabled: false\nrequest-retry: 3\nmax-retry-credentials: 1\n'
   printf 'max-retry-interval: 5\ntransient-error-cooldown-seconds: 1\n'
   printf 'streaming:\n  keepalive-seconds: 15\n  bootstrap-retries: 2\n'
+  printf 'codex:\n  claude-code-context:\n'
+  printf '    enabled: true\n    state-dir: %s\n' "$json_context_dir"
+  printf '    model-catalog-path: %s\n' "$json_model_catalog"
+  printf '    context-window: 0\n    effective-context-window-percent: 0\n'
+  printf '    auto-compact-percent: 0\n    post-compact-percent: 60\n'
+  printf '    local-summary-max-chars: 48000\n    archive-raw-input: false\n'
+  printf '    archive-max-files: 8\n    archive-max-bytes: 268435456\n'
+  printf '    archive-max-age-days: 14\n'
 } > "$proxy_config_tmp"
 chmod 600 "$proxy_config_tmp"
 mv -f "$proxy_config_tmp" "$proxy_config_target"

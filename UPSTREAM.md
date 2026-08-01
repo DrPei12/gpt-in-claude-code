@@ -12,7 +12,7 @@ isolated profile, official Codex login, session resume, skill bridge, doctor,
 update, and argument forwarding behavior. It changes the public name and
 configuration namespace to avoid collision with the upstream command.
 
-The reasoning bridge starts from
+The GICC bridge starts from
 [CLIProxyAPI v7.2.91](https://github.com/router-for-me/CLIProxyAPI/releases/tag/v7.2.91)
 at commit `fde40c5a0a2f8f6808bcde498bc6079f32c355ef`. The verified source archive,
 patch list, build inputs, and release asset digests are recorded in

@@ -16,7 +16,7 @@ const entryName = format === 'zip' ? 'gicc-proxy.exe' : 'gicc-proxy';
 const data = readFileSync(input);
 const fixedMtime = 946684800;
 
-if (!/^gicc-proxy_7\.2\.91-gicc\.1_(?:windows|linux|darwin)_(?:amd64|aarch64)(?:\.exe)?$/.test(basename(input))) {
+if (!/^gicc-proxy_7\.2\.91-gicc\.2_(?:windows|linux|darwin)_(?:amd64|aarch64)(?:\.exe)?$/.test(basename(input))) {
   throw new Error(`unexpected proxy binary name: ${basename(input)}`);
 }
 if (data.length < 1024 * 1024 || data.length > 200 * 1024 * 1024) {

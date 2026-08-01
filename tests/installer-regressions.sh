@@ -54,7 +54,7 @@ exec "$GICC_TEST_REAL_STAT" "$@"
 EOF
 cat > "$config/bin/gicc-proxy" <<'EOF'
 #!/usr/bin/env bash
-[[ "${1:-}" == -version ]] && { printf '%s\n' 'Version: 7.2.91-gicc.1'; exit 0; }
+[[ "${1:-}" == -version ]] && { printf '%s\n' 'Version: 7.2.91-gicc.2'; exit 0; }
 exit 0
 EOF
 chmod +x "$fake_bin/codex" "$fake_bin/claude" "$fake_bin/stat" "$config/bin/gicc-proxy"
@@ -207,7 +207,7 @@ exec "$(command -v npm)" "\$@"
 EOF
 cat > "$managed_config/bin/gicc-proxy" <<'EOF'
 #!/usr/bin/env bash
-[[ "${1:-}" == -version ]] && { printf '%s\n' 'Version: 7.2.91-gicc.1'; exit 0; }
+[[ "${1:-}" == -version ]] && { printf '%s\n' 'Version: 7.2.91-gicc.2'; exit 0; }
 exit 0
 EOF
 cat > "$managed_config/install.json" <<EOF

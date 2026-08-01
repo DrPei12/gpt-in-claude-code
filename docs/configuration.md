@@ -21,9 +21,9 @@ key.
 | `GICC_MAX_TOOL_USE_CONCURRENCY` | `1` | Positive integer; conservative by default to avoid request bursts |
 | `GICC_MAX_AGENT_CONCURRENCY` | `1` | Positive integer; Agent remains available but fan out is bounded |
 | `GICC_MAX_RETRIES` | `4` | Integer from 0 through 15 |
-| `GICC_MAX_OUTPUT_TOKENS` | `128000` | Claude Code output budget; the patched bridge transparently continues reasoning only incomplete responses |
-| `GICC_CONTEXT_WINDOW` | `400000` | Integer from 100000 through 1000000 |
-| `GICC_AUTO_COMPACT_WINDOW` | `280000` | Integer from 100000 through the context window |
+| `GICC_MAX_OUTPUT_TOKENS` | `128000` | Claude Code visible output budget; the bridge continues reasoning only incomplete Responses internally |
+| `GICC_CONTEXT_WINDOW` | `272000` | GPT-5.6 Sol model visible context window; integer from 100000 through 1000000 |
+| `GICC_AUTO_COMPACT_WINDOW` | `244800` | Proactive Codex visible compaction boundary; integer from 100000 through the context window |
 | `GICC_PLAN_MODE_POLICY` | `conservative` | `conservative` or `normal` |
 | `GICC_MOUSE_POINTER_SHAPE` | `pointer` | `pointer`, `default`, or `off` |
 | `GICC_CHROME_CONFIG_DIR` | normal Claude profile | Optional dedicated first party Claude profile |

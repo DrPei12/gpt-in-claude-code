@@ -13,7 +13,7 @@
     "defaultMode": "auto"
   },
   "autoCompactEnabled": true,
-  "autoCompactWindow": 280000,
+  "autoCompactWindow": 244800,
   "precomputeCompactionEnabled": true,
   "verbose": false,
   "tui": "fullscreen",

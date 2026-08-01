@@ -628,7 +628,7 @@ jq -e '
   and .permissions.defaultMode == "auto"
   and (.autoMode | not)
   and .autoCompactEnabled == true
-  and .autoCompactWindow == 280000
+  and .autoCompactWindow == 244800
   and .precomputeCompactionEnabled == true
   and .verbose == false
   and .tui == "fullscreen"
@@ -699,8 +699,8 @@ jq -e '[.additionalModelOptionsCache[] | select(.value == "gpt-5.6-sol")] as $so
 [[ "$default_output" == *'CONCURRENCY=1'* ]]
 [[ "$default_output" == *'RETRIES=4'* ]]
 [[ "$default_output" == *'OUTPUT_TOKENS=128000'* ]]
-[[ "$default_output" == *'CONTEXT=400000'* ]]
-[[ "$default_output" == *'COMPACT=280000'* ]]
+[[ "$default_output" == *'CONTEXT=272000'* ]]
+[[ "$default_output" == *'COMPACT=244800'* ]]
 [[ "$default_output" == *'NO_FLICKER=1'* ]]
 [[ "$default_output" == *'ACCESSIBILITY=1'* ]]
 [[ "$default_output" == *'DISABLE_1M=1'* ]]
@@ -1585,7 +1585,7 @@ doctor_output=$(run_wrapper --doctor)
 [[ "$doctor_output" == *'API retries: 4'* ]]
 [[ "$doctor_output" == *'Claude output budget: 128000 tokens (reasoning continuation enabled)'* ]]
 [[ "$doctor_output" == *'Context window: 400000 tokens'* ]]
-[[ "$doctor_output" == *'Automatic compaction window: 280000 tokens (precompute enabled)'* ]]
+[[ "$doctor_output" == *'Automatic compaction window: 244800 tokens (precompute enabled)'* ]]
 [[ "$doctor_output" == *'Context status: stable session (transient zero suppressed)'* ]]
 [[ "$doctor_output" == *'Codex usage: status line refresh every 300s'* ]]
 [[ "$doctor_output" == *'Rendering: stable mode with native terminal cursor'* ]]
@@ -2072,7 +2072,7 @@ chmod +x "$prefix/bin/codex"
 EOF
 cat > "$codex_install_home/.config/gpt-in-claude-code/bin/gicc-proxy" <<'EOF'
 #!/usr/bin/env bash
-[[ "${1:-}" == -version ]] && { printf '%s\n' 'Version: 7.2.91-gicc.1'; exit; }
+[[ "${1:-}" == -version ]] && { printf '%s\n' 'Version: 7.2.91-gicc.2'; exit; }
 exit 0
 EOF
 chmod +x "$codex_install_bin/npm" "$codex_install_home/.config/gpt-in-claude-code/bin/gicc-proxy"
