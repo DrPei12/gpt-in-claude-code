@@ -647,7 +647,8 @@ settings_tmp=""
 
 install_method="${GICC_INSTALL_METHOD:-}"
 if [[ -z "$install_method" ]]; then
-  if [[ -d "$root/.git" ]]; then install_method=git; else install_method=archive; fi
+  # Normal clones use a .git directory; linked worktrees use a .git file.
+  if [[ -e "$root/.git" ]]; then install_method=git; else install_method=archive; fi
 fi
 [[ "$install_method" =~ ^(homebrew|scoop|winget|archive|git)$ ]] || fail "unsupported GICC_INSTALL_METHOD: $install_method"
 install_version=$(jq -r '.version' "$root/package.json")

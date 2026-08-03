@@ -431,8 +431,6 @@ fi
 : "${GICC_PERMISSION_MODE:=auto}"
 : "${GICC_AUTO_MODE_MODEL:=gpt-5.6-terra}"
 : "${GICC_BACKGROUND_MODEL:=gpt-5.6-luna}"
-: "${GICC_MAX_TOOL_USE_CONCURRENCY:=1}"
-: "${GICC_MAX_AGENT_CONCURRENCY:=1}"
 : "${GICC_MAX_RETRIES:=4}"
 : "${GICC_MAX_OUTPUT_TOKENS:=128000}"
 : "${GICC_CONTEXT_WINDOW:=272000}"
@@ -532,16 +530,6 @@ if (( ! early_runtime_bypass )); then for codex_model_setting in GICC_AUTO_MODE_
 done; fi
 
 if (( ! early_runtime_bypass )); then
-if [[ ! "$GICC_MAX_TOOL_USE_CONCURRENCY" =~ ^[0-9]+$ ]] || (( GICC_MAX_TOOL_USE_CONCURRENCY < 1 )); then
-  printf '%s\n' "gicc: GICC_MAX_TOOL_USE_CONCURRENCY must be a positive integer." >&2
-  exit 2
-fi
-
-if [[ ! "$GICC_MAX_AGENT_CONCURRENCY" =~ ^[0-9]+$ ]] || (( GICC_MAX_AGENT_CONCURRENCY < 1 )); then
-  printf '%s\n' "gicc: GICC_MAX_AGENT_CONCURRENCY must be a positive integer." >&2
-  exit 2
-fi
-
 if [[ ! "$GICC_MAX_RETRIES" =~ ^[0-9]+$ ]] || (( GICC_MAX_RETRIES > 15 )); then
   printf '%s\n' "gicc: GICC_MAX_RETRIES must be an integer from 0 to 15." >&2
   exit 2
@@ -997,7 +985,7 @@ owned_lock_nonce=""
 acquire_owned_lock() {
   local lock_dir="$1" attempts="${2:-100}" delay="${3:-0.02}" legacy_ownerless_seconds="${4:-60}"
   local attempt owner_file observed_nonce age pid_file owner_pid owner_identity owner_tmp generation_tmp generation_nonce quarantine
-  local publication_ok generation_published owner_published legacy_pid legacy_owner_present
+  local publication_ok publication_failed generation_published owner_published legacy_pid legacy_owner_present
   local directory_identity current_directory_identity directory_replaced
   owned_lock_directory=""
   owned_lock_nonce=""
@@ -1026,6 +1014,7 @@ acquire_owned_lock() {
       directory_identity=$(lock_directory_identity "$lock_dir" || true)
       lock_test_pause AFTER_MKDIR "$lock_dir"
       publication_ok=0
+      publication_failed=0
       generation_published=0
       owner_published=0
       directory_replaced=0
@@ -1046,8 +1035,12 @@ acquire_owned_lock() {
                   && ! lock_directory_has_unknown_entries "$lock_dir"; then
                 publication_ok=1
               fi
+            else
+              publication_failed=1
             fi
           fi
+        else
+          publication_failed=1
         fi
       fi
       if (( publication_ok )); then
@@ -1106,6 +1099,10 @@ acquire_owned_lock() {
       else
         remove_incomplete_lock_directory "$lock_dir" "$generation_nonce" || true
       fi
+      # Publication failure inside a newly created, identity-verified lock
+      # directory is not contention. Repeating the same unsupported or denied
+      # filesystem operation only stalls each independent startup lock.
+      (( ! publication_failed )) || return 1
       sleep "$delay"
       continue
     fi
@@ -2076,9 +2073,9 @@ doctor() {
   printf '%s\n' "Auto mode provider: Codex/OpenAI through the authenticated loopback bridge"
   printf '%s\n' 'Delegated models: native routing for each agent (Sol is reserved for the leader)'
   printf '%s\n' 'Managed agents: Terra (high), Luna (medium)'
-  printf '%s\n' "Tool concurrency: ${GICC_MAX_TOOL_USE_CONCURRENCY}"
-  printf '%s\n' "Agent concurrency: ${GICC_MAX_AGENT_CONCURRENCY}"
-  printf '%s\n' "Task lifecycle: owned by Sol with final response reconciliation"
+  printf '%s\n' 'Tool concurrency: native Claude Code scheduling (no GICC limit)'
+  printf '%s\n' 'Agent concurrency: model-directed native scheduling (no GICC limit)'
+  printf '%s\n' 'Task lifecycle: native Claude Code ownership with final reconciliation'
   printf '%s\n' "API retries: ${GICC_MAX_RETRIES}"
   printf '%s\n' "Claude output budget: ${GICC_MAX_OUTPUT_TOKENS} tokens (reasoning continuation enabled)"
   printf '%s\n' "Context window: ${GICC_CONTEXT_WINDOW} tokens"
@@ -2520,7 +2517,9 @@ if (( use_proxy )); then
   # untouched so Claude Code's native routing remains available for every other
   # Agent invocation.
   export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=1
-  export CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY="$GICC_MAX_TOOL_USE_CONCURRENCY"
+  # v0.1.3 leaves tool and Agent concurrency to Claude Code's native scheduler
+  # and the model. Clear caps inherited from older GICC launches.
+  unset CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY
   export CLAUDE_CODE_MAX_RETRIES="$GICC_MAX_RETRIES"
   export CLAUDE_CODE_MAX_OUTPUT_TOKENS="$GICC_MAX_OUTPUT_TOKENS"
 
@@ -2542,19 +2541,16 @@ export GICC_USAGE_SOURCE GICC_USAGE_ALERT_PERCENT
 export CLAUDE_CODE_NO_FLICKER=1
 export CLAUDE_CODE_ACCESSIBILITY=1
 
-# One proxy credential backs all three aliases. Custom agents must not recursively
-# spawn more agents, or a small parallel batch becomes a retry/429 storm.
-readonly no_nested_agents="Do not spawn or delegate to additional agents, or send intermediate progress messages to the parent. Unless you are a teammate in a native Agent Team that the user explicitly requested, do not create, claim, or update entries in a shared task list; ordinary Agent task lifecycle belongs to the Sol leader. Complete the assigned task yourself and return one final result through the normal agent result channel. If the provider reports a 429 or model cooldown, do not launch a replacement agent or start a retry loop."
-readonly gicc_agents="{\"Terra (high)\":{\"description\":\"Terra at high reasoning effort for delegated architecture, debugging, implementation, testing, security review, and other substantial engineering work.\",\"prompt\":\"You are GPT-5.6 Terra running at high reasoning effort. Investigate thoroughly, make robust focused progress, verify the result, and return concise findings backed by evidence. ${no_nested_agents}\",\"model\":\"gpt-5.6-terra\",\"effort\":\"high\"},\"Luna (medium)\":{\"description\":\"Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.\",\"prompt\":\"You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. ${no_nested_agents}\",\"model\":\"gpt-5.6-luna\",\"effort\":\"medium\"}}"
-readonly gicc_capacity_guard="GICC capacity rule: keep at most ${GICC_MAX_AGENT_CONCURRENCY} delegated workers active at once across Agent tasks and native Agent Teams. For ordinary delegation, launch no more than ${GICC_MAX_AGENT_CONCURRENCY} named agents in a wave and wait for one to finish before starting another. Create a native Agent Team only when the user explicitly requests one, and keep its active teammates within the same ${GICC_MAX_AGENT_CONCURRENCY}-worker limit. Sol capacity is reserved for the leader; use the named Terra (high) or Luna (medium) agents for delegated work. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'. If a model reports a 429 or cooldown, do not launch replacement agents or create a retry storm; continue useful local work and retry at most once after active agents settle."
-readonly gicc_task_guard="GICC task lifecycle rule: outside an explicitly requested native Agent Team, the Sol leader is the sole owner of the shared task list. Keep it compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while the leader or a currently active agent is working on it; queued or blocked work stays pending. After every agent result, immediately reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done."
+readonly gicc_agents="{\"Terra (high)\":{\"description\":\"Terra at high reasoning effort for delegated architecture, debugging, implementation, testing, security review, and other substantial engineering work.\",\"prompt\":\"You are GPT-5.6 Terra running at high reasoning effort. Investigate thoroughly, make robust focused progress, verify the result, and return concise findings backed by evidence. Native Dynamic Workflow, Agent delegation, and further subagent delegation are available when useful; let task requirements and Claude Code's scheduler determine fan-out.\",\"model\":\"gpt-5.6-terra\",\"effort\":\"high\"},\"Luna (medium)\":{\"description\":\"Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.\",\"prompt\":\"You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. Native Dynamic Workflow, Agent delegation, and further subagent delegation are available when useful; let task requirements and Claude Code's scheduler determine fan-out.\",\"model\":\"gpt-5.6-luna\",\"effort\":\"medium\"}}"
+readonly gicc_dynamic_workflow_guard="GICC dynamic workflow rule: Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation, and native Agent Teams remain available. Do not impose a fixed tool or Agent concurrency limit; choose fan-out from the task and let Claude Code's native scheduler enforce runtime capacity. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'."
+readonly gicc_task_guard="GICC task lifecycle rule: use Claude Code's native task ownership semantics across the leader, Dynamic Workflow, nested subagents, and Agent Teams. Keep task state compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while a current worker is working on it; queued or blocked work stays pending. After every worker result, reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done."
 readonly gicc_codex_guard="GICC Codex model rule: operate as a Codex coding agent inside Claude Code's interface. Treat the available Claude Code tools and their schemas as the authoritative execution protocol. Prefer direct implementation and verification for concrete change requests. Ask as few questions as possible: inspect available context first, make safe reasonable assumptions, and continue without confirmation for routine, reversible work inside the requested scope. Never repeat a question the user already answered. Ask only when the missing answer cannot be discovered and would materially change the result, authorize a meaningful scope expansion, or precede an irreversible action. Treat the user's explicit approval as decisive for the specifically named action and target: after a soft auto mode denial, ask for precise consent only when it is missing, then retry once when the user grants it instead of claiming the denial is permanent. Hard deny security boundaries still apply. Do not invent unsupported provider behavior, do not expose raw internal tool protocol, and keep progress updates concise and based on evidence."
 if [[ "$GICC_PLAN_MODE_POLICY" == conservative ]]; then
   readonly gicc_plan_guard="GICC plan mode rule: remain in the current execution mode by default. Do not call EnterPlanMode or switch into plan permission mode merely because work is large, complex, unfamiliar, or benefits from private reasoning. Enter plan mode only when the user explicitly asks for a planning or design only response, when a required user decision would materially change the implementation, or when the requested action is irreversible and needs approval before execution. For ordinary bug fixes and implementation requests, inspect, implement, test, and report directly."
 else
   readonly gicc_plan_guard=""
 fi
-readonly gicc_leader_guard="${gicc_capacity_guard}
+readonly gicc_leader_guard="${gicc_dynamic_workflow_guard}
 
 ${gicc_task_guard}
 

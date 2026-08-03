@@ -46,8 +46,9 @@ Run `gicc --doctor`. The signed in account must advertise Sol, Terra, and
 Luna. Sign into the intended Codex account, update Codex and GICC, and try
 again. GICC will not silently map an unavailable model to a different one.
 
-Temporary provider outages and cooldowns are upstream conditions. GICC
-bounds retries and agent concurrency to avoid turning them into retry storms.
+Temporary provider outages and cooldowns are upstream conditions. GICC bounds
+bridge request retries, while Claude Code's native scheduler and the model own
+tool and Agent concurrency without a GICC fixed limit.
 The managed bridge retries transient upstream 500/502/503/504 responses before
 Claude Code sees them, including failures before the first stream byte. A red
 API error that remains after those bounded retries is a persistent failure and

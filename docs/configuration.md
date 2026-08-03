@@ -18,8 +18,6 @@ key.
 | `GICC_PERMISSION_MODE` | `auto` | `manual`, `auto`, `acceptEdits`, `dontAsk`, or `plan` |
 | `GICC_AUTO_MODE_MODEL` | `gpt-5.6-terra` | Auto mode classifier model; restricted to managed Codex GPT models |
 | `GICC_BACKGROUND_MODEL` | `gpt-5.6-luna` | Background classifier model |
-| `GICC_MAX_TOOL_USE_CONCURRENCY` | `1` | Positive integer; conservative by default to avoid request bursts |
-| `GICC_MAX_AGENT_CONCURRENCY` | `1` | Positive integer; Agent remains available but fan out is bounded |
 | `GICC_MAX_RETRIES` | `4` | Integer from 0 through 15 |
 | `GICC_MAX_OUTPUT_TOKENS` | `128000` | Claude Code visible output budget; the bridge continues reasoning only incomplete Responses internally |
 | `GICC_CONTEXT_WINDOW` | `272000` | GPT-5.6 Sol model visible context window; integer from 100000 through 1000000 |

@@ -4,6 +4,13 @@ All notable changes to this independent distribution are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation,
+  and native Agent Teams now use Claude Code's native scheduling, directed by
+  the model.
+  GICC no longer sets fixed Tool or Agent concurrency limits.
+
 ## [0.1.2] - 2026-08-01
 
 ### Fixed

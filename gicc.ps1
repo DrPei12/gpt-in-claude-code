@@ -591,6 +591,7 @@ function Acquire-OwnedLock([string] $LockDirectory, [int] $Attempts = 100, [int]
         $created = $false
         $ownerPublished = $false
         $generationPublished = $false
+        $publicationFailed = $false
         $ownerTemporary = ''
         $generationTemporary = ''
         $directoryIdentity = ''
@@ -611,11 +612,13 @@ function Acquire-OwnedLock([string] $LockDirectory, [int] $Attempts = 100, [int]
             Invoke-LockTestPause 'AFTER_MKDIR' $LockDirectory
             $directoryReplaced = -not $directoryIdentity -or (Get-LockDirectoryIdentity $LockDirectory) -ne $directoryIdentity
             if ($directoryReplaced) { throw 'lock directory identity changed' }
-            Publish-LockFile $generationTemporary (Join-Path $LockDirectory 'generation')
+            try { Publish-LockFile $generationTemporary (Join-Path $LockDirectory 'generation') }
+            catch { $publicationFailed = $true; throw }
             $generationPublished = $true
             if ((Get-LockDirectoryIdentity $LockDirectory) -ne $directoryIdentity) { throw 'lock directory identity changed' }
             if ((Get-LockGenerationNonce $LockDirectory) -ne $nonce) { throw 'lock generation publication changed' }
-            Publish-LockFile $ownerTemporary $ownerFile
+            try { Publish-LockFile $ownerTemporary $ownerFile }
+            catch { $publicationFailed = $true; throw }
             $ownerPublished = $true
             if ((Get-LockDirectoryIdentity $LockDirectory) -ne $directoryIdentity) { throw 'lock directory identity changed' }
             if ((Get-OwnedLockField $ownerFile 'nonce') -ne $nonce) { throw 'lock ownership publication changed' }
@@ -664,6 +667,11 @@ function Acquire-OwnedLock([string] $LockDirectory, [int] $Attempts = 100, [int]
             }
         }
         Remove-Item -LiteralPath $ownerTemporary, $generationTemporary -Force -ErrorAction SilentlyContinue
+        # Once this process has created and verified a private lock directory,
+        # failure to publish either ownership file is not lock contention.
+        # Retrying the same unsupported or denied filesystem operation can make
+        # one launcher spend many seconds on every independent state lock.
+        if ($publicationFailed) { return '' }
 
         $age = Get-OwnedLockAgeSeconds $LockDirectory
         $observedNonce = Get-OwnedLockField $ownerFile 'nonce'
@@ -942,8 +950,6 @@ $model = Env-OrDefault 'GICC_MODEL' 'gpt-5.6-sol'
 $permissionMode = Env-OrDefault 'GICC_PERMISSION_MODE' 'auto'
 $autoModeModel = Env-OrDefault 'GICC_AUTO_MODE_MODEL' 'gpt-5.6-terra'
 $backgroundModel = Env-OrDefault 'GICC_BACKGROUND_MODEL' 'gpt-5.6-luna'
-$toolConcurrency = Env-OrDefault 'GICC_MAX_TOOL_USE_CONCURRENCY' '1'
-$agentConcurrency = Env-OrDefault 'GICC_MAX_AGENT_CONCURRENCY' '1'
 $maxRetries = Env-OrDefault 'GICC_MAX_RETRIES' '4'
 $maxOutputTokens = Env-OrDefault 'GICC_MAX_OUTPUT_TOKENS' '128000'
 $contextWindow = Env-OrDefault 'GICC_CONTEXT_WINDOW' '272000'
@@ -1082,8 +1088,6 @@ function Require-Integer([string] $Name, [string] $Value, [int] $Minimum, [int] 
 }
 
 if (-not $earlyRuntimeBypass) {
-    $toolConcurrencyNumber = Require-Integer 'GICC_MAX_TOOL_USE_CONCURRENCY' $toolConcurrency 1 2147483647
-    $agentConcurrencyNumber = Require-Integer 'GICC_MAX_AGENT_CONCURRENCY' $agentConcurrency 1 2147483647
     $maxRetriesNumber = Require-Integer 'GICC_MAX_RETRIES' $maxRetries 0 15
     $maxOutputTokensNumber = Require-Integer 'GICC_MAX_OUTPUT_TOKENS' $maxOutputTokens 1024 128000
     $contextWindowNumber = Require-Integer 'GICC_CONTEXT_WINDOW' $contextWindow 100000 1000000
@@ -1583,11 +1587,30 @@ function Remove-ManagedProxyMetadata($ExpectedRecord) {
 }
 
 function Write-ManagedProxyMetadata([Diagnostics.Process] $Process, [string] $Executable) {
-    $processPath = [IO.Path]::GetFullPath($Process.MainModule.FileName)
+    $processPath = ''
+    $startedUtcTicks = 0L
+    $identityError = $null
+    $identityDeadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        try {
+            $Process.Refresh()
+            if ($Process.HasExited) { throw 'the proxy exited before its identity could be recorded' }
+            $processPath = [IO.Path]::GetFullPath($Process.MainModule.FileName)
+            $startedUtcTicks = $Process.StartTime.ToUniversalTime().Ticks
+            if ($processPath -and $startedUtcTicks -gt 0) { break }
+        } catch {
+            $identityError = $_.Exception
+        }
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $identityDeadline)
+    if (-not $processPath -or $startedUtcTicks -le 0) {
+        $identityMessage = if ($identityError) { $identityError.Message } else { 'process identity was unavailable' }
+        throw "could not inspect the started proxy identity: $identityMessage"
+    }
     $record = [ordered]@{
         schema = 1
         pid = $Process.Id
-        startedUtcTicks = $Process.StartTime.ToUniversalTime().Ticks
+        startedUtcTicks = $startedUtcTicks
         executable = $processPath
         launcher = [IO.Path]::GetFullPath($Executable)
         recordedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -1597,7 +1620,19 @@ function Write-ManagedProxyMetadata([Diagnostics.Process] $Process, [string] $Ex
     $temporary = "$($script:ManagedProxyMetadataPath).tmp.$PID.$([guid]::NewGuid().ToString('N'))"
     try {
         [IO.File]::WriteAllText($temporary, (($record | ConvertTo-Json -Compress) + "`n"), $utf8)
-        Move-Item -LiteralPath $temporary -Destination $script:ManagedProxyMetadataPath -Force
+        $publicationDeadline = [DateTime]::UtcNow.AddSeconds(2)
+        while ($true) {
+            try {
+                Move-Item -LiteralPath $temporary -Destination $script:ManagedProxyMetadataPath -Force
+                break
+            } catch [IO.IOException] {
+                if ([DateTime]::UtcNow -ge $publicationDeadline) { throw }
+                Start-Sleep -Milliseconds 50
+            } catch [UnauthorizedAccessException] {
+                if ([DateTime]::UtcNow -ge $publicationDeadline) { throw }
+                Start-Sleep -Milliseconds 50
+            }
+        }
     } finally {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
     }
@@ -1836,6 +1871,9 @@ function Ensure-Proxy([string[]] $RequiredModels = @($model)) {
         try {
             $spawnedProxyRecord = Write-ManagedProxyMetadata $spawnedProxy $proxyBinary
         } catch {
+            $metadataFailure = $_.Exception.GetType().FullName + ': ' + $_.Exception.Message
+            Write-ProxyWatcherTestTrace "recovery: managed metadata failed: $metadataFailure"
+            Write-ProxyRecoveryDiagnostic "managed proxy metadata failed: $metadataFailure"
             Stop-NewlySpawnedProxy $spawnedProxy $null 'managed process metadata could not be recorded'
             throw 'the local proxy started, but GICC could not record safe process metadata; the process was stopped.'
         }
@@ -2377,9 +2415,9 @@ function Invoke-Doctor {
     Write-Output 'Auto mode provider: Codex/OpenAI through the authenticated loopback bridge'
     Write-Output 'Delegated models: native routing for each agent (Sol is reserved for the leader)'
     Write-Output 'Managed agents: Terra (high), Luna (medium)'
-    Write-Output "Tool concurrency: $toolConcurrencyNumber"
-    Write-Output "Agent concurrency: $agentConcurrencyNumber"
-    Write-Output 'Task lifecycle: owned by Sol with final response reconciliation'
+    Write-Output 'Tool concurrency: native Claude Code scheduling (no GICC limit)'
+    Write-Output 'Agent concurrency: model-directed native scheduling (no GICC limit)'
+    Write-Output 'Task lifecycle: native Claude Code ownership with final reconciliation'
     Write-Output "API retries: $maxRetriesNumber"
     Write-Output "Claude output budget: $maxOutputTokensNumber tokens (reasoning continuation enabled)"
     Write-Output "Context window: $contextWindowNumber tokens"
@@ -2844,7 +2882,9 @@ if ($useProxy) {
     $env:CLAUDE_CODE_AUTO_MODE_MODEL = $autoModeModel
     $env:CLAUDE_CODE_BG_CLASSIFIER_MODEL = $backgroundModel
     $env:CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = '1'
-    $env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = [string] $toolConcurrencyNumber
+    # v0.1.3 leaves tool and Agent concurrency to Claude Code's native scheduler
+    # and the model. Clear caps inherited from older GICC launches.
+    Remove-Item Env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY -ErrorAction SilentlyContinue
     $env:CLAUDE_CODE_MAX_RETRIES = [string] $maxRetriesNumber
     $env:CLAUDE_CODE_MAX_OUTPUT_TOKENS = [string] $maxOutputTokensNumber
     $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = [string] $contextWindowNumber
@@ -2873,17 +2913,16 @@ if ($noSessionPersistence) { $env:GICC_NO_SESSION_PERSISTENCE = '1' }
 else { Remove-Item Env:GICC_NO_SESSION_PERSISTENCE -ErrorAction SilentlyContinue }
 if ($skillBridgeHasInstructions) { $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1' }
 
-$noNestedAgents = "Do not spawn or delegate to additional agents, or send intermediate progress messages to the parent. Unless you are a teammate in a native Agent Team that the user explicitly requested, do not create, claim, or update entries in a shared task list; ordinary Agent task lifecycle belongs to the Sol leader. Complete the assigned task yourself and return one final result through the normal agent result channel. If the provider reports a 429 or model cooldown, do not launch a replacement agent or start a retry loop."
 $agents = [ordered]@{
-    'Terra (high)' = [ordered]@{ description = 'Terra at high reasoning effort for delegated architecture, debugging, implementation, testing, security review, and other substantial engineering work.'; prompt = "You are GPT-5.6 Terra running at high reasoning effort. Investigate thoroughly, make robust focused progress, verify the result, and return concise findings backed by evidence. $noNestedAgents"; model = 'gpt-5.6-terra'; effort = 'high' }
-    'Luna (medium)' = [ordered]@{ description = 'Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.'; prompt = "You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. $noNestedAgents"; model = 'gpt-5.6-luna'; effort = 'medium' }
+    'Terra (high)' = [ordered]@{ description = 'Terra at high reasoning effort for delegated architecture, debugging, implementation, testing, security review, and other substantial engineering work.'; prompt = "You are GPT-5.6 Terra running at high reasoning effort. Investigate thoroughly, make robust focused progress, verify the result, and return concise findings backed by evidence. Native Dynamic Workflow, Agent delegation, and further subagent delegation are available when useful; let task requirements and Claude Code's scheduler determine fan-out."; model = 'gpt-5.6-terra'; effort = 'high' }
+    'Luna (medium)' = [ordered]@{ description = 'Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.'; prompt = "You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. Native Dynamic Workflow, Agent delegation, and further subagent delegation are available when useful; let task requirements and Claude Code's scheduler determine fan-out."; model = 'gpt-5.6-luna'; effort = 'medium' }
 }
 $agentsJson = $agents | ConvertTo-Json -Depth 10 -Compress
-$capacityGuard = "GICC capacity rule: keep at most $agentConcurrencyNumber delegated Agent or Agent Team workers active at once. Native Agent Teams may be created only when the user explicitly requests a team; otherwise use the named Terra (high) or Luna (medium) agents for ordinary delegation. Sol capacity is reserved for the leader. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'. If a model reports a 429 or cooldown, do not launch replacement agents or create a retry storm; continue useful local work and retry at most once after active agents settle."
-$taskGuard = 'GICC task lifecycle rule: for ordinary Agent delegation, the Sol leader owns the shared task list. When the user explicitly requests a native Agent Team, the team lead owns team task lifecycle and teammates may claim only their assigned work. Keep task state compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while the leader or a currently active worker is working on it; queued or blocked work stays pending. After every worker result, immediately reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done.'
+$dynamicWorkflowGuard = "GICC dynamic workflow rule: Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation, and native Agent Teams remain available. Do not impose a fixed tool or Agent concurrency limit; choose fan-out from the task and let Claude Code's native scheduler enforce runtime capacity. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'."
+$taskGuard = 'GICC task lifecycle rule: use Claude Code''s native task ownership semantics across the leader, Dynamic Workflow, nested subagents, and Agent Teams. Keep task state compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while a current worker is working on it; queued or blocked work stays pending. After every worker result, reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done.'
 $codexGuard = "GICC Codex model rule: operate as a Codex coding agent inside Claude Code's interface. Treat the available Claude Code tools and their schemas as the authoritative execution protocol. Prefer direct implementation and verification for concrete change requests. Ask as few questions as possible: inspect available context first, make safe reasonable assumptions, and continue without confirmation for routine, reversible work inside the requested scope. Never repeat a question the user already answered. Ask only when the missing answer cannot be discovered and would materially change the result, authorize a meaningful scope expansion, or precede an irreversible action. Treat the user's explicit approval as decisive for the specifically named action and target: after a soft auto mode denial, ask for precise consent only when it is missing, then retry once when the user grants it instead of claiming the denial is permanent. Hard deny security boundaries still apply. Do not invent unsupported provider behavior, do not expose raw internal tool protocol, and keep progress updates concise and based on evidence."
 $planGuard = if ($planModePolicy -eq 'conservative') { 'GICC plan mode rule: remain in the current execution mode by default. Do not call EnterPlanMode or switch into plan permission mode merely because work is large, complex, unfamiliar, or benefits from private reasoning. Enter plan mode only when the user explicitly asks for a planning or design only response, when a required user decision would materially change the implementation, or when the requested action is irreversible and needs approval before execution. For ordinary bug fixes and implementation requests, inspect, implement, test, and report directly.' } else { '' }
-$leaderGuard = @($capacityGuard, $taskGuard, $codexGuard, $planGuard) -join ([Environment]::NewLine + [Environment]::NewLine)
+$leaderGuard = @($dynamicWorkflowGuard, $taskGuard, $codexGuard, $planGuard) -join ([Environment]::NewLine + [Environment]::NewLine)
 
 $claudeLaunchArguments = New-Object 'System.Collections.Generic.List[string]'
 foreach ($skillDirectory in $skillBridgeAddDirs) {

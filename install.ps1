@@ -785,7 +785,7 @@ Write-TextAtomic $settingsTarget ($settings | ConvertTo-Json -Depth 100)
 $packageManifest = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw | ConvertFrom-Json
 $installVersion = [string] $packageManifest.version
 if ($installVersion -notmatch '^\d+\.\d+\.\d+$') { Fail 'package.json contains an invalid GICC version' }
-$installMethod = if ($env:GICC_INSTALL_METHOD) { $env:GICC_INSTALL_METHOD } elseif (Test-Path -LiteralPath (Join-Path $root '.git') -PathType Container) { 'git' } else { 'archive' }
+$installMethod = if ($env:GICC_INSTALL_METHOD) { $env:GICC_INSTALL_METHOD } elseif (Test-Path -LiteralPath (Join-Path $root '.git')) { 'git' } else { 'archive' }
 if ($installMethod -notin @('homebrew', 'scoop', 'winget', 'archive', 'git')) { Fail "unsupported GICC_INSTALL_METHOD: $installMethod" }
 $receipt = [ordered]@{ schema = 1; version = $installVersion; method = $installMethod; binDir = $binDir; repository = 'DrPei12/gpt-in-claude-code' }
 Write-TextAtomic $installReceiptTarget (($receipt | ConvertTo-Json -Compress) + "`n")
