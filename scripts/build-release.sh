@@ -19,7 +19,7 @@ command -v tar >/dev/null 2>&1 || { printf '%s\n' 'tar is required to verify rel
 files=(
   CHANGELOG.md CODE_OF_CONDUCT.md CONTRIBUTING.md GOVERNANCE.md LICENSE MAINTAINERS.md NOTICE.md README.md ROADMAP.md UPSTREAM.md
   SECURITY.md SUPPORT.md bootstrap.ps1 bootstrap.sh package.json
-  gicc gicc.cmd gicc.ps1 gicc-package.cmd
+  gicc gicc.cmd gicc.ps1 gicc-runtime.mjs gicc-package.cmd
   codex-session codex-session.ps1 env.example install.ps1 install.sh install.zsh
   preload.cjs skill-bridge.cjs self-update self-update.ps1 settings.json statusline statusline.ps1 usage-limit usage-limit.ps1
   bin/gicc-package.mjs bin/package-setup-lock.mjs
@@ -91,6 +91,7 @@ required_release_files=(
   third_party/CLIPROXYAPI_LICENSE.txt
   bin/gicc-package.mjs
   bin/package-setup-lock.mjs
+  gicc-runtime.mjs
   skill-bridge.cjs
   skills/usage-limit/SKILL.md
   skills/usage-limit/SKILL.windows.md
@@ -119,6 +120,7 @@ for required in "${required_release_files[@]}"; do
   }
 done
 node --check "$stage/skill-bridge.cjs"
+node --check "$stage/gicc-runtime.mjs"
 node --check "$stage/bin/gicc-package.mjs"
 node --check "$stage/bin/package-setup-lock.mjs"
 (cd "$dist" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1) || \

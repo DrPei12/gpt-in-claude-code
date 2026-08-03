@@ -913,11 +913,11 @@ function Get-NodeMajorVersion {
     return 0
 }
 
-function Assert-SkillBridgeNode {
+function Assert-SkillBridgeNode([string] $Purpose = 'skill compatibility') {
     $nodeMajor = Get-NodeMajorVersion
     if ($nodeMajor -ge 18) { return }
     $detected = if ($nodeMajor -gt 0) { "found Node.js $nodeMajor" } else { 'Node.js was not found' }
-    Fail "Node.js 18 or newer is required for skill compatibility ($detected); rerun the GICC installer to install or upgrade Node.js."
+    Fail "Node.js 18 or newer is required for $Purpose ($detected); rerun the GICC installer to install or upgrade Node.js."
 }
 
 if (Test-Path -LiteralPath $configFile -PathType Leaf) {
@@ -973,6 +973,11 @@ $instructionBridgeMode = Env-OrDefault 'GICC_INSTRUCTION_BRIDGE' 'on'
 $codexSessionHelper = Env-OrDefault 'GICC_CODEX_SESSION_HELPER' (Join-Path $configDir 'codex-session.ps1')
 $selfUpdateHelper = Env-OrDefault 'GICC_SELF_UPDATE_HELPER' (Join-Path $configDir 'self-update.ps1')
 $skillBridgeHelper = Env-OrDefault 'GICC_SKILL_BRIDGE_HELPER' (Join-Path $configDir 'skill-bridge.cjs')
+$runtimeHelper = Env-OrDefault 'GICC_RUNTIME_HELPER' (Join-Path $configDir 'gicc-runtime.mjs')
+if (-not (Test-Path -LiteralPath $runtimeHelper -PathType Leaf)) {
+    $sourceRuntimeHelper = Join-Path $PSScriptRoot 'gicc-runtime.mjs'
+    if (Test-Path -LiteralPath $sourceRuntimeHelper -PathType Leaf) { $runtimeHelper = $sourceRuntimeHelper }
+}
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq 'self-update') {
     if (-not (Test-Path -LiteralPath $selfUpdateHelper -PathType Leaf)) { Fail 'self-update helper is missing; rerun the installer.' }
@@ -1004,7 +1009,7 @@ if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('--login', '--lo
 
 $earlyRuntimeBypass = $false
 $earlyGlobalMaintenanceOptions = @('--help', '-h', '--version', '-v')
-$earlyMaintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'claude', 'codex', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'setup-token', 'skills', 'stop', 'ultrareview', 'update', 'upgrade')
+$earlyMaintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'claude', 'codex', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup-token', 'skills', 'stop', 'ultrareview', 'update', 'upgrade')
 $earlyPositionalSeen = $false
 for ($earlyIndex = 0; $earlyIndex -lt $ClaudeArguments.Count; $earlyIndex++) {
     $earlyArgument = [string] $ClaudeArguments[$earlyIndex]
@@ -1109,7 +1114,7 @@ if (-not $earlyRuntimeBypass) {
     if ($skillDollarReferenceMode -notin @('on', 'off')) { Fail 'GICC_SKILL_DOLLAR_REFERENCES must be on or off.' 2 }
     if ($instructionBridgeMode -notin @('on', 'off')) { Fail 'GICC_INSTRUCTION_BRIDGE must be on or off.' 2 }
 } else {
-    $toolConcurrencyNumber = 1; $agentConcurrencyNumber = 1; $maxRetriesNumber = 4; $maxOutputTokensNumber = 128000
+    $maxRetriesNumber = 4; $maxOutputTokensNumber = 128000
     $contextWindowNumber = 272000; $compactWindowNumber = 244800
     $usageRefreshNumber = 300; $usageTimeoutNumber = 8; $usageMaxStaleNumber = 86400; $usageAlertNumber = 20
     $claudeUpdateIntervalNumber = 86400; $giccUpdateIntervalNumber = 86400
@@ -1125,6 +1130,31 @@ if (-not $earlyRuntimeBypass) {
 }
 
 $env:CLAUDE_CONFIG_DIR = $configDir
+
+if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('session', 'context')) {
+    Assert-SkillBridgeNode 'session and context management'
+    if (-not (Test-Path -LiteralPath $runtimeHelper -PathType Leaf)) { Fail 'runtime helper is missing; reinstall GICC.' }
+    if ($ClaudeArguments[0] -eq 'session' -and $ClaudeArguments.Count -gt 1 -and $ClaudeArguments[1] -eq 'resume') {
+        if ($ClaudeArguments.Count -ne 3 -or [string]$ClaudeArguments[2] -notmatch '^[0-9a-fA-F-]{36}$') {
+            Fail 'Usage: gicc session resume <session-id>' 2
+        }
+        $resumeSessionId = [string]$ClaudeArguments[2]
+        Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
+            & node $runtimeHelper session status $resumeSessionId --json | Out-Null
+        }
+        if ($script:lastPrivateBoundaryExitCode -ne 0) { Exit-GICC $script:lastPrivateBoundaryExitCode }
+        $powerShellHost = (Get-Process -Id $PID).Path
+        Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
+            & $powerShellHost -NoLogo -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath --resume $resumeSessionId
+        }
+        Exit-GICC $script:lastPrivateBoundaryExitCode
+    } else {
+        Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
+            & node $runtimeHelper @ClaudeArguments
+        }
+        Exit-GICC $script:lastPrivateBoundaryExitCode
+    }
+}
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq 'skills') {
     if ($ClaudeArguments.Count -ne 1) { Fail 'Usage: gicc skills' 2 }
@@ -2535,7 +2565,7 @@ $suppressResumeFooter = $false
 $backgroundLaunch = $false
 $requestedResumeSessionId = ''
 $maintenanceGlobalOptions = @('--help', '-h', '--version', '-v')
-$maintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'setup-token', 'skills', 'stop', 'ultrareview', 'update', 'upgrade')
+$maintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup-token', 'skills', 'stop', 'ultrareview', 'update', 'upgrade')
 $maintenancePositionalSeen = $false
 $maintenanceCommandDetected = $false
 for ($scanIndex = 0; $scanIndex -lt $forwardArguments.Count; $scanIndex++) {

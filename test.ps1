@@ -278,6 +278,7 @@ exit 124
     Copy-Item -LiteralPath (Join-Path $root 'settings.json') -Destination (Join-Path $testConfig 'settings.json')
     Copy-Item -LiteralPath (Join-Path $root 'preload.cjs') -Destination (Join-Path $testConfig 'preload.cjs')
     Copy-Item -LiteralPath (Join-Path $root 'skill-bridge.cjs') -Destination (Join-Path $testConfig 'skill-bridge.cjs')
+    Copy-Item -LiteralPath (Join-Path $root 'gicc-runtime.mjs') -Destination (Join-Path $testConfig 'gicc-runtime.mjs')
     $existingClaudeSkill = Join-Path $testHome '.claude\skills\existing-claude'
     $existingCodexSkill = Join-Path $testHome '.agents\skills\existing-codex'
     [IO.Directory]::CreateDirectory($existingClaudeSkill) | Out-Null
@@ -2188,7 +2189,7 @@ process.stdout.write(JSON.stringify({
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-x-before-continue'), "continue`n", $utf8)
         Wait-ForTestPath (Join-Path $temporary 'windows-aba-x-after') 'Windows rename ABA stale owner pauses behind quarantine barrier'
         $abaZ = Start-TrackedTestProcess $shellPath $lockLauncherArguments 'windows-aba-z'
-        Wait-ForTestProcess $abaZ 'Windows Z contender finishes behind quarantine barrier'
+        Wait-ForTestProcess $abaZ 'Windows Z contender finishes behind quarantine barrier' 60000
         Assert-True (([IO.File]::ReadAllText((Join-Path $modelLock 'owner'))).Contains($abaYNonce)) 'Windows rename ABA restores Y and excludes Z'
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-x-after-continue'), "continue`n", $utf8)
         Wait-ForTestProcess $abaX 'Windows stale remover exits'
@@ -3329,6 +3330,7 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -PathType Leaf) 'install receipt written'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md') -PathType Leaf) 'usage skill installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -PathType Leaf) 'skill bridge installed'
+    Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -PathType Leaf) 'session runtime installed'
     $installedUsageSkill = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md') -Raw
     Assert-True ($installedUsageSkill.Contains('shell: powershell')) 'Windows usage skill selects PowerShell'
     Assert-True ($installedUsageSkill.Contains('allowed-tools: PowerShell(')) 'Windows usage skill grants only PowerShell helper invocation'
@@ -3429,6 +3431,7 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
         (Join-Path $env:GICC_CONFIG_DIR 'codex-session.ps1'),
         (Join-Path $env:GICC_CONFIG_DIR 'preload.cjs'),
         (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs'),
+        (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs'),
         (Join-Path $env:GICC_CONFIG_DIR 'self-update.ps1'),
         (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md'),
         (Join-Path $env:GICC_CONFIG_DIR 'install.json')
@@ -3476,12 +3479,16 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
             if ($Mode -ne 'missing-bridge') {
                 [IO.File]::WriteAllText((Join-Path $releaseRoot 'skill-bridge.cjs'), "'use strict';`n", $utf8)
             }
+            if ($Mode -ne 'missing-runtime') {
+                [IO.File]::WriteAllText((Join-Path $releaseRoot 'gicc-runtime.mjs'), "import 'node:fs';`n", $utf8)
+            }
             $installerMode = $Mode
             $installer = @"
 `$ErrorActionPreference = 'Stop'
 `$config = `$env:GICC_CONFIG_DIR
 [IO.Directory]::CreateDirectory(`$config) | Out-Null
 [IO.File]::WriteAllText((Join-Path `$config 'skill-bridge.cjs'), 'fixture bridge $Version')
+[IO.File]::WriteAllText((Join-Path `$config 'gicc-runtime.mjs'), 'fixture runtime $Version')
 if ('$installerMode' -eq 'rollback') { exit 23 }
 [IO.File]::WriteAllText((Join-Path `$config 'node-migration.txt'), "`$(`$env:GICC_SKIP_DEPENDENCY_INSTALL):`$(`$env:GICC_ALLOW_NODE_INSTALL)")
 `$receipt = [ordered]@{ schema = 1; version = '$Version'; method = 'archive'; binDir = `$env:GICC_BIN_DIR; repository = 'DrPei12/gpt-in-claude-code' }
@@ -3524,6 +3531,7 @@ if ('$installerMode' -eq 'rollback') { exit 23 }
         $env:GICC_TEST_UPDATE_FIXTURE_DIR = $fixture
         try {
             $originalBridge = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -Raw
+            $originalRuntime = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -Raw
 
             New-ArchiveUpdateFixture $fixture '9.9.6' 'success' $true
             $badChecksum = Invoke-ArchiveUpdateFixture $fixture
@@ -3534,10 +3542,15 @@ if ('$installerMode' -eq 'rollback') { exit 23 }
             $missingBridge = Invoke-ArchiveUpdateFixture $fixture
             Assert-True ($missingBridge.ExitCode -eq 1 -and $missingBridge.Output.Contains('does not contain skill-bridge.cjs')) 'Windows archive updater rejects a missing bridge'
 
+            New-ArchiveUpdateFixture $fixture '9.9.71' 'missing-runtime'
+            $missingRuntime = Invoke-ArchiveUpdateFixture $fixture
+            Assert-True ($missingRuntime.ExitCode -eq 1 -and $missingRuntime.Output.Contains('does not contain gicc-runtime.mjs')) 'Windows archive updater rejects a missing session runtime'
+
             New-ArchiveUpdateFixture $fixture '9.9.8' 'rollback'
             $rollback = Invoke-ArchiveUpdateFixture $fixture
             Assert-True ($rollback.ExitCode -eq 1 -and $rollback.Output.Contains('restored the previous managed installation')) 'Windows archive updater reports rollback'
             Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -Raw) -eq $originalBridge) 'Windows rollback restores the prior bridge'
+            Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -Raw) -eq $originalRuntime) 'Windows rollback restores the prior session runtime'
 
             New-ArchiveUpdateFixture $fixture '9.9.9' 'success'
             $success = Invoke-ArchiveUpdateFixture $fixture

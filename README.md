@@ -93,9 +93,10 @@ For release downloads, system requirements, updating, and removal, see the [inst
   encrypted reasoning before it can produce a visible answer. This fixes the
   repeated 32000, 64000, and 128000 `max_tokens` failures that a larger Claude
   Code environment value alone cannot fix.
-- Conservative defaults of one active tool batch and one delegated Agent. The
-  Agent and dynamic workflow features remain available without the earlier
-  request storm behavior.
+- Dynamic Workflow, Ultrareview, Agent delegation, nested delegation, and
+  native Agent Teams remain available. GICC sets no fixed Tool or Agent
+  concurrency cap; the model chooses useful fanout and Claude Code's native
+  scheduler enforces runtime capacity.
 - Codex aware context accounting and automatic compaction near 244800
   model visible tokens for the GPT-5.6 Sol catalog window.
 - Codex usage limit reporting in the status line and through `/usage-limit`.
@@ -139,6 +140,12 @@ gicc --accounts         List locally available Codex usage accounts
 gicc --doctor           Check installation, authentication, and models
 gicc --login            Sign in through Codex and synchronize the session
 gicc --logout           Sign out and clear the managed bridge session
+gicc session list       List resumable sessions for the current directory
+gicc session status     Inspect the latest session and its context checkpoints
+gicc session doctor     Validate the latest native transcript and context state
+gicc session resume ID  Resume one validated session through Claude Code
+gicc context status     Inspect persisted model context checkpoints
+gicc context repair     Quarantine damaged checkpoints and restore safe backups
 gicc self-update --status  Inspect automatic update state
 gicc self-update --apply   Apply the latest stable release now
 gicc codex ...             Use the native Codex harness

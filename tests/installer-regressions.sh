@@ -163,7 +163,7 @@ mkdir -p "$transaction/backup"
 targets=(
   "$home/.local/bin/gicc" "$config/env" "$config/cliproxyapi.yaml" "$config/bin/gicc-proxy"
   "$config/settings.json" "$config/statusline" "$config/usage-limit" "$config/codex-session"
-  "$config/preload.cjs" "$config/skill-bridge.cjs" "$config/self-update"
+  "$config/preload.cjs" "$config/skill-bridge.cjs" "$config/gicc-runtime.mjs" "$config/self-update"
   "$config/skills/usage-limit/SKILL.md" "$config/install.json"
 )
 : > "$transaction/manifest"

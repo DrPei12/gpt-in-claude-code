@@ -61,6 +61,7 @@ the plan file and workspace after completion or interruption.
 | Status line | `statusline` | `statusline.ps1` | Render model, effort, stable context, and cached usage status |
 | Terminal preload | `preload.cjs` | shared | Translate Solplan input and replace only the interactive startup billing field without modifying Claude Code or machine output |
 | Skill bridge | `skill-bridge.cjs` | shared | Discover existing Claude and Codex skills, preserve project scope, adapt provider specific policy/model metadata, and build an immutable private overlay |
+| Session runtime | `gicc-runtime.mjs` | shared | Inventory and validate native transcripts, report checkpoint health, and perform scoped non destructive checkpoint recovery |
 | Settings template | `settings.json` | shared | Provide isolated default Claude Code settings |
 
 ## Authentication lifecycle
@@ -97,6 +98,14 @@ compaction. The status line stores the last trustworthy percentage per session
 and uses it only for that same session. Real sub percent usage is shown as
 `<1%`; a new session with no trustworthy data omits the percentage instead of
 showing a false zero.
+
+Claude Code's JSONL transcript remains authoritative for native history and
+resume. GICC's model visible checkpoint is derived state for the Codex bridge,
+not a replacement transcript. The shared session runtime reads transcript
+identity and health without emitting message content. Its repair path never
+edits a transcript: it quarantines an invalid active checkpoint and promotes a
+valid previous checkpoint when one exists. Session scoped repair leaves files
+with unknown ownership untouched.
 
 ## Update and compatibility strategy
 

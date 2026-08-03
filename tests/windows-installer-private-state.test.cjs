@@ -92,6 +92,7 @@ for (const target of [
   '$codexSessionTarget',
   '$preloadTarget',
   '$skillBridgeTarget',
+  '$runtimeTarget',
   '$selfUpdateTarget',
   '$usageSkillTarget',
 ]) {

@@ -11,6 +11,7 @@ const compatibility = fs.readFileSync(path.join(root, 'docs', 'claude-code-compa
 
 for (const [label, source] of [['Unix launcher', unix], ['Windows launcher', windows]]) {
   assert.doesNotMatch(source, /GICC_MAX_AGENT_CONCURRENCY/, `${label} must not define an Agent cap`);
+  assert.doesNotMatch(source, /(?:tool|agent)ConcurrencyNumber/, `${label} must not retain obsolete fixed concurrency variables`);
   assert.doesNotMatch(source, /keep at most \d+ delegated/i, `${label} must not inject a fixed Agent capacity guard`);
   assert.doesNotMatch(source, /Do not spawn or delegate to additional agents/i, `${label} must not block nested delegation`);
   assert.match(source, /Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation/,

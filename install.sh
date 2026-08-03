@@ -50,6 +50,7 @@ readonly codex_session_target="$config_dir/codex-session"
 readonly usage_skill_target="$config_dir/skills/usage-limit/SKILL.md"
 readonly preload_target="$config_dir/preload.cjs"
 readonly skill_bridge_target="$config_dir/skill-bridge.cjs"
+readonly runtime_target="$config_dir/gicc-runtime.mjs"
 readonly self_update_target="$config_dir/self-update"
 readonly install_receipt_target="$config_dir/install.json"
 readonly proxy_config_target="$config_dir/cliproxyapi.yaml"
@@ -98,6 +99,7 @@ transaction_targets=(
   "$codex_session_target"
   "$preload_target"
   "$skill_bridge_target"
+  "$runtime_target"
   "$self_update_target"
   "$usage_skill_target"
   "$install_receipt_target"
@@ -139,7 +141,7 @@ done
 [[ "$proxy_port" =~ ^[0-9]+$ ]] && (( proxy_port >= 1 && proxy_port <= 65535 )) || \
   fail 'GICC_PROXY_PORT must be an integer from 1 to 65535'
 
-for source_file in gicc codex-session statusline usage-limit preload.cjs skill-bridge.cjs self-update package.json settings.json skills/usage-limit/SKILL.md; do
+for source_file in gicc codex-session statusline usage-limit preload.cjs skill-bridge.cjs gicc-runtime.mjs self-update package.json settings.json skills/usage-limit/SKILL.md; do
   [[ -r "$root/$source_file" ]] || fail "missing repository file: $source_file"
 done
 
@@ -543,6 +545,7 @@ for required_command in jq codex claude; do
 done
 node_is_compatible || fail 'Node.js 18 or newer is required for Claude and Codex skill compatibility'
 node --check "$root/skill-bridge.cjs" >/dev/null || fail 'skill-bridge.cjs failed Node.js syntax validation'
+node --check "$root/gicc-runtime.mjs" >/dev/null || fail 'gicc-runtime.mjs failed Node.js syntax validation'
 
 if [[ "$skip_deps" != 1 && "${GICC_SKIP_CLAUDE_UPDATE:-0}" != 1 ]]; then
   printf '%s\n' 'Checking Claude Code for the latest compatible release...'
@@ -634,6 +637,7 @@ install -m 755 "$root/usage-limit" "$usage_limit_target"
 install -m 755 "$root/codex-session" "$codex_session_target"
 install -m 644 "$root/preload.cjs" "$preload_target"
 install -m 644 "$root/skill-bridge.cjs" "$skill_bridge_target"
+install -m 644 "$root/gicc-runtime.mjs" "$runtime_target"
 install -m 755 "$root/self-update" "$self_update_target"
 mkdir -p "$(dirname "$usage_skill_target")"
 install -m 644 "$root/skills/usage-limit/SKILL.md" "$usage_skill_target"

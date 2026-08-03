@@ -35,6 +35,7 @@ $codexSessionTarget = Join-Path $configDir 'codex-session.ps1'
 $usageSkillTarget = Join-Path $configDir 'skills\usage-limit\SKILL.md'
 $preloadTarget = Join-Path $configDir 'preload.cjs'
 $skillBridgeTarget = Join-Path $configDir 'skill-bridge.cjs'
+$runtimeTarget = Join-Path $configDir 'gicc-runtime.mjs'
 $selfUpdateTarget = Join-Path $configDir 'self-update.ps1'
 $installReceiptTarget = Join-Path $configDir 'install.json'
 $proxyConfigTarget = Join-Path $configDir 'cliproxyapi.yaml'
@@ -504,7 +505,7 @@ if (-not [int]::TryParse($proxyPortText, [ref] $proxyPort) -or $proxyPort -lt 1 
     Fail 'GICC_PROXY_PORT must be an integer from 1 to 65535'
 }
 
-foreach ($sourceFile in @('gicc.ps1', 'gicc.cmd', 'codex-session.ps1', 'statusline.ps1', 'usage-limit.ps1', 'preload.cjs', 'skill-bridge.cjs', 'self-update.ps1', 'package.json', 'settings.json', 'skills\usage-limit\SKILL.md', 'skills\usage-limit\SKILL.windows.md')) {
+foreach ($sourceFile in @('gicc.ps1', 'gicc.cmd', 'codex-session.ps1', 'statusline.ps1', 'usage-limit.ps1', 'preload.cjs', 'skill-bridge.cjs', 'gicc-runtime.mjs', 'self-update.ps1', 'package.json', 'settings.json', 'skills\usage-limit\SKILL.md', 'skills\usage-limit\SKILL.windows.md')) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $sourceFile) -PathType Leaf)) { Fail "missing repository file: $sourceFile" }
 }
 
@@ -590,6 +591,7 @@ $installManagedPaths = @(
     $codexSessionTarget,
     $preloadTarget,
     $skillBridgeTarget,
+    $runtimeTarget,
     $selfUpdateTarget,
     $usageSkillTarget,
     $installReceiptTarget
@@ -635,6 +637,11 @@ if ($nodeMajor -lt 18) {
     $detected = if ($nodeMajor -gt 0) { "found Node.js $nodeMajor" } else { 'Node.js was not found' }
     Fail "Node.js 18 or newer is required for Claude and Codex skill compatibility ($detected); rerun the installer with dependency installation enabled"
 }
+$nodeCommand = Get-Command node -CommandType Application -ErrorAction Stop | Select-Object -First 1
+$nodeCheckOutput = & $nodeCommand.Source --check (Join-Path $root 'skill-bridge.cjs') 2>&1
+if ($LASTEXITCODE -ne 0) { Fail "skill-bridge.cjs failed Node.js syntax validation: $($nodeCheckOutput -join ' ')" }
+$nodeCheckOutput = & $nodeCommand.Source --check (Join-Path $root 'gicc-runtime.mjs') 2>&1
+if ($LASTEXITCODE -ne 0) { Fail "gicc-runtime.mjs failed Node.js syntax validation: $($nodeCheckOutput -join ' ')" }
 
 $codexCommand = Get-Command codex -ErrorAction SilentlyContinue
 $claudeCommand = Get-Command claude -ErrorAction SilentlyContinue
@@ -760,6 +767,7 @@ Copy-Item -LiteralPath (Join-Path $root 'usage-limit.ps1') -Destination $usageLi
 Copy-Item -LiteralPath (Join-Path $root 'codex-session.ps1') -Destination $codexSessionTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'preload.cjs') -Destination $preloadTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'skill-bridge.cjs') -Destination $skillBridgeTarget -Force
+Copy-Item -LiteralPath (Join-Path $root 'gicc-runtime.mjs') -Destination $runtimeTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'self-update.ps1') -Destination $selfUpdateTarget -Force
 Ensure-PrivateDirectory (Split-Path $usageSkillTarget -Parent)
 Copy-Item -LiteralPath (Join-Path $root 'skills\usage-limit\SKILL.windows.md') -Destination $usageSkillTarget -Force
@@ -772,6 +780,7 @@ foreach ($privateInstalledFile in @(
     $codexSessionTarget,
     $preloadTarget,
     $skillBridgeTarget,
+    $runtimeTarget,
     $selfUpdateTarget,
     $usageSkillTarget
 )) {

@@ -25,7 +25,7 @@ fi
 
 gicc_is_maintenance_command() {
   case "$1" in
-    --help|-h|--version|-v|agents|attach|auth|auto-mode|doctor|gateway|install|kill|logs|mcp|plugin|plugins|project|remote-control|respawn|rm|self-update|setup-token|skills|stop|ultrareview|update|upgrade) return 0 ;;
+    --help|-h|--version|-v|agents|attach|auth|auto-mode|context|doctor|gateway|install|kill|logs|mcp|plugin|plugins|project|remote-control|respawn|rm|self-update|session|setup-token|skills|stop|ultrareview|update|upgrade) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -390,6 +390,12 @@ readonly settings_file="${GICC_SETTINGS_FILE:-$gicc_config_dir/settings.json}"
 readonly codex_session_helper="${GICC_CODEX_SESSION_HELPER:-$gicc_config_dir/codex-session}"
 readonly self_update_helper="${GICC_SELF_UPDATE_HELPER:-$gicc_config_dir/self-update}"
 readonly skill_bridge_helper="${GICC_SKILL_BRIDGE_HELPER:-$gicc_config_dir/skill-bridge.cjs}"
+gicc_runtime_helper="${GICC_RUNTIME_HELPER:-$gicc_config_dir/gicc-runtime.mjs}"
+if [[ ! -r "$gicc_runtime_helper" ]]; then
+  gicc_launcher_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+  if [[ -r "$gicc_launcher_dir/gicc-runtime.mjs" ]]; then gicc_runtime_helper="$gicc_launcher_dir/gicc-runtime.mjs"; fi
+fi
+readonly gicc_runtime_helper
 export GICC_CODEX_AUTH_DIR GICC_CODEX_SOURCE_AUTH_FILE GICC_CODEX_AUTH_FILE
 
 if [[ "${1:-}" == self-update ]]; then
@@ -631,6 +637,24 @@ node_supports_skill_bridge() {
   node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(Number.isInteger(major) && major >= 18 ? 0 : 1)' \
     >/dev/null 2>&1
 }
+
+if [[ "${1:-}" == session || "${1:-}" == context ]]; then
+  activate_managed_node
+  node_supports_skill_bridge || { printf '%s\n' 'gicc: Node.js 18 or newer is required for session and context management.' >&2; exit 1; }
+  [[ -r "$gicc_runtime_helper" ]] || { printf '%s\n' 'gicc: runtime helper is missing; reinstall GICC.' >&2; exit 1; }
+  if [[ "$1" == session && "${2:-}" == resume ]]; then
+    [[ $# -eq 3 && "$3" =~ ^[0-9a-fA-F-]{36}$ ]] || {
+      printf '%s\n' 'Usage: gicc session resume <session-id>' >&2
+      exit 2
+    }
+    resume_session_id="$3"
+    node "$gicc_runtime_helper" session status "$resume_session_id" --json >/dev/null
+    gicc_resume_launcher="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
+    exec "$gicc_resume_launcher" --resume "$resume_session_id"
+  else
+    exec node "$gicc_runtime_helper" "$@"
+  fi
+fi
 
 if [[ "${1:-}" == skills ]]; then
   activate_managed_node

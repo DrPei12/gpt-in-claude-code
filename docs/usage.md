@@ -176,6 +176,40 @@ detected while GICC is running; the local bridge follows the new account and
 clears account scoped usage state automatically. Disabled and expired
 credentials are never selected.
 
+## Sessions and context
+
+GICC keeps Claude Code's native JSONL transcript as the session source of
+truth. It does not translate the transcript into a separate GICC history
+format. Native `--continue`, `--resume`, the interactive history picker, and
+the commands below therefore refer to the same isolated Claude Code profile.
+
+| Command | Behavior |
+| --- | --- |
+| `gicc session list` | List resumable sessions for the current working directory |
+| `gicc session list --all` | List resumable sessions across the GICC profile |
+| `gicc session status [SESSION_ID]` | Inspect transcript identity and matching context checkpoints |
+| `gicc session doctor [SESSION_ID]` | Validate every JSONL record and report unrecoverable context state |
+| `gicc session resume SESSION_ID` | Validate the session, then pass its ID to native Claude Code resume |
+| `gicc context status [--session SESSION_ID]` | Inspect active, previous, invalid, and quarantined checkpoints |
+| `gicc context repair [--session SESSION_ID]` | Quarantine invalid active files and restore a valid previous checkpoint |
+
+`session list`, `session status`, `session doctor`, and `context status` accept
+`--json`. The session list also accepts `--cwd PATH`; status and doctor use it
+when no session ID is supplied. Context commands accept `--session` so repair
+can stay scoped to one native session.
+
+These commands never print prompt or response content. They report session
+IDs, working directories, timestamps, sizes, health counts, and checkpoint
+metadata only. Treat that metadata as private when sharing diagnostics.
+
+Context repair is non destructive. An invalid active checkpoint is renamed
+with a `corrupt` timestamp suffix. A valid `.previous` file is promoted when
+available; files that cannot be associated with a requested session remain
+untouched. Raw Claude history is not edited, compacted, converted, or deleted.
+Use `gicc --resume SESSION_ID` when scripting against Claude Code's native
+interface; `gicc session resume SESSION_ID` adds an explicit local validation
+step first.
+
 ## Skills
 
 | Command or reference | Behavior |

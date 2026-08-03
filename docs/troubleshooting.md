@@ -115,6 +115,32 @@ A brand new session intentionally omits a zero value until Claude Code reports
 real usage. During compaction, GICC retains the last trustworthy value for
 that session. It should never flash a misleading `0%` and then jump back.
 
+## A session or context checkpoint looks stale
+
+Start with read only inspection in the affected project directory:
+
+```text
+gicc session list
+gicc session status
+gicc session doctor
+gicc context status
+```
+
+Use the explicit session ID if several sessions exist. `session doctor` reads
+the full native JSONL transcript but reports only structure and health counts;
+it does not print messages. If it reports a recoverable invalid checkpoint,
+close the affected Claude Code session and run:
+
+```text
+gicc context repair --session SESSION-ID
+```
+
+Repair preserves the invalid file with a `corrupt` timestamp suffix and
+restores a valid `.previous` checkpoint. It never rewrites Claude history. An
+unrecoverable checkpoint can be regenerated from the unchanged transcript by
+the managed bridge on a later request; keep the quarantined file when gathering
+a private diagnostic bundle.
+
 ## Usage limits are missing or stale
 
 Run:

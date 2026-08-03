@@ -416,6 +416,7 @@ async function assertInteractiveTargetedCleanup() {
     'codex-session',
     'preload.cjs',
     'skill-bridge.cjs',
+    'gicc-runtime.mjs',
     'self-update',
     path.join('skills', 'usage-limit', 'SKILL.md'),
     'cliproxyapi.yaml',

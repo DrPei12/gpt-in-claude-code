@@ -4,12 +4,25 @@ All notable changes to this independent distribution are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- `gicc session list`, `status`, `doctor`, and `resume` provide one management
+  surface over Claude Code's native isolated transcripts.
+- `gicc context status` reports checkpoint health, while scoped
+  `gicc context repair` quarantines invalid active state and restores a valid
+  previous checkpoint without editing raw history.
+
 ### Changed
 
 - Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation,
   and native Agent Teams now use Claude Code's native scheduling, directed by
   the model.
   GICC no longer sets fixed Tool or Agent concurrency limits.
+
+### Security
+
+- Session inspection omits prompt and response content, and scoped context
+  repair leaves checkpoints with unknown session ownership untouched.
 
 ## [0.1.2] - 2026-08-01
 
