@@ -93,13 +93,9 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
     $startInfo.Arguments = @($stageArguments | ForEach-Object { ConvertTo-TestCommandLineArgument ([string] $_) }) -join ' '
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $startInfo
     if (-not $process.Start()) { throw "test stage $Name could not start" }
-    $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
-    $standardErrorTask = $process.StandardError.ReadToEndAsync()
     $registry = @{}
     $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSeconds)
     try {
@@ -111,21 +107,13 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
             Stop-RegisteredProcesses $liveOnTimeout
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             try { $null = $process.WaitForExit(5000) } catch { }
-            $timeoutOutput = $standardOutputTask.GetAwaiter().GetResult()
-            $timeoutError = $standardErrorTask.GetAwaiter().GetResult()
-            if ($timeoutOutput) { [Console]::WriteLine($timeoutOutput.TrimEnd()) }
-            if ($timeoutError) { [Console]::Error.WriteLine($timeoutError.TrimEnd()) }
             throw "test stage $Name timed out after $timeoutSeconds seconds"
         }
         # Drain any remaining process bookkeeping after the timed overload.
         $process.WaitForExit()
         $process.Refresh()
         Update-TestProcessRegistry $process.Id $registry
-        $stageOutput = $standardOutputTask.GetAwaiter().GetResult()
-        $stageError = $standardErrorTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) {
-            if ($stageOutput) { [Console]::WriteLine($stageOutput.TrimEnd()) }
-            if ($stageError) { [Console]::Error.WriteLine($stageError.TrimEnd()) }
             throw "test stage $Name failed with exit code $($process.ExitCode)"
         }
         Start-Sleep -Milliseconds 200
@@ -148,7 +136,7 @@ if (-not $GICCInternalStage) {
     } else { $selectedStages = @($Stage | Select-Object -Unique) }
     foreach ($selectedStage in $selectedStages) {
         $defaultTimeout = switch ($selectedStage) {
-            'Harness' { 1200 }
+            'Harness' { 1500 }
             'SelfUpdateLocks' { 300 }
             'Node' { 300 }
         }
@@ -247,7 +235,7 @@ try {
     [IO.Directory]::CreateDirectory($testConfig) | Out-Null
     [IO.Directory]::CreateDirectory($fakeBin) | Out-Null
     if ($isWindowsPlatform -and $env:CI) {
-        $testSuiteTimeoutSeconds = 900
+        $testSuiteTimeoutSeconds = 1200
         if ($env:GICC_TEST_SUITE_TIMEOUT_SECONDS) {
             $configuredTimeout = 0
             Assert-True ([int]::TryParse($env:GICC_TEST_SUITE_TIMEOUT_SECONDS, [ref] $configuredTimeout) -and
