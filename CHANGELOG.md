@@ -4,6 +4,8 @@ All notable changes to this independent distribution are documented here.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-04
+
 ### Added
 
 - `gicc session list`, `status`, `doctor`, and `resume` provide one management
@@ -117,7 +119,8 @@ All notable changes to this independent distribution are documented here.
 - Installers verify release and bridge assets before extraction or execution.
 - Normal `claude` and `codex` profiles are not modified.
 
-[Unreleased]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DrPei12/gpt-in-claude-code/releases/tag/v0.1.0
