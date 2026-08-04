@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -116,8 +116,8 @@ try {
   assert.equal(requests.some((request) => request.method === 'turn/start'), false, 'transfer invoked a model turn');
   const migration = requests.find((request) => request.method === 'externalAgentConfig/import').params;
   assert.equal(migration.migrationItems[0].itemType, 'SESSIONS');
-  assert.equal(migration.migrationItems[0].details.sessions[0].path, transcript);
-  assert.equal(migration.migrationItems[0].details.sessions[0].cwd, project);
+  assert.equal(migration.migrationItems[0].details.sessions[0].path, realpathSync(transcript));
+  assert.equal(migration.migrationItems[0].details.sessions[0].cwd, realpathSync(project));
   assert.deepEqual(migration.migrationItems[0].details.subagents, []);
 
   const defaultLatest = successfulJson(['transfer']);

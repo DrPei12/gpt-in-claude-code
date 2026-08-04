@@ -745,13 +745,14 @@ async function transferCommand(tokens) {
   const serverCwd = resolve(options.cwd || process.cwd());
   if (!directoryExists(serverCwd)) fail(`transfer working directory does not exist: ${serverCwd}`, 2);
   const { session } = await resolveTransferSession(options);
+  const sourcePath = realpathSync(session._path);
   let imported;
-  try { imported = await importClaudeSession(session._path, serverCwd); }
+  try { imported = await importClaudeSession(sourcePath, serverCwd); }
   catch (error) { fail(error instanceof Error ? error.message : String(error)); }
   const value = {
     schema: SCHEMA,
     sessionId: session.id,
-    sourcePath: realpathSync(session._path),
+    sourcePath,
     threadId: imported.threadId,
     resumeCommand: `codex resume ${imported.threadId}`,
     modelInvocation: false,
