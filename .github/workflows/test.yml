@@ -36,22 +36,20 @@ jobs:
         run: ./tests/self-update-lock-regressions.ps1
 
   windows:
-    name: windows-latest
+    name: windows-${{ matrix.stage }}
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [Harness, SelfUpdateLocks, Node]
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - name: Run Windows Harness
+      - name: Run isolated Windows stage
         shell: powershell
-        run: .\test.ps1 -Stage Harness
-      - name: Run Windows self-update lock regressions
-        shell: powershell
-        run: .\test.ps1 -Stage SelfUpdateLocks
-      - name: Run Windows Node regressions
-        shell: powershell
-        run: .\test.ps1 -Stage Node
+        run: .\test.ps1 -Stage ${{ matrix.stage }}
 
   legacy-linux-node:
     name: ubuntu-20.04-managed-node

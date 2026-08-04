@@ -71,15 +71,12 @@ assert.match(suite, /nextRegistryRefresh = \$now\.AddSeconds\(5\)/,
 assert.match(suite, /taskkill\.exe \/PID \$RootProcessId \/T \/F/,
   'Windows stage timeout terminates the owned process tree');
 assert.match(suite, /left owned processes running/, 'Windows stage runner rejects orphaned descendants');
-const normalizedWorkflow = workflow.replace(/\r\n/g, '\n');
-for (const [name, stage] of [
-  ['Run Windows Harness', 'Harness'],
-  ['Run Windows self-update lock regressions', 'SelfUpdateLocks'],
-  ['Run Windows Node regressions', 'Node'],
-]) {
-  const step = `- name: ${name}\n        shell: powershell\n        run: .\\test.ps1 -Stage ${stage}`;
-  assert(normalizedWorkflow.includes(step), `GitHub Actions exposes the ${stage} stage independently`);
-}
+assert.match(workflow, /stage: \[Harness, SelfUpdateLocks, Node\]/,
+  'GitHub Actions gives each Windows stage an isolated runner');
+assert.match(workflow, /name: windows-\$\{\{ matrix\.stage \}\}/,
+  'GitHub Actions exposes each isolated Windows stage by name');
+assert.match(workflow, /run: \.\\test\.ps1 -Stage \$\{\{ matrix\.stage \}\}/,
+  'GitHub Actions routes the selected Windows matrix stage');
 const modelLockFixtureStart = suite.indexOf("Write-TestStage 'starting model lock regressions'");
 const modelLockFixtureEnd = suite.indexOf("Write-TestStage 'model lock regressions passed'", modelLockFixtureStart);
 assert.notEqual(modelLockFixtureStart, -1, 'Windows suite is missing model lock regressions');
