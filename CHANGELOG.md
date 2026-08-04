@@ -18,6 +18,9 @@ All notable changes to this independent distribution are documented here.
   stable machine readable installation and live health contracts.
 - `gicc support bundle` writes approved configuration metadata and aggregate
   runtime health counts for support requests.
+- A checked JSON compatibility manifest keeps harness classifications, pass
+  through arguments, and native uncapped workflow ownership synchronized with
+  the public documentation and both launchers.
 
 ### Changed
 
@@ -27,6 +30,9 @@ All notable changes to this independent distribution are documented here.
   GICC no longer sets fixed Tool or Agent concurrency limits.
 - Install receipts record optional alias ownership so reinstall and archive
   rollback touch only GICC managed command files.
+- Normal launches cache validated Claude option and auto mode default probes by
+  resolved executable identity. Expiry, corruption, executable changes, and
+  doctor checks refresh the data automatically.
 
 ### Security
 

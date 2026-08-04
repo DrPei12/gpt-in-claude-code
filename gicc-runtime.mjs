@@ -56,6 +56,7 @@ const SAFE_ENVIRONMENT_RULES = new Map([
   ['GICC_USAGE_SOURCE', oneOf('auto', 'web', 'app-server')],
   ['GICC_AUTO_UPDATE', oneOf('on', 'notify', 'off')],
   ['GICC_CLAUDE_AUTO_UPDATE', oneOf('on', 'off')],
+  ['GICC_CAPABILITY_CACHE_SECONDS', integerBetween(0, 604800)],
   ['GICC_SKILL_BRIDGE', oneOf('on', 'off')],
   ['GICC_INSTRUCTION_BRIDGE', oneOf('on', 'off')],
 ]);

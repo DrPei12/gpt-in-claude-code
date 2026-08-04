@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "classifications": [
+    { "id": "native", "label": "Native" },
+    { "id": "translated", "label": "Translated" },
+    { "id": "pass-through", "label": "Pass through" },
+    { "id": "first-party-only", "label": "First party only" },
+    { "id": "not-portable", "label": "Not portable" }
+  ],
+  "surfaces": [
+    { "id": "interactive-ui-tools", "label": "Interactive UI and tools", "classifications": ["native", "not-portable"] },
+    { "id": "authentication-model-access", "label": "Authentication and model access", "classifications": ["translated", "native"] },
+    { "id": "model-selection", "label": "Model selection", "classifications": ["translated", "native"] },
+    { "id": "project-instructions", "label": "Project instructions", "classifications": ["native", "translated"] },
+    { "id": "skills", "label": "Skills", "classifications": ["native", "translated"] },
+    { "id": "plugins", "label": "Plugins", "classifications": ["pass-through", "translated", "not-portable"] },
+    { "id": "mcp-servers", "label": "MCP servers", "classifications": ["pass-through", "native", "not-portable"] },
+    { "id": "hooks", "label": "Hooks", "classifications": ["native", "translated"] },
+    { "id": "agents-tasks", "label": "Agents and tasks", "classifications": ["translated", "native"] },
+    { "id": "permissions-sandboxing", "label": "Permissions and sandboxing", "classifications": ["native", "not-portable"] },
+    { "id": "sessions-resume-worktrees", "label": "Sessions, resume, and worktrees", "classifications": ["pass-through", "native", "not-portable"] },
+    { "id": "structured-streaming-output", "label": "Structured and streaming output", "classifications": ["native", "not-portable"] },
+    { "id": "usage-limits", "label": "Usage limits", "classifications": ["translated"] },
+    { "id": "browser-web-apps", "label": "Browser, web search, and apps", "classifications": ["first-party-only", "not-portable"] },
+    { "id": "management-commands", "label": "Management commands", "classifications": ["pass-through", "native", "not-portable"] }
+  ],
+  "workflowScheduling": {
+    "owner": "claude-code-and-model",
+    "fixedToolLimit": false,
+    "fixedAgentLimit": false,
+    "capabilities": [
+      "Dynamic Workflow",
+      "Ultrareview",
+      "nested subagent delegation",
+      "Agent Teams"
+    ]
+  },
+  "passThroughArguments": [
+    "--continue",
+    "--resume",
+    "--fork-session",
+    "--from-pr",
+    "--worktree",
+    "--tmux",
+    "--ide",
+    "--plugin-dir",
+    "--mcp-config",
+    "--strict-mcp-config",
+    "--settings",
+    "--system-prompt",
+    "--append-system-prompt",
+    "--output-format",
+    "--input-format",
+    "--json-schema",
+    "--session-id",
+    "--debug",
+    "--verbose",
+    "--brief",
+    "--bg",
+    "--chrome",
+    "--no-chrome"
+  ]
+}

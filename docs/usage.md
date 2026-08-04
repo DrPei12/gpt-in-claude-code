@@ -333,7 +333,11 @@ checks Node.js, the two upstream CLIs, the standard Codex login file, the
 install receipt, and managed runtime files without reading credential content.
 The JSON doctor performs the live proxy, authentication, and model checks and
 reports native Tool scheduling, model directed Agent scheduling, Dynamic
-Workflow, Ultrareview, nested delegation, and Agent Teams capability flags.
+Workflow, Ultrareview, nested delegation, and Agent Teams capability flags. It
+also reports the option count, capability cache state, configured cache window,
+and auto mode defaults cache state. Doctor intentionally refreshes both Claude
+probes; ordinary launches reuse a valid cache until the configured window or
+resolved Claude executable changes.
 
 `support bundle` writes a new JSON file in the current directory unless
 `--output FILE` is supplied. It refuses to replace an existing file. The

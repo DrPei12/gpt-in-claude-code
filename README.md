@@ -113,6 +113,9 @@ For release downloads, system requirements, updating, and removal, see the [inst
 - Explicit native Codex and clean native Claude routes for harness specific
   features that should not be translated.
 - Claude Code argument pass through, resume command rewriting, task cleanup, bounded retries, and compatibility detection.
+- Validated Claude option and auto mode defaults caches avoid repeated startup
+  probes and rebuild automatically after expiry, corruption, or a Claude Code
+  executable change.
 - A clean full screen terminal experience without exposing launch commands or internal tool traffic unnecessarily.
 - An optional direct Claude profile for the officially supported Claude in Chrome path.
 

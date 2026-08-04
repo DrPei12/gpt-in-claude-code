@@ -607,10 +607,12 @@ if "%~1"=="--version" (
   exit /b 0
 )
 if "%~1"=="--help" (
+  >>"%USERPROFILE%\gicc-test-capability-help.log" echo help
   echo --model --agents --append-system-prompt --permission-mode --settings --effort --add-dir --plugin-dir
   exit /b 0
 )
 if "%~1"=="auto-mode" if "%~2"=="defaults" (
+  >>"%USERPROFILE%\gicc-test-auto-defaults.log" echo defaults
   echo {"allow":["Default allow rule"],"environment":["Default environment rule"],"soft_deny":["Default soft deny"],"hard_deny":["Data Exfiltration: default hard deny"]}
   exit /b 0
 )
@@ -666,6 +668,7 @@ if ($env:FAKE_CLAUDE_NATIVE_LOG) {
 }
 if ($arg1 -eq '--version') { Write-Output '2.1.210 (test)'; exit 0 }
 if ($arg1 -eq '--help') {
+    Add-Content -LiteralPath (Join-Path $env:USERPROFILE 'gicc-test-capability-help.log') -Value 'help'
     Write-Output '--model --agents --append-system-prompt --permission-mode --settings --effort --add-dir --plugin-dir'
     exit 0
 }
@@ -685,6 +688,7 @@ if ($arg1 -eq 'agents' -and $arg2 -eq '--json') {
     exit 0
 }
 if ($arg1 -eq 'auto-mode' -and $arg2 -eq 'defaults') {
+    Add-Content -LiteralPath (Join-Path $env:USERPROFILE 'gicc-test-auto-defaults.log') -Value 'defaults'
     Write-Output '{"allow":["Default allow rule"],"environment":["Default environment rule"],"soft_deny":["Default soft deny"],"hard_deny":["Data Exfiltration: default hard deny"]}'
     exit 0
 }
@@ -910,6 +914,7 @@ exit 1
     $env:GICC_CURL_BIN = $fakeCurl
     $env:PATH = "$fakeBin$([IO.Path]::PathSeparator)$env:PATH"
     $env:GICC_SKIP_AUTO_UPDATE = '1'
+    $env:GICC_CAPABILITY_CACHE_SECONDS = '0'
     $env:GICC_SKIP_PROXY_WATCHER = '1'
     # The dedicated watcher lifecycle coverage below is Windows-only. Avoid
     # repeatedly spawning and force-stopping Unix watcher children from this
@@ -918,6 +923,50 @@ exit 1
     Remove-Item Env:GICC_PERMISSION_MODE -ErrorAction SilentlyContinue
     Remove-Item Env:GICC_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
     Remove-Item Env:GICC_MOUSE_POINTER_SHAPE -ErrorAction SilentlyContinue
+
+    if ($isWindowsPlatform) {
+        $capabilityHelpLog = Join-Path $testHome 'gicc-test-capability-help.log'
+        $autoDefaultsLog = Join-Path $testHome 'gicc-test-auto-defaults.log'
+        $capabilityCache = Join-Path $testConfig 'claude-capabilities.json'
+        $autoDefaultsSnapshot = Join-Path $testConfig 'auto-mode-defaults.json'
+        $autoDefaultsMeta = Join-Path $testConfig 'auto-mode-defaults.meta.json'
+        $cacheShellPath = (Get-Process -Id $PID).Path
+        $env:GICC_CAPABILITY_CACHE_SECONDS = '86400'
+        try {
+            Remove-Item -LiteralPath $capabilityHelpLog, $autoDefaultsLog, $capabilityCache,
+                $autoDefaultsSnapshot, $autoDefaultsMeta -Force -ErrorAction SilentlyContinue
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-cold | Out-Null
+            Assert-True ($LASTEXITCODE -eq 0) 'Windows cold capability cache launch succeeds'
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-warm | Out-Null
+            Assert-True ($LASTEXITCODE -eq 0) 'Windows warm capability cache launch succeeds'
+            Assert-True (@([IO.File]::ReadAllLines($capabilityHelpLog)).Count -eq 1) 'Windows warm launch skips Claude help probe'
+            Assert-True (@([IO.File]::ReadAllLines($autoDefaultsLog)).Count -eq 1) 'Windows warm launch skips auto mode defaults probe'
+
+            [IO.File]::WriteAllText($capabilityCache, '{malformed', $utf8)
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-repair-capabilities | Out-Null
+            Assert-True (@([IO.File]::ReadAllLines($capabilityHelpLog)).Count -eq 2) 'Windows corrupt capability cache is rebuilt'
+            Assert-True (@([IO.File]::ReadAllLines($autoDefaultsLog)).Count -eq 1) 'Windows capability repair keeps defaults cache'
+
+            [IO.File]::WriteAllText($autoDefaultsMeta, '{malformed', $utf8)
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-repair-defaults | Out-Null
+            Assert-True (@([IO.File]::ReadAllLines($capabilityHelpLog)).Count -eq 2) 'Windows defaults repair keeps capability cache'
+            Assert-True (@([IO.File]::ReadAllLines($autoDefaultsLog)).Count -eq 2) 'Windows corrupt defaults metadata is rebuilt'
+
+            $fakeClaudeItem = Get-Item -LiteralPath (Join-Path $fakeBin 'claude.ps1') -Force
+            $fakeClaudeItem.LastWriteTimeUtc = $fakeClaudeItem.LastWriteTimeUtc.AddSeconds(2)
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-new-claude | Out-Null
+            Assert-True (@([IO.File]::ReadAllLines($capabilityHelpLog)).Count -eq 3) 'Windows Claude change invalidates capability cache'
+            Assert-True (@([IO.File]::ReadAllLines($autoDefaultsLog)).Count -eq 3) 'Windows Claude change invalidates defaults cache'
+
+            $capabilityPayload = Get-Content -LiteralPath $capabilityCache -Raw | ConvertFrom-Json
+            $defaultsMetaPayload = Get-Content -LiteralPath $autoDefaultsMeta -Raw | ConvertFrom-Json
+            Assert-True ($capabilityPayload.schema -eq 1 -and @($capabilityPayload.options) -contains '--model') 'Windows capability cache has a validated schema'
+            Assert-True ($defaultsMetaPayload.schema -eq 1 -and -not [string]::IsNullOrWhiteSpace($defaultsMetaPayload.fingerprint)) 'Windows defaults metadata has a validated schema'
+        } finally {
+            $env:GICC_CAPABILITY_CACHE_SECONDS = '0'
+        }
+        Write-TestStage 'capability cache regressions passed'
+    }
 
     if ($isWindowsPlatform) {
         $codexConfigArgumentLog = Join-Path $temporary 'codex-config-argument.log'
@@ -2644,6 +2693,26 @@ process.stdout.write(JSON.stringify({
     Assert-True (-not $bare.Contains('--append-system-prompt')) 'bare mode leader prompt suppressed'
     Assert-True (-not $bare.Contains('--permission-mode')) 'bare mode permission override suppressed'
 
+    $passThroughArguments = [string[]] @(
+        '--continue', '--resume', 'session-123', '--fork-session', '--from-pr', '42',
+        '--worktree', 'audit-tree', '--tmux', '--ide', '--plugin-dir', (Join-Path $temporary 'plugin'),
+        '--mcp-config', (Join-Path $temporary 'mcp.json'), '--strict-mcp-config',
+        '--settings', (Join-Path $testConfig 'settings.json'), '--system-prompt', 'system-text',
+        '--append-system-prompt', 'append-text', '--output-format', 'json',
+        '--input-format', 'stream-json', '--json-schema', '{}',
+        '--session-id', '00000000-0000-4000-8000-000000000000', '--debug', 'chrome',
+        '--verbose', '--brief', '--bg', '--chrome', '--no-chrome', 'test-prompt'
+    )
+    $passThrough = (& (Join-Path $root 'gicc.ps1') @passThroughArguments | Out-String)
+    foreach ($passThroughOption in @(
+        '--continue', '--resume', '--fork-session', '--from-pr', '--worktree', '--tmux', '--ide',
+        '--plugin-dir', '--mcp-config', '--strict-mcp-config', '--settings', '--system-prompt',
+        '--append-system-prompt', '--output-format', '--input-format', '--json-schema', '--session-id',
+        '--debug', '--verbose', '--brief', '--bg', '--chrome', '--no-chrome'
+    )) {
+        Assert-True ($passThrough.Contains($passThroughOption)) "Windows pass through preserves $passThroughOption"
+    }
+
     $explicitAgents = (& (Join-Path $root 'gicc.ps1') --agents '{}' test-prompt | Out-String)
     Assert-True ($explicitAgents.Contains('--agents {}')) 'explicit custom agents preserved'
     Assert-True (-not $explicitAgents.Contains('"Terra (high)"')) 'managed agents suppressed by explicit custom agents'
@@ -2692,12 +2761,16 @@ process.stdout.write(JSON.stringify({
     Assert-True $doctorJson.ok 'doctor JSON healthy status'
     Assert-True ($doctorJson.components.claudeCode.status -eq 'ready') 'doctor JSON Claude status'
     Assert-True ($doctorJson.components.claudeCode.version -eq '2.1.210') 'doctor JSON Claude version'
+    Assert-True ($doctorJson.components.claudeCode.capabilityCache -eq 'disabled') 'doctor JSON capability cache state'
+    Assert-True ($doctorJson.components.claudeCode.detectedOptions -eq 8) 'doctor JSON capability count'
     Assert-True ($doctorJson.components.proxy.status -eq 'healthy') 'doctor JSON proxy status'
     Assert-True ($doctorJson.components.codexAuth.status -eq 'ready') 'doctor JSON auth status'
     Assert-True (@($doctorJson.models | Where-Object { $_.advertised }).Count -eq 3) 'doctor JSON model catalog'
     Assert-True ($doctorJson.configuration.maxOutputTokens -eq 128000) 'doctor JSON output budget'
     Assert-True ($doctorJson.configuration.toolScheduling -eq 'native') 'doctor JSON native tool scheduling'
     Assert-True ($doctorJson.configuration.agentScheduling -eq 'model-directed') 'doctor JSON model directed agents'
+    Assert-True ($doctorJson.configuration.capabilityCacheSeconds -eq 0) 'doctor JSON capability cache window'
+    Assert-True ($doctorJson.configuration.autoModeDefaultsCache -eq 'disabled') 'doctor JSON defaults cache state'
     Assert-True $doctorJson.capabilities.dynamicWorkflow 'doctor JSON dynamic workflow capability'
     Assert-True $doctorJson.capabilities.ultrareview 'doctor JSON ultrareview capability'
     Assert-True $doctorJson.capabilities.nestedDelegation 'doctor JSON nested delegation capability'

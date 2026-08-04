@@ -82,6 +82,7 @@ if [[ "${1:-}" == "--version" ]]; then
   exit
 fi
 if [[ "${1:-}" == "--help" ]]; then
+  [[ -z "${FAKE_CLAUDE_HELP_LOG:-}" ]] || printf '%s\n' help >> "$FAKE_CLAUDE_HELP_LOG"
   if [[ "${FAKE_CLAUDE_HELP_NO_MODEL:-0}" == 1 ]]; then
     printf '%s\n' '--effort --settings'
   elif [[ "${FAKE_CLAUDE_HELP_PROSE_ONLY:-0}" == 1 ]]; then
@@ -93,6 +94,7 @@ if [[ "${1:-}" == "--help" ]]; then
   exit
 fi
 if [[ "${1:-}" == "auto-mode" && "${2:-}" == "defaults" ]]; then
+  [[ -z "${FAKE_CLAUDE_AUTO_DEFAULTS_LOG:-}" ]] || printf '%s\n' defaults >> "$FAKE_CLAUDE_AUTO_DEFAULTS_LOG"
   [[ "${FAKE_AUTO_MODE_DEFAULTS_FAIL:-0}" != 1 ]] || exit 1
   if [[ "${FAKE_AUTO_MODE_DEFAULT_VERSION:-1}" == 2 ]]; then
     printf '%s\n' '{"allow":["Updated default allow rule"],"environment":["Updated default environment rule"],"soft_deny":["Updated soft deny"],"hard_deny":["Data Exfiltration: updated hard deny"]}'
@@ -339,9 +341,51 @@ chmod +x "$tmp/bin/"*
 
 run_wrapper() {
   HOME="$tmp/home" PATH="$tmp/bin:$PATH" GICC_CURL_BIN="$tmp/bin/curl" GICC_SKIP_AUTO_UPDATE=1 \
-    GICC_SKIP_PROXY_WATCHER=1 \
+    GICC_SKIP_PROXY_WATCHER=1 GICC_CAPABILITY_CACHE_SECONDS=0 \
     "$root/gicc" "$@"
 }
+
+run_cached_wrapper() {
+  HOME="$tmp/home" PATH="$tmp/bin:$PATH" GICC_CURL_BIN="$tmp/bin/curl" GICC_SKIP_AUTO_UPDATE=1 \
+    GICC_SKIP_PROXY_WATCHER=1 GICC_CAPABILITY_CACHE_SECONDS=86400 \
+    FAKE_CLAUDE_HELP_LOG="$tmp/capability-help.log" \
+    FAKE_CLAUDE_AUTO_DEFAULTS_LOG="$tmp/auto-defaults.log" \
+    "$root/gicc" "$@"
+}
+
+# A normal launch probes each Claude capability surface once, then reuses a
+# private cache until its contents or executable fingerprint changes.
+rm -f "$tmp/capability-help.log" "$tmp/auto-defaults.log" \
+  "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json" \
+  "$tmp/home/.config/gpt-in-claude-code/auto-mode-defaults.json" \
+  "$tmp/home/.config/gpt-in-claude-code/auto-mode-defaults.meta.json"
+run_cached_wrapper --print cache-cold >/dev/null
+run_cached_wrapper --print cache-warm >/dev/null
+[[ "$(wc -l < "$tmp/capability-help.log")" == 1 ]]
+[[ "$(wc -l < "$tmp/auto-defaults.log")" == 1 ]]
+
+printf '%s\n' '{malformed' > "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json"
+run_cached_wrapper --print cache-repair-capabilities >/dev/null
+[[ "$(wc -l < "$tmp/capability-help.log")" == 2 ]]
+[[ "$(wc -l < "$tmp/auto-defaults.log")" == 1 ]]
+
+printf '%s\n' '{malformed' > "$tmp/home/.config/gpt-in-claude-code/auto-mode-defaults.meta.json"
+run_cached_wrapper --print cache-repair-defaults >/dev/null
+[[ "$(wc -l < "$tmp/capability-help.log")" == 2 ]]
+[[ "$(wc -l < "$tmp/auto-defaults.log")" == 2 ]]
+
+sleep 1
+touch "$tmp/bin/claude"
+run_cached_wrapper --print cache-new-claude >/dev/null
+[[ "$(wc -l < "$tmp/capability-help.log")" == 3 ]]
+[[ "$(wc -l < "$tmp/auto-defaults.log")" == 3 ]]
+jq -e '.schema == 1 and (.options | index("--model") != null)' \
+  "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json" >/dev/null
+jq -e '.schema == 1 and (.fingerprint | type == "string")' \
+  "$tmp/home/.config/gpt-in-claude-code/auto-mode-defaults.meta.json" >/dev/null
+if cache_mode=$(stat -c '%a' "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json" 2>/dev/null); then :
+else cache_mode=$(stat -f '%Lp' "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json"); fi
+[[ "$cache_mode" == 600 ]]
 
 cat > "$tmp/launcher-signal-driver.cjs" <<'EOF'
 const fs = require('node:fs');
@@ -1489,12 +1533,15 @@ prefixed_maintenance=$(GICC_NODE_BIN=relative/node run_wrapper --verbose mcp lis
 
 passthrough_output=$(run_wrapper --continue --resume session-123 --fork-session --from-pr 42 \
   --worktree audit-tree --tmux --ide --remote-control --plugin-dir /tmp/plugin \
-  --mcp-config /tmp/mcp.json --strict-mcp-config --output-format json \
+  --mcp-config /tmp/mcp.json --strict-mcp-config \
+  --settings "$tmp/home/.config/gpt-in-claude-code/settings.json" \
+  --system-prompt system-text --append-system-prompt append-text --output-format json \
   --input-format stream-json --json-schema '{}' --session-id 00000000-0000-4000-8000-000000000000 \
   --debug chrome --verbose --brief --bg --chrome --no-chrome test-prompt)
 for expected_argument in --continue '--resume session-123' --fork-session '--from-pr 42' \
   '--worktree audit-tree' --tmux --ide --remote-control '--plugin-dir /tmp/plugin' \
-  '--mcp-config /tmp/mcp.json' --strict-mcp-config '--output-format json' \
+  '--mcp-config /tmp/mcp.json' --strict-mcp-config --settings '--system-prompt system-text' \
+  '--append-system-prompt append-text' '--output-format json' \
   '--input-format stream-json' '--json-schema {}' --session-id '--debug chrome' \
   --verbose --brief --bg --chrome --no-chrome; do
   [[ "$passthrough_output" == *"$expected_argument"* ]]
@@ -1607,12 +1654,16 @@ printf '%s\n' "$doctor_json" | jq -e '
   and .ok == true
   and .components.claudeCode.status == "ready"
   and .components.claudeCode.version == "2.1.210"
+  and .components.claudeCode.capabilityCache == "disabled"
+  and .components.claudeCode.detectedOptions == 8
   and .components.proxy.status == "healthy"
   and .components.codexAuth.status == "ready"
   and ([.models[] | select(.advertised == true)] | length) == 3
   and .configuration.maxOutputTokens == 128000
   and .configuration.toolScheduling == "native"
   and .configuration.agentScheduling == "model-directed"
+  and .configuration.capabilityCacheSeconds == 0
+  and .configuration.autoModeDefaultsCache == "disabled"
   and .capabilities.dynamicWorkflow == true
   and .capabilities.ultrareview == true
   and .capabilities.nestedDelegation == true

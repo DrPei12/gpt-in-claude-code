@@ -23,7 +23,7 @@ files=(
   codex-session codex-session.ps1 env.example install.ps1 install.sh install.zsh
   preload.cjs skill-bridge.cjs self-update self-update.ps1 settings.json statusline statusline.ps1 usage-limit usage-limit.ps1
   bin/gicc-package.mjs bin/package-setup-lock.mjs
-  docs/README.md docs/architecture.md docs/claude-code-compatibility.md docs/configuration.md
+  docs/README.md docs/architecture.md docs/claude-code-compatibility.md docs/compatibility-matrix.json docs/configuration.md
   docs/development.md docs/installation.md docs/package-managers.md docs/skills.md
   docs/troubleshooting.md docs/usage.md
   skills/usage-limit/SKILL.md skills/usage-limit/SKILL.windows.md

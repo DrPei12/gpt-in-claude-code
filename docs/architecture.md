@@ -111,8 +111,12 @@ with unknown ownership untouched.
 
 The installer performs a best effort Claude Code update. The launcher checks
 again on a configurable interval without blocking startup, recovers stale lock
-directories, and avoids racing explicit update commands. At every launch,
-GICC reads `claude --help` and injects optional switches only when supported.
+directories, and avoids racing explicit update commands. GICC parses
+`claude --help` and injects optional switches only when supported. Normal
+launches reuse private validated option and auto mode defaults caches tied to
+the resolved Claude executable and a configurable time window. A changed
+executable, expired or malformed metadata, or `gicc --doctor` causes a live
+refresh. Cache failure never enables an unobserved option.
 Unknown arguments are forwarded exactly.
 
 Before an ordinary GPT backed launch, the shared skill bridge discovers native

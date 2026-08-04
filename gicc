@@ -450,6 +450,7 @@ fi
 : "${GICC_USAGE_ALERT_PERCENT:=20}"
 : "${GICC_CLAUDE_AUTO_UPDATE:=on}"
 : "${GICC_CLAUDE_UPDATE_INTERVAL_SECONDS:=86400}"
+: "${GICC_CAPABILITY_CACHE_SECONDS:=86400}"
 : "${GICC_AUTO_UPDATE:=on}"
 : "${GICC_UPDATE_INTERVAL_SECONDS:=86400}"
 : "${GICC_PLAN_MODE_POLICY:=conservative}"
@@ -605,6 +606,10 @@ if [[ ! "$GICC_UPDATE_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || (( GICC_UPDATE_INTERVA
 fi
 if [[ ! "$GICC_CLAUDE_UPDATE_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || (( GICC_CLAUDE_UPDATE_INTERVAL_SECONDS < 3600 || GICC_CLAUDE_UPDATE_INTERVAL_SECONDS > 2592000 )); then
   printf '%s\n' 'gicc: GICC_CLAUDE_UPDATE_INTERVAL_SECONDS must be from 3600 to 2592000.' >&2
+  exit 2
+fi
+if [[ ! "$GICC_CAPABILITY_CACHE_SECONDS" =~ ^[0-9]+$ ]] || (( GICC_CAPABILITY_CACHE_SECONDS > 604800 )); then
+  printf '%s\n' 'gicc: GICC_CAPABILITY_CACHE_SECONDS must be from 0 to 604800.' >&2
   exit 2
 fi
 case "$GICC_PLAN_MODE_POLICY" in conservative|normal) ;;
@@ -1902,9 +1907,8 @@ maybe_self_update() {
     nohup "$self_update_helper" "$action" --background </dev/null >"$log_dir/background.log" 2>&1 &
 }
 
-claude_supports() {
-  local option="$1"
-  printf '%s\n' "${claude_help_cache:-}" | awk -v wanted="$option" '
+extract_claude_options() {
+  awk '
     {
       line = $0
       sub(/^[[:space:]]+/, "", line)
@@ -1914,19 +1918,95 @@ claude_supports() {
         sub(/,$/, "", candidate)
         sub(/[= ].*$/, "", candidate)
         if (candidate !~ /^-/) break
-        if (candidate == wanted) found = 1
+        if (candidate ~ /^--?[A-Za-z][A-Za-z0-9-]*$/ && length(candidate) <= 64) print candidate
       }
     }
-    END { exit(found ? 0 : 1) }
-  '
+  ' | LC_ALL=C sort -u
+}
+
+claude_supports() {
+  local option="$1"
+  [[ $'\n'"${claude_help_cache:-}"$'\n' == *$'\n'"$option"$'\n'* ]]
+}
+
+claude_command_fingerprint() {
+  local command_path metadata command_dir
+  command_path=$(command -v claude 2>/dev/null || true)
+  [[ "$command_path" == */* && -f "$command_path" ]] || return 1
+  command_dir=$(CDPATH= cd -- "$(dirname -- "$command_path")" 2>/dev/null && pwd -P) || return 1
+  command_path="$command_dir/$(basename -- "$command_path")"
+  if metadata=$(stat -Lc '%Y:%s' -- "$command_path" 2>/dev/null); then :
+  elif metadata=$(stat -L -f '%m:%z' -- "$command_path" 2>/dev/null); then :
+  else return 1
+  fi
+  printf '%s|%s\n' "$command_path" "$metadata"
+}
+
+read_claude_capability_cache() {
+  local cache_file="$gicc_config_dir/claude-capabilities.json" now minimum cached cache_size
+  (( GICC_CAPABILITY_CACHE_SECONDS > 0 )) || return 1
+  [[ -n "${claude_capability_fingerprint:-}" && -f "$cache_file" && ! -L "$cache_file" ]] || return 1
+  cache_size=$(wc -c < "$cache_file" 2>/dev/null) || return 1
+  [[ "$cache_size" =~ ^[0-9]+$ ]] && (( cache_size <= 262144 )) || return 1
+  now=$(date +%s)
+  minimum=$(( now - GICC_CAPABILITY_CACHE_SECONDS ))
+  cached=$(jq -er --arg fingerprint "$claude_capability_fingerprint" \
+      --argjson minimum "$minimum" --argjson maximum "$(( now + 300 ))" '
+    select(
+      .schema == 1
+      and .fingerprint == $fingerprint
+      and (.capturedAt | type == "number" and floor == .)
+      and .capturedAt >= $minimum
+      and .capturedAt <= $maximum
+      and (.options | type == "array" and length > 0 and length <= 256)
+      and all(.options[];
+        type == "string"
+        and length <= 64
+        and test("^--?[A-Za-z][A-Za-z0-9-]*$"))
+    )
+    | .options
+    | unique
+    | join("\n")
+  ' "$cache_file" 2>/dev/null) || return 1
+  [[ -n "$cached" ]] || return 1
+  claude_help_cache="$cached"
+}
+
+write_claude_capability_cache() {
+  local cache_file="$gicc_config_dir/claude-capabilities.json" tmp_file options_json now
+  (( GICC_CAPABILITY_CACHE_SECONDS > 0 )) || return 0
+  [[ -n "${claude_capability_fingerprint:-}" ]] || return 0
+  options_json=$(printf '%s\n' "$claude_help_cache" | jq -Rsc 'split("\n") | map(select(length > 0)) | unique') || return 0
+  now=$(date +%s)
+  tmp_file=$(mktemp "$gicc_config_dir/.claude-capabilities.XXXXXX") || return 0
+  if jq -n --arg fingerprint "$claude_capability_fingerprint" --argjson captured_at "$now" \
+      --argjson options "$options_json" \
+      '{schema: 1, capturedAt: $captured_at, fingerprint: $fingerprint, options: $options}' > "$tmp_file"; then
+    chmod 600 "$tmp_file" 2>/dev/null || true
+    mv -f "$tmp_file" "$cache_file"
+  else
+    rm -f "$tmp_file"
+  fi
 }
 
 load_claude_capabilities() {
+  local force_refresh="${1:-0}" raw_help
   command -v claude >/dev/null 2>&1 || {
     printf '%s\n' 'gicc: Claude Code was not found. Install Claude Code and retry.' >&2
     return 1
   }
-  claude_help_cache=$(claude --help 2>/dev/null || true)
+  claude_capability_fingerprint=$(claude_command_fingerprint 2>/dev/null || true)
+  claude_capability_cache_state="miss"
+  if (( ! force_refresh )) && read_claude_capability_cache; then
+    claude_capability_cache_state="hit"
+  else
+    raw_help=$(claude --help 2>/dev/null || true)
+    claude_help_cache=$(printf '%s\n' "$raw_help" | extract_claude_options)
+    if (( GICC_CAPABILITY_CACHE_SECONDS == 0 )); then claude_capability_cache_state="disabled"
+    elif [[ -z "$claude_capability_fingerprint" ]]; then claude_capability_cache_state="bypassed"
+    else claude_capability_cache_state="refreshed"
+    fi
+  fi
   [[ -n "$claude_help_cache" ]] || {
     printf '%s\n' 'gicc: Claude Code did not return its capability list.' >&2
     return 1
@@ -1935,18 +2015,23 @@ load_claude_capabilities() {
     printf '%s\n' 'gicc: this Claude Code build does not support custom models; run `claude update`.' >&2
     return 1
   fi
+  [[ "$claude_capability_cache_state" == hit ]] || write_claude_capability_cache
 }
 
 ensure_auto_mode_rules() {
   # Claude Code replaces an autoMode array when settings provide that key.
   # Recompose from the current binary's defaults so GICC's scoped additions
   # never discard new or existing upstream safety rules after an update.
-  [[ "$settings_file" == "$gicc_config_dir/settings.json" ]] || return 0
+  local force_refresh="${1:-0}"
+  auto_mode_cache_state="miss"
+  [[ "$settings_file" == "$gicc_config_dir/settings.json" ]] || { auto_mode_cache_state="not-managed"; return 0; }
   local defaults_json previous_defaults='{}' tmp_file snapshot_file snapshot_tmp defaults_are_fresh=0
+  local snapshot_meta_file snapshot_meta_tmp now minimum
   local lock_dir="$gicc_config_dir/run/auto-mode.lock"
-  acquire_state_lock "$lock_dir" || return 0
+  acquire_state_lock "$lock_dir" || { auto_mode_cache_state="unavailable"; return 0; }
   snapshot_file="$gicc_config_dir/auto-mode-defaults.json"
-  if [[ -s "$snapshot_file" ]] && jq -e '
+  snapshot_meta_file="$gicc_config_dir/auto-mode-defaults.meta.json"
+  if [[ -s "$snapshot_file" && ! -L "$snapshot_file" ]] && jq -e '
     (.allow | type == "array") and
     (.environment | type == "array") and
     (.soft_deny | type == "array") and
@@ -1954,15 +2039,35 @@ ensure_auto_mode_rules() {
   ' "$snapshot_file" >/dev/null 2>&1; then
     previous_defaults=$(<"$snapshot_file")
   fi
-  if defaults_json=$(claude auto-mode defaults 2>/dev/null) && printf '%s\n' "$defaults_json" | jq -e '
+  now=$(date +%s)
+  minimum=$(( now - GICC_CAPABILITY_CACHE_SECONDS ))
+  if (( ! force_refresh && GICC_CAPABILITY_CACHE_SECONDS > 0 )) \
+      && [[ "$previous_defaults" != '{}' && -n "${claude_capability_fingerprint:-}" ]] \
+      && [[ -f "$snapshot_meta_file" && ! -L "$snapshot_meta_file" ]] \
+      && jq -e --arg fingerprint "$claude_capability_fingerprint" \
+        --argjson minimum "$minimum" --argjson maximum "$(( now + 300 ))" '
+          .schema == 1
+          and .fingerprint == $fingerprint
+          and (.capturedAt | type == "number" and floor == .)
+          and .capturedAt >= $minimum
+          and .capturedAt <= $maximum
+        ' "$snapshot_meta_file" >/dev/null 2>&1; then
+    defaults_json="$previous_defaults"
+    auto_mode_cache_state="hit"
+  elif defaults_json=$(claude auto-mode defaults 2>/dev/null) && printf '%s\n' "$defaults_json" | jq -e '
       (.allow | type == "array") and
       (.environment | type == "array") and
       (.soft_deny | type == "array") and
       (.hard_deny | type == "array")
     ' >/dev/null 2>&1; then
     defaults_are_fresh=1
+    if (( GICC_CAPABILITY_CACHE_SECONDS == 0 )); then auto_mode_cache_state="disabled"
+    elif [[ -z "${claude_capability_fingerprint:-}" ]]; then auto_mode_cache_state="bypassed"
+    else auto_mode_cache_state="refreshed"
+    fi
   elif [[ "$previous_defaults" != '{}' ]]; then
     defaults_json="$previous_defaults"
+    auto_mode_cache_state="fallback"
   else
     # Older GICC releases shipped only the managed allow/environment
     # additions. Because Claude Code replaces a configured array wholesale,
@@ -1988,6 +2093,7 @@ ensure_auto_mode_rules() {
     ' "$settings_file" > "$tmp_file" 2>/dev/null; then
       chmod 600 "$tmp_file" 2>/dev/null || true
       mv -f "$tmp_file" "$settings_file"
+      auto_mode_cache_state="unavailable"
       release_state_lock "$lock_dir"
       return 0
     fi
@@ -2055,6 +2161,16 @@ ensure_auto_mode_rules() {
     printf '%s\n' "$defaults_json" | jq '.' > "$snapshot_tmp"
     chmod 600 "$snapshot_tmp" 2>/dev/null || true
     mv -f "$snapshot_tmp" "$snapshot_file"
+    if (( GICC_CAPABILITY_CACHE_SECONDS > 0 )) && [[ -n "${claude_capability_fingerprint:-}" ]]; then
+      snapshot_meta_tmp=$(mktemp "$gicc_config_dir/.auto-mode-defaults-meta.XXXXXX")
+      if jq -n --arg fingerprint "$claude_capability_fingerprint" --argjson captured_at "$now" \
+          '{schema: 1, capturedAt: $captured_at, fingerprint: $fingerprint}' > "$snapshot_meta_tmp"; then
+        chmod 600 "$snapshot_meta_tmp" 2>/dev/null || true
+        mv -f "$snapshot_meta_tmp" "$snapshot_meta_file"
+      else
+        rm -f "$snapshot_meta_tmp"
+      fi
+    fi
   fi
   release_state_lock "$lock_dir"
 }
@@ -2078,12 +2194,12 @@ machine_version() {
 
 doctor() {
   local json_output="${1:-0}"
-  load_claude_capabilities
-  ensure_auto_mode_rules
+  load_claude_capabilities 1
+  ensure_auto_mode_rules 1
   ensure_proxy
 
   local saved_model models proxy_version missing=0 model claude_version
-  local auth_output auth_status=0 auth_state models_status
+  local auth_output auth_status=0 auth_state models_status capability_count
   local json_claude_version json_proxy_version json_saved_model=""
   saved_model=$(jq -r '.model // "gpt-5.6-sol"' "$settings_file")
   models=$(fetch_models 5)
@@ -2099,6 +2215,7 @@ doctor() {
   claude_version=$(claude --version 2>/dev/null || printf unavailable)
   claude_version="${claude_version%%$'\n'*}"
   [[ -n "$claude_version" ]] || claude_version="unavailable"
+  capability_count=$(printf '%s\n' "$claude_help_cache" | awk 'NF { count++ } END { print count + 0 }')
   json_claude_version=$(machine_version "$claude_version")
   json_proxy_version=$(machine_version "$proxy_version")
   case "$saved_model" in
@@ -2132,6 +2249,8 @@ doctor() {
       --arg claude_version "$json_claude_version" \
       --arg proxy_version "$json_proxy_version" \
       --arg auth_state "$auth_state" \
+      --arg capability_cache_state "$claude_capability_cache_state" \
+      --arg auto_mode_cache_state "$auto_mode_cache_state" \
       --arg saved_model "$json_saved_model" \
       --arg permission_mode "$GICC_PERMISSION_MODE" \
       --arg auto_mode_model "$GICC_AUTO_MODE_MODEL" \
@@ -2143,12 +2262,19 @@ doctor() {
       --arg plan_mode_policy "$GICC_PLAN_MODE_POLICY" \
       --arg usage_source "$GICC_USAGE_SOURCE" \
       --argjson models "$models_status" \
+      --argjson capability_count "$capability_count" \
+      --argjson capability_cache_seconds "$GICC_CAPABILITY_CACHE_SECONDS" \
       --argjson ok "$(( auth_status == 0 && missing == 0 ))" '
       {
         schema: 1,
         ok: ($ok == 1),
         components: {
-          claudeCode: {status: "ready", version: (if $claude_version == "" then null else $claude_version end)},
+          claudeCode: {
+            status: "ready",
+            version: (if $claude_version == "" then null else $claude_version end),
+            capabilityCache: $capability_cache_state,
+            detectedOptions: $capability_count
+          },
           proxy: {status: "healthy", version: (if $proxy_version == "" then null else $proxy_version end)},
           codexAuth: {status: $auth_state}
         },
@@ -2164,6 +2290,8 @@ doctor() {
           autoCompactWindow: ($auto_compact_window | tonumber),
           planModePolicy: $plan_mode_policy,
           usageSource: $usage_source,
+          capabilityCacheSeconds: $capability_cache_seconds,
+          autoModeDefaultsCache: $auto_mode_cache_state,
           toolScheduling: "native",
           agentScheduling: "model-directed"
         },
@@ -2180,6 +2308,8 @@ doctor() {
   fi
 
   printf '%s\n' "Claude Code: ${claude_version}"
+  printf '%s\n' "Claude capability cache: ${claude_capability_cache_state} (${capability_count} options)"
+  printf '%s\n' "Auto mode defaults cache: ${auto_mode_cache_state} (${GICC_CAPABILITY_CACHE_SECONDS}s window)"
   printf '%s\n' "CLIProxyAPI: ${proxy_version}"
   [[ -z "$auth_output" ]] || printf '%s\n' "$auth_output"
   if (( auth_status != 0 )); then return "$auth_status"; fi

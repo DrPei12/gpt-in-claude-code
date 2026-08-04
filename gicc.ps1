@@ -963,6 +963,7 @@ $usageSource = Env-OrDefault 'GICC_USAGE_SOURCE' 'auto'
 $usageAlert = Env-OrDefault 'GICC_USAGE_ALERT_PERCENT' '20'
 $claudeAutoUpdate = Env-OrDefault 'GICC_CLAUDE_AUTO_UPDATE' 'on'
 $claudeUpdateInterval = Env-OrDefault 'GICC_CLAUDE_UPDATE_INTERVAL_SECONDS' '86400'
+$capabilityCacheSeconds = Env-OrDefault 'GICC_CAPABILITY_CACHE_SECONDS' '86400'
 $giccAutoUpdate = Env-OrDefault 'GICC_AUTO_UPDATE' 'on'
 $giccUpdateInterval = Env-OrDefault 'GICC_UPDATE_INTERVAL_SECONDS' '86400'
 $planModePolicy = Env-OrDefault 'GICC_PLAN_MODE_POLICY' 'conservative'
@@ -1102,6 +1103,7 @@ if (-not $earlyRuntimeBypass) {
     $usageMaxStaleNumber = Require-Integer 'GICC_USAGE_MAX_STALE_SECONDS' $usageMaxStale $usageRefreshNumber 604800
     $usageAlertNumber = Require-Integer 'GICC_USAGE_ALERT_PERCENT' $usageAlert 0 100
     $claudeUpdateIntervalNumber = Require-Integer 'GICC_CLAUDE_UPDATE_INTERVAL_SECONDS' $claudeUpdateInterval 3600 2592000
+    $capabilityCacheSecondsNumber = Require-Integer 'GICC_CAPABILITY_CACHE_SECONDS' $capabilityCacheSeconds 0 604800
     $giccUpdateIntervalNumber = Require-Integer 'GICC_UPDATE_INTERVAL_SECONDS' $giccUpdateInterval 3600 2592000
     if ($mousePointer -notin @('pointer', 'default', 'off')) { Fail 'GICC_MOUSE_POINTER_SHAPE must be pointer, default, or off.' 2 }
     if ($usageDisplay -notin @('on', 'off')) { Fail 'GICC_USAGE_DISPLAY must be on or off.' 2 }
@@ -1117,7 +1119,7 @@ if (-not $earlyRuntimeBypass) {
     $maxRetriesNumber = 4; $maxOutputTokensNumber = 128000
     $contextWindowNumber = 272000; $compactWindowNumber = 244800
     $usageRefreshNumber = 300; $usageTimeoutNumber = 8; $usageMaxStaleNumber = 86400; $usageAlertNumber = 20
-    $claudeUpdateIntervalNumber = 86400; $giccUpdateIntervalNumber = 86400
+    $claudeUpdateIntervalNumber = 86400; $capabilityCacheSecondsNumber = 86400; $giccUpdateIntervalNumber = 86400
     if ($mousePointer -notin @('pointer', 'default', 'off')) { $mousePointer = 'pointer' }
     if ($usageDisplay -notin @('on', 'off')) { $usageDisplay = 'on' }
     if ($usageSource -notin @('auto', 'web', 'app-server')) { $usageSource = 'auto' }
@@ -2137,40 +2139,132 @@ function Resolve-ClaudeCommand {
     $script:claudeInvocation = if ($claudeCommand.CommandType -eq 'Function') { $claudeCommand.Name } else { $claudeCommand.Source }
 }
 
-function Test-ClaudeOption([string] $Option) {
-    foreach ($line in @($script:claudeHelp -split "`r?`n")) {
+function Get-ClaudeOptions([string] $HelpText) {
+    $options = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in @($HelpText -split "`r?`n")) {
         $fields = @($line.TrimStart() -split '\s+' | Where-Object { $_ })
         foreach ($field in $fields) {
             $candidate = ([string] $field).TrimEnd(',')
             if (-not $candidate.StartsWith('-')) { break }
             $candidate = ($candidate -split '=', 2)[0]
-            if ($candidate -eq $Option) { return $true }
+            if ($candidate.Length -le 64 -and $candidate -match '^--?[A-Za-z][A-Za-z0-9-]*$' -and
+                -not $options.Contains($candidate)) { $options.Add($candidate) }
         }
     }
-    return $false
+    return @($options | Sort-Object)
 }
 
-function Load-ClaudeCapabilities {
+function Test-ClaudeOption([string] $Option) {
+    return $script:claudeOptions -contains $Option
+}
+
+function Get-ClaudeCommandFingerprint {
+    if (-not $script:claudeCommand -or $script:claudeCommand.CommandType -eq 'Function' -or
+        [string]::IsNullOrWhiteSpace([string] $script:claudeCommand.Source)) { return $null }
+    try {
+        $item = Get-Item -LiteralPath ([string] $script:claudeCommand.Source) -Force
+        if (-not $item.PSIsContainer) {
+            return "$($item.FullName)|$($item.Length):$($item.LastWriteTimeUtc.Ticks)"
+        }
+    } catch { }
+    return $null
+}
+
+function Read-ClaudeCapabilityCache([string] $Fingerprint) {
+    if ($capabilityCacheSecondsNumber -le 0 -or [string]::IsNullOrWhiteSpace($Fingerprint)) { return $null }
+    $cacheFile = Join-Path $configDir 'claude-capabilities.json'
+    if (-not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) { return $null }
+    try {
+        $cacheItem = Get-Item -LiteralPath $cacheFile -Force
+        if (($cacheItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $cacheItem.Length -gt 262144) { return $null }
+        $cache = Get-Content -LiteralPath $cacheFile -Raw | ConvertFrom-Json
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        if ($cache.schema -ne 1 -or [string] $cache.fingerprint -cne $Fingerprint -or
+            $null -eq $cache.PSObject.Properties['capturedAt']) { return $null }
+        $capturedAt = 0L
+        if (-not [long]::TryParse([string] $cache.capturedAt, [ref] $capturedAt) -or
+            $capturedAt -lt $now - $capabilityCacheSecondsNumber -or $capturedAt -gt $now + 300) { return $null }
+        $options = @($cache.options)
+        if ($options.Count -eq 0 -or $options.Count -gt 256) { return $null }
+        foreach ($option in $options) {
+            if (([string] $option).Length -gt 64 -or [string] $option -notmatch '^--?[A-Za-z][A-Za-z0-9-]*$') { return $null }
+        }
+        return @($options | Select-Object -Unique | Sort-Object)
+    } catch { return $null }
+}
+
+function Write-ClaudeCapabilityCache([string] $Fingerprint, [string[]] $Options) {
+    if ($capabilityCacheSecondsNumber -le 0 -or [string]::IsNullOrWhiteSpace($Fingerprint)) { return }
+    $cacheFile = Join-Path $configDir 'claude-capabilities.json'
+    $temporary = $null
+    try {
+        if (Test-Path -LiteralPath $cacheFile) {
+            $cacheItem = Get-Item -LiteralPath $cacheFile -Force
+            if (($cacheItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return }
+        }
+        $temporary = Join-Path $configDir ('.claude-capabilities.' + [guid]::NewGuid().ToString('N') + '.tmp')
+        $payload = [ordered]@{
+            schema = 1
+            capturedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+            fingerprint = $Fingerprint
+            options = @($Options | Select-Object -Unique | Sort-Object)
+        }
+        [IO.File]::WriteAllText($temporary, (($payload | ConvertTo-Json -Depth 5) + "`n"), $utf8)
+        Protect-PrivatePath $temporary $false
+        Move-Item -LiteralPath $temporary -Destination $cacheFile -Force
+        $temporary = $null
+    } catch {
+        if ($temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Load-ClaudeCapabilities([bool] $ForceRefresh = $false) {
     Resolve-ClaudeCommand
-    $script:claudeHelp = (Invoke-WithoutPrivateManagedEnvironment -Action {
-        & $script:claudeInvocation --help 2>$null
-    } | Out-String)
-    if ([string]::IsNullOrWhiteSpace($script:claudeHelp)) { Fail 'Claude Code did not return its capability list.' }
+    $script:claudeCapabilityFingerprint = Get-ClaudeCommandFingerprint
+    $script:claudeCapabilityCacheState = 'miss'
+    if (-not $ForceRefresh) {
+        $script:claudeOptions = [string[]] @(Read-ClaudeCapabilityCache $script:claudeCapabilityFingerprint |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string] $_) })
+    } else {
+        $script:claudeOptions = [string[]] @()
+    }
+    if ($script:claudeOptions.Count -gt 0) {
+        $script:claudeCapabilityCacheState = 'hit'
+    } else {
+        $script:claudeHelp = (Invoke-WithoutPrivateManagedEnvironment -Action {
+            & $script:claudeInvocation --help 2>$null
+        } | Out-String)
+        if ([string]::IsNullOrWhiteSpace($script:claudeHelp)) { Fail 'Claude Code did not return its capability list.' }
+        $script:claudeOptions = [string[]] @(Get-ClaudeOptions $script:claudeHelp)
+        if ($capabilityCacheSecondsNumber -eq 0) { $script:claudeCapabilityCacheState = 'disabled' }
+        elseif ([string]::IsNullOrWhiteSpace($script:claudeCapabilityFingerprint)) { $script:claudeCapabilityCacheState = 'bypassed' }
+        else { $script:claudeCapabilityCacheState = 'refreshed' }
+    }
+    $script:claudeHelp = $script:claudeOptions -join "`n"
     if (-not (Test-ClaudeOption '--model')) {
         Fail 'this Claude Code build does not support custom models; run `claude update`.'
     }
+    if ($script:claudeCapabilityCacheState -ne 'hit') {
+        Write-ClaudeCapabilityCache $script:claudeCapabilityFingerprint $script:claudeOptions
+    }
 }
 
-function Update-AutoModeRules {
+function Update-AutoModeRules([bool] $ForceRefresh = $false) {
+    $script:autoModeCacheState = 'miss'
     $managedSettings = Join-Path $configDir 'settings.json'
-    if ([IO.Path]::GetFullPath($settingsFile) -ne [IO.Path]::GetFullPath($managedSettings)) { return }
+    if ([IO.Path]::GetFullPath($settingsFile) -ne [IO.Path]::GetFullPath($managedSettings)) {
+        $script:autoModeCacheState = 'not-managed'
+        return
+    }
     $lockDirectory = Join-Path (Join-Path $configDir 'run') 'auto-mode.lock'
     $lockNonce = Acquire-OwnedLock $lockDirectory 100 20
-    if (-not $lockNonce) { return }
+    if (-not $lockNonce) { $script:autoModeCacheState = 'unavailable'; return }
     $tempFile = $null
     $snapshotTemp = $null
+    $snapshotMetaTemp = $null
     try {
         $snapshotFile = Join-Path $configDir 'auto-mode-defaults.json'
+        $snapshotMetaFile = Join-Path $configDir 'auto-mode-defaults.meta.json'
         $previousSnapshot = $null
         if (Test-Path -LiteralPath $snapshotFile -PathType Leaf) {
             try {
@@ -2183,45 +2277,72 @@ function Update-AutoModeRules {
             } catch { }
         }
         $defaultsAreFresh = $false
-        try {
-            $defaults = (Invoke-WithoutPrivateManagedEnvironment -Action {
-                & $script:claudeInvocation auto-mode defaults 2>$null
-            } | Out-String) | ConvertFrom-Json
-            foreach ($property in @('allow', 'environment', 'soft_deny', 'hard_deny')) {
-                if ($null -eq $defaults.PSObject.Properties[$property]) { throw "missing auto mode default: $property" }
-            }
-            $defaultsAreFresh = $true
-        } catch {
-            if ($null -eq $previousSnapshot) {
-                $fallbackSettings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
-                if ($null -eq $fallbackSettings.PSObject.Properties['autoMode']) { return }
-                $fallbackAutoMode = $fallbackSettings.autoMode
-                $fallbackAllow = if ($null -ne $fallbackAutoMode.PSObject.Properties['allow']) { @($fallbackAutoMode.allow) } else { @() }
-                $fallbackEnvironment = if ($null -ne $fallbackAutoMode.PSObject.Properties['environment']) { @($fallbackAutoMode.environment) } else { @() }
-                $fallbackSoftDeny = if ($null -ne $fallbackAutoMode.PSObject.Properties['soft_deny']) { @($fallbackAutoMode.soft_deny) } else { @() }
-                $fallbackHardDeny = if ($null -ne $fallbackAutoMode.PSObject.Properties['hard_deny']) { @($fallbackAutoMode.hard_deny) } else { @() }
-                $managedAllowOnly = @($fallbackAllow | Where-Object {
-                    -not ($_.StartsWith('Explicit Action Approval:') -or $_.StartsWith('Requested Agent Configuration:'))
-                }).Count -eq 0
-                $managedEnvironmentOnly = @($fallbackEnvironment | Where-Object {
-                    -not ($_.StartsWith('User designated task boundary:') -or $_.StartsWith('Explicitly approved development transfer:'))
-                }).Count -eq 0
-                if ($managedAllowOnly -and $managedEnvironmentOnly -and
-                    $fallbackSoftDeny.Count -eq 0 -and $fallbackHardDeny.Count -eq 0) {
-                    $fallbackAutoMode.PSObject.Properties.Remove('allow')
-                    $fallbackAutoMode.PSObject.Properties.Remove('environment')
-                    if (@($fallbackAutoMode.PSObject.Properties).Count -eq 0) {
-                        $fallbackSettings.PSObject.Properties.Remove('autoMode')
+        $defaults = $null
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        if (-not $ForceRefresh -and $capabilityCacheSecondsNumber -gt 0 -and
+            $null -ne $previousSnapshot -and -not [string]::IsNullOrWhiteSpace($script:claudeCapabilityFingerprint) -and
+            (Test-Path -LiteralPath $snapshotMetaFile -PathType Leaf)) {
+            try {
+                $metaItem = Get-Item -LiteralPath $snapshotMetaFile -Force
+                if (($metaItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 -and $metaItem.Length -le 16384) {
+                    $snapshotMeta = Get-Content -LiteralPath $snapshotMetaFile -Raw | ConvertFrom-Json
+                    $capturedAt = 0L
+                    if ($snapshotMeta.schema -eq 1 -and
+                        [string] $snapshotMeta.fingerprint -ceq $script:claudeCapabilityFingerprint -and
+                        [long]::TryParse([string] $snapshotMeta.capturedAt, [ref] $capturedAt) -and
+                        $capturedAt -ge $now - $capabilityCacheSecondsNumber -and $capturedAt -le $now + 300) {
+                        $defaults = $previousSnapshot
+                        $script:autoModeCacheState = 'hit'
                     }
-                    $fallbackSerialized = $fallbackSettings | ConvertTo-Json -Depth 100
-                    $fallbackTemp = Join-Path $configDir ('settings.json.tmp.' + [guid]::NewGuid().ToString('N'))
-                    [IO.File]::WriteAllText($fallbackTemp, $fallbackSerialized, $utf8)
-                    Move-Item -LiteralPath $fallbackTemp -Destination $settingsFile -Force
-                    return
                 }
-                throw 'Claude Code auto mode defaults are unavailable; custom rules were preserved instead of composing an unsafe partial configuration. Update Claude Code or restore the defaults snapshot, then retry.'
+            } catch { }
+        }
+        if ($null -eq $defaults) {
+            try {
+                $defaults = (Invoke-WithoutPrivateManagedEnvironment -Action {
+                    & $script:claudeInvocation auto-mode defaults 2>$null
+                } | Out-String) | ConvertFrom-Json
+                foreach ($property in @('allow', 'environment', 'soft_deny', 'hard_deny')) {
+                    if ($null -eq $defaults.PSObject.Properties[$property]) { throw "missing auto mode default: $property" }
+                }
+                $defaultsAreFresh = $true
+                if ($capabilityCacheSecondsNumber -eq 0) { $script:autoModeCacheState = 'disabled' }
+                elseif ([string]::IsNullOrWhiteSpace($script:claudeCapabilityFingerprint)) { $script:autoModeCacheState = 'bypassed' }
+                else { $script:autoModeCacheState = 'refreshed' }
+            } catch {
+                if ($null -eq $previousSnapshot) {
+                    $fallbackSettings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+                    if ($null -eq $fallbackSettings.PSObject.Properties['autoMode']) { $script:autoModeCacheState = 'unavailable'; return }
+                    $fallbackAutoMode = $fallbackSettings.autoMode
+                    $fallbackAllow = if ($null -ne $fallbackAutoMode.PSObject.Properties['allow']) { @($fallbackAutoMode.allow) } else { @() }
+                    $fallbackEnvironment = if ($null -ne $fallbackAutoMode.PSObject.Properties['environment']) { @($fallbackAutoMode.environment) } else { @() }
+                    $fallbackSoftDeny = if ($null -ne $fallbackAutoMode.PSObject.Properties['soft_deny']) { @($fallbackAutoMode.soft_deny) } else { @() }
+                    $fallbackHardDeny = if ($null -ne $fallbackAutoMode.PSObject.Properties['hard_deny']) { @($fallbackAutoMode.hard_deny) } else { @() }
+                    $managedAllowOnly = @($fallbackAllow | Where-Object {
+                        -not ($_.StartsWith('Explicit Action Approval:') -or $_.StartsWith('Requested Agent Configuration:'))
+                    }).Count -eq 0
+                    $managedEnvironmentOnly = @($fallbackEnvironment | Where-Object {
+                        -not ($_.StartsWith('User designated task boundary:') -or $_.StartsWith('Explicitly approved development transfer:'))
+                    }).Count -eq 0
+                    if ($managedAllowOnly -and $managedEnvironmentOnly -and
+                        $fallbackSoftDeny.Count -eq 0 -and $fallbackHardDeny.Count -eq 0) {
+                        $fallbackAutoMode.PSObject.Properties.Remove('allow')
+                        $fallbackAutoMode.PSObject.Properties.Remove('environment')
+                        if (@($fallbackAutoMode.PSObject.Properties).Count -eq 0) {
+                            $fallbackSettings.PSObject.Properties.Remove('autoMode')
+                        }
+                        $fallbackSerialized = $fallbackSettings | ConvertTo-Json -Depth 100
+                        $fallbackTemp = Join-Path $configDir ('settings.json.tmp.' + [guid]::NewGuid().ToString('N'))
+                        [IO.File]::WriteAllText($fallbackTemp, $fallbackSerialized, $utf8)
+                        Move-Item -LiteralPath $fallbackTemp -Destination $settingsFile -Force
+                        $script:autoModeCacheState = 'unavailable'
+                        return
+                    }
+                    throw 'Claude Code auto mode defaults are unavailable; custom rules were preserved instead of composing an unsafe partial configuration. Update Claude Code or restore the defaults snapshot, then retry.'
+                }
+                $defaults = $previousSnapshot
+                $script:autoModeCacheState = 'fallback'
             }
-            $defaults = $previousSnapshot
         }
         $settings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
         if ($null -eq $settings.PSObject.Properties['autoMode']) {
@@ -2299,6 +2420,18 @@ function Update-AutoModeRules {
             [IO.File]::WriteAllText($snapshotTemp, (($snapshot | ConvertTo-Json -Depth 20) + "`n"), $utf8)
             Move-Item -LiteralPath $snapshotTemp -Destination $snapshotFile -Force
             $snapshotTemp = $null
+            if ($capabilityCacheSecondsNumber -gt 0 -and -not [string]::IsNullOrWhiteSpace($script:claudeCapabilityFingerprint)) {
+                $snapshotMetaTemp = Join-Path $configDir ('.auto-mode-defaults-meta.' + [guid]::NewGuid().ToString('N') + '.tmp')
+                $snapshotMeta = [ordered]@{
+                    schema = 1
+                    capturedAt = $now
+                    fingerprint = $script:claudeCapabilityFingerprint
+                }
+                [IO.File]::WriteAllText($snapshotMetaTemp, (($snapshotMeta | ConvertTo-Json -Depth 5) + "`n"), $utf8)
+                Protect-PrivatePath $snapshotMetaTemp $false
+                Move-Item -LiteralPath $snapshotMetaTemp -Destination $snapshotMetaFile -Force
+                $snapshotMetaTemp = $null
+            }
         }
     } catch {
         if ($_.Exception.Message.StartsWith('Claude Code auto mode defaults are unavailable; custom rules were preserved')) {
@@ -2309,6 +2442,7 @@ function Update-AutoModeRules {
     } finally {
         if ($tempFile) { Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue }
         if ($snapshotTemp) { Remove-Item -LiteralPath $snapshotTemp -Force -ErrorAction SilentlyContinue }
+        if ($snapshotMetaTemp) { Remove-Item -LiteralPath $snapshotMetaTemp -Force -ErrorAction SilentlyContinue }
         Release-OwnedLock $lockDirectory $lockNonce
     }
 }
@@ -2422,8 +2556,8 @@ function Invoke-Doctor([bool] $Json = $false) {
     $script:doctorExitCode = 0
     Assert-ProxyConfiguration
     Update-ModelCache
-    Load-ClaudeCapabilities
-    Update-AutoModeRules
+    Load-ClaudeCapabilities $true
+    Update-AutoModeRules $true
     try { Ensure-Proxy } catch { Fail $_.Exception.Message }
     $saved = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
     $savedModel = if ($null -ne $saved.PSObject.Properties['model'] -and $saved.model) { [string] $saved.model } else { 'gpt-5.6-sol' }
@@ -2458,7 +2592,12 @@ function Invoke-Doctor([bool] $Json = $false) {
             schema = 1
             ok = $authExitCode -eq 0 -and -not $missing
             components = [ordered]@{
-                claudeCode = [ordered]@{ status = 'ready'; version = Get-MachineVersion $claudeVersion }
+                claudeCode = [ordered]@{
+                    status = 'ready'
+                    version = Get-MachineVersion $claudeVersion
+                    capabilityCache = $script:claudeCapabilityCacheState
+                    detectedOptions = $script:claudeOptions.Count
+                }
                 proxy = [ordered]@{ status = 'healthy'; version = Get-MachineVersion $proxyVersion }
                 codexAuth = [ordered]@{ status = if ($authExitCode -eq 0) { 'ready' } else { 'unavailable' } }
             }
@@ -2474,6 +2613,8 @@ function Invoke-Doctor([bool] $Json = $false) {
                 autoCompactWindow = $compactWindowNumber
                 planModePolicy = $planModePolicy
                 usageSource = $usageSource
+                capabilityCacheSeconds = $capabilityCacheSecondsNumber
+                autoModeDefaultsCache = $script:autoModeCacheState
                 toolScheduling = 'native'
                 agentScheduling = 'model-directed'
             }
@@ -2491,6 +2632,8 @@ function Invoke-Doctor([bool] $Json = $false) {
     }
 
     Write-Output "Claude Code: $claudeVersion"
+    Write-Output "Claude capability cache: $($script:claudeCapabilityCacheState) ($($script:claudeOptions.Count) options)"
+    Write-Output "Auto mode defaults cache: $($script:autoModeCacheState) (${capabilityCacheSecondsNumber}s window)"
     Write-Output "CLIProxyAPI: $proxyVersion"
     $authOutput | ForEach-Object { Write-Output $_ }
     if ($authExitCode -ne 0) {

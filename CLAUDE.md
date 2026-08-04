@@ -99,7 +99,7 @@ Claude Code can emit zero/missing context data transiently during startup and co
 
 ### Update and compatibility strategy
 
-At every launch, `gicc` reads `claude --help` and only injects flags Claude Code actually supports; unrecognized arguments are passed through unchanged. The installer does a best effort Claude Code update; the launcher re checks on a configurable interval without blocking startup, recovers stale lock directories, and avoids racing an explicit update command. The CLIProxyAPI dependency is pinned by version and SHA-256 per OS/arch pair and verified at install time: never vendored into the repo.
+GICC parses `claude --help` and injects only flags Claude Code actually supports; unrecognized arguments are passed through unchanged. Normal launches reuse a private validated option cache and an upstream auto mode defaults cache tied to the resolved Claude executable and a configurable time window. A changed executable, expired or malformed metadata, or `gicc --doctor` triggers a live refresh. The installer does a best effort Claude Code update; the launcher re checks on a configurable interval without blocking startup, recovers stale lock directories, and avoids racing an explicit update command. The CLIProxyAPI dependency is pinned by version and SHA-256 per OS/arch pair and verified at install time: never vendored into the repo.
 
 ### Trust boundaries
 

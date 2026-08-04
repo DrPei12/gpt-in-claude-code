@@ -33,10 +33,11 @@ key.
 | `GICC_SKILL_EXTRA_DIRS` | unset | OS path list of additional Agent Skills roots |
 | `GICC_CODEX_ADMIN_SKILLS_DIR` | platform admin root | Override Codex's admin skill directory |
 | `GICC_NODE_BIN` | managed automatically | Private verified Node.js runtime path on legacy Linux distributions |
+| `GICC_CAPABILITY_CACHE_SECONDS` | `86400` | Reuse validated Claude option and auto mode default probes for 0 through 604800 seconds; `0` disables reuse |
 
-The concurrency values are GICC safeguards, not promises that an upstream
-account will always accept that many simultaneous requests. Lower them when an
-account or provider has tighter capacity.
+GICC does not set a fixed Tool or Agent concurrency limit. The model chooses
+useful delegation and Claude Code's scheduler enforces the runtime capacity.
+Upstream account and provider limits can still reduce successful concurrency.
 
 ## Provider and model routing
 
@@ -178,6 +179,8 @@ details and are not a stable public interface.
 | `~/.config/gpt-in-claude-code/codex-accounts` | Mode restricted local credential bridge |
 | `~/.config/gpt-in-claude-code/usage-cache` | Sanitized usage values only |
 | `~/.config/gpt-in-claude-code/statusline-cache` | Per session context percentages |
+| `~/.config/gpt-in-claude-code/claude-capabilities.json` | Private validated Claude option cache tied to the resolved executable |
+| `~/.config/gpt-in-claude-code/auto-mode-defaults.json` and `.meta.json` | Private validated upstream auto mode defaults and cache metadata |
 | `~/.config/gpt-in-claude-code/backups` | Private transaction generations containing previous managed files, including env and proxy config, from successful reinstalls |
 
 Run `gicc --doctor` after changing configuration. Invalid values fail fast
