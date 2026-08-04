@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import {
+  chmodSync,
   closeSync,
   createReadStream,
   existsSync,
@@ -11,17 +12,53 @@ import {
   readSync,
   readdirSync,
   renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { arch, homedir, platform } from 'node:os';
+import { basename, delimiter, dirname, extname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 1;
 const CHECKPOINT_MAX_VERSION = 2;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const configDir = resolve(process.env.GICC_CONFIG_DIR || join(homedir(), '.config', 'gpt-in-claude-code'));
+const runtimeDir = dirname(fileURLToPath(import.meta.url));
 const projectsDir = join(configDir, 'projects');
 const contextDir = join(configDir, 'context');
+const receiptPath = join(configDir, 'install.json');
+const MANAGED_MODELS = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
+const SETTINGS_MODELS = new Set([...MANAGED_MODELS, 'opusplan', 'solplan', 'opus', 'fable', 'sonnet', 'haiku']);
+const INSTALL_METHODS = new Set(['homebrew', 'scoop', 'winget', 'archive', 'git']);
+
+function oneOf(...values) {
+  const accepted = new Set(values);
+  return (value) => accepted.has(value);
+}
+
+function integerBetween(minimum, maximum) {
+  return (value) => /^(0|[1-9][0-9]*)$/.test(value) && Number(value) >= minimum && Number(value) <= maximum;
+}
+
+const SAFE_ENVIRONMENT_RULES = new Map([
+  ['GICC_MODEL', (value) => MANAGED_MODELS.has(value)],
+  ['GICC_PERMISSION_MODE', oneOf('manual', 'auto', 'acceptEdits', 'dontAsk', 'plan')],
+  ['GICC_AUTO_MODE_MODEL', (value) => MANAGED_MODELS.has(value)],
+  ['GICC_BACKGROUND_MODEL', (value) => MANAGED_MODELS.has(value)],
+  ['GICC_MAX_RETRIES', integerBetween(0, 15)],
+  ['GICC_MAX_OUTPUT_TOKENS', integerBetween(1024, 128000)],
+  ['GICC_CONTEXT_WINDOW', integerBetween(100000, 1000000)],
+  ['GICC_AUTO_COMPACT_WINDOW', integerBetween(100000, 1000000)],
+  ['GICC_PLAN_MODE_POLICY', oneOf('conservative', 'normal')],
+  ['GICC_USAGE_DISPLAY', oneOf('on', 'off')],
+  ['GICC_USAGE_SOURCE', oneOf('auto', 'web', 'app-server')],
+  ['GICC_AUTO_UPDATE', oneOf('on', 'notify', 'off')],
+  ['GICC_CLAUDE_AUTO_UPDATE', oneOf('on', 'off')],
+  ['GICC_SKILL_BRIDGE', oneOf('on', 'off')],
+  ['GICC_INSTRUCTION_BRIDGE', oneOf('on', 'off')],
+]);
 
 function fail(message, code = 1) {
   process.stderr.write(`gicc: ${message}\n`);
@@ -57,6 +94,213 @@ function safeLstat(path) {
 function regularFile(path) {
   const stat = safeLstat(path);
   return Boolean(stat?.isFile() && !stat.isSymbolicLink());
+}
+
+function readJsonObject(path, maximumBytes = 1024 * 1024) {
+  if (!regularFile(path)) return null;
+  try {
+    if (statSync(path).size > maximumBytes) return null;
+    const value = JSON.parse(readFileSync(path, 'utf8'));
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch { return null; }
+}
+
+function validVersion(value) {
+  return typeof value === 'string' && value.length <= 64 &&
+    /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value);
+}
+
+function receiptInfo() {
+  const receipt = readJsonObject(receiptPath);
+  return {
+    present: Boolean(receipt),
+    valid: Boolean(receipt && receipt.schema === 1 && validVersion(receipt.version) &&
+      INSTALL_METHODS.has(receipt.method) &&
+      receipt.repository === 'DrPei12/gpt-in-claude-code'),
+    version: validVersion(receipt?.version) ? receipt.version : null,
+    method: INSTALL_METHODS.has(receipt?.method) ? receipt.method : null,
+    repository: receipt?.repository === 'DrPei12/gpt-in-claude-code' ? receipt.repository : null,
+    claudexShim: receipt?.claudexShim === true,
+  };
+}
+
+function versionInfo() {
+  const sourceManifest = readJsonObject(join(runtimeDir, 'package.json'));
+  const receipt = receiptInfo();
+  const sourceVersion = validVersion(sourceManifest?.version) ? sourceManifest.version : null;
+  return {
+    schema: SCHEMA,
+    name: 'gpt-in-claude-code',
+    version: sourceVersion || receipt.version,
+    sourceVersion,
+    installedVersion: receipt.version,
+    installMethod: receipt.method,
+    repository: 'DrPei12/gpt-in-claude-code',
+  };
+}
+
+function commandAvailable(name) {
+  const pathEntries = (process.env.PATH || '').split(delimiter);
+  const suffixes = process.platform === 'win32' && !extname(name)
+    ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+    : [''];
+  for (let directory of pathEntries) {
+    if (directory.startsWith('"') && directory.endsWith('"')) directory = directory.slice(1, -1);
+    if (!directory) directory = process.cwd();
+    for (const suffix of suffixes) {
+      try {
+        const stat = statSync(join(directory, `${name}${suffix}`));
+        if (stat.isFile() && (process.platform === 'win32' || (stat.mode & 0o111) !== 0)) return true;
+      } catch { }
+    }
+  }
+  return false;
+}
+
+function managedFileStatus() {
+  const names = ['settings.json', 'codex-session', 'codex-session.ps1', 'statusline', 'statusline.ps1',
+    'usage-limit', 'usage-limit.ps1', 'skill-bridge.cjs', 'gicc-runtime.mjs', 'self-update', 'self-update.ps1'];
+  const files = {};
+  for (const name of names) files[name] = regularFile(join(configDir, name));
+  return files;
+}
+
+function setupStatus() {
+  const receipt = receiptInfo();
+  const files = managedFileStatus();
+  const settingsPresent = files['settings.json'];
+  const settingsValid = Boolean(readJsonObject(join(configDir, 'settings.json')));
+  const nodeMajor = Number(process.versions.node.split('.')[0]);
+  const prerequisites = {
+    node: { available: true, version: process.versions.node, supported: Number.isInteger(nodeMajor) && nodeMajor >= 18 },
+    codex: { available: commandAvailable('codex') },
+    claudeCode: { available: commandAvailable('claude') },
+  };
+  const authHome = resolve(process.env.CODEX_HOME || join(homedir(), '.codex'));
+  const authentication = { codexFilePresent: regularFile(join(authHome, 'auth.json')) };
+  const runtimePresent = files['gicc-runtime.mjs'];
+  const platformFilesPresent = process.platform === 'win32'
+    ? files['codex-session.ps1'] && files['statusline.ps1'] && files['usage-limit.ps1'] && files['self-update.ps1']
+    : files['codex-session'] && files.statusline && files['usage-limit'] && files['self-update'];
+  const issues = [];
+  if (!receipt.valid) issues.push('install-receipt-invalid');
+  if (!prerequisites.node.supported) issues.push('node-unsupported');
+  if (!prerequisites.codex.available) issues.push('codex-cli-missing');
+  if (!prerequisites.claudeCode.available) issues.push('claude-code-missing');
+  if (!authentication.codexFilePresent) issues.push('codex-login-missing');
+  if (!settingsPresent) issues.push('settings-missing');
+  else if (!settingsValid) issues.push('settings-invalid');
+  if (!runtimePresent || !platformFilesPresent) issues.push('managed-runtime-incomplete');
+  return {
+    schema: SCHEMA,
+    ready: issues.length === 0,
+    version: versionInfo(),
+    platform: { os: platform(), arch: arch() },
+    install: receipt,
+    prerequisites,
+    authentication,
+    managedFiles: files,
+    issues,
+  };
+}
+
+function aggregateSessionStatus() {
+  const sessions = listSessions({ all: true, cwd: null }).sessions;
+  return {
+    count: sessions.length,
+    unhealthy: sessions.filter((session) => !session.healthy).length,
+  };
+}
+
+function safeSettings() {
+  const settings = readJsonObject(join(configDir, 'settings.json'));
+  return {
+    model: SETTINGS_MODELS.has(settings?.model) ? settings.model : null,
+    tui: settings?.tui === 'fullscreen' ? settings.tui : null,
+  };
+}
+
+function safeEnvironment() {
+  const values = {};
+  for (const [name, valid] of SAFE_ENVIRONMENT_RULES) {
+    const value = process.env[name];
+    if (typeof value === 'string' && valid(value)) values[name] = value;
+  }
+  return values;
+}
+
+function supportBundle() {
+  const update = readJsonObject(join(configDir, 'update', 'gicc', 'state.json'));
+  const context = contextStatus(null);
+  return {
+    schema: SCHEMA,
+    generatedAt: new Date().toISOString(),
+    privacy: {
+      containsSecrets: false,
+      containsPrompts: false,
+      containsHistory: false,
+      containsRawLogs: false,
+      note: 'Share only after reviewing the generated JSON.',
+    },
+    setup: setupStatus(),
+    settings: safeSettings(),
+    environment: safeEnvironment(),
+    sessions: aggregateSessionStatus(),
+    context: {
+      active: context.active,
+      previous: context.previous,
+      invalid: context.invalid,
+      recoverable: context.recoverable,
+      corrupt: context.corrupt,
+    },
+    update: update ? {
+      currentVersion: validVersion(update.currentVersion) ? update.currentVersion : null,
+      availableVersion: validVersion(update.availableVersion) ? update.availableVersion : null,
+      appliedVersion: validVersion(update.appliedVersion) ? update.appliedVersion : null,
+      installMethod: INSTALL_METHODS.has(update.installMethod) ? update.installMethod : null,
+      lastCheckedAt: Number.isSafeInteger(update.lastCheckedAt) ? update.lastCheckedAt : 0,
+      failureCount: Number.isSafeInteger(update.failureCount) ? update.failureCount : 0,
+      nextAttemptAt: Number.isSafeInteger(update.nextAttemptAt) ? update.nextAttemptAt : 0,
+      hasLastError: typeof update.lastError === 'string' && update.lastError.length > 0,
+    } : null,
+  };
+}
+
+function humanVersion(value) {
+  return value.version ? `GICC ${value.version}` : 'GICC version unavailable';
+}
+
+function humanSetup(value) {
+  const lines = [
+    `Setup: ${value.ready ? 'ready' : 'attention required'}`,
+    `GICC: ${value.version.version || 'unavailable'} (${value.install.method || 'unknown install method'})`,
+    `Node.js: ${value.prerequisites.node.supported ? `v${value.prerequisites.node.version}` : 'unsupported'}`,
+    `Codex CLI: ${value.prerequisites.codex.available ? 'available' : 'missing'}`,
+    `Claude Code: ${value.prerequisites.claudeCode.available ? 'available' : 'missing'}`,
+    `Codex login file: ${value.authentication.codexFilePresent ? 'present' : 'missing'}`,
+  ];
+  if (value.issues.length) lines.push(`Issues: ${value.issues.join(', ')}`);
+  return lines.join('\n');
+}
+
+function writeSupportBundle(value, destination) {
+  const resolved = resolve(destination);
+  if (safeLstat(resolved)) fail(`support bundle target already exists: ${resolved}`, 2);
+  let created = false;
+  let descriptor = null;
+  try {
+    descriptor = openSync(resolved, 'wx', 0o600);
+    created = true;
+    writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`);
+    closeSync(descriptor);
+    descriptor = null;
+    if (process.platform !== 'win32') chmodSync(resolved, 0o600);
+  } catch (error) {
+    if (descriptor !== null) try { closeSync(descriptor); } catch { }
+    if (created) try { unlinkSync(resolved); } catch { }
+    fail(`could not write support bundle: ${error.message}`);
+  }
+  process.stdout.write(`Wrote sanitized support bundle: ${resolved}\n`);
 }
 
 function normalizePath(path) {
@@ -367,7 +611,52 @@ function contextCommand(action, tokens) {
   else fail('Usage: gicc context <status|repair> ...', 2);
 }
 
-const [command, action, ...tokens] = process.argv.slice(2);
-if (command === 'session') await sessionCommand(action || 'list', tokens);
-else if (command === 'context') contextCommand(action || 'status', tokens);
-else fail('Usage: gicc-runtime <session|context> <action> ...', 2);
+function simpleJsonOptions(tokens, usage) {
+  const options = parseOptions(tokens, new Set(['json']));
+  if (options.positional.length) fail(usage, 2);
+  return options;
+}
+
+function supportCommand(tokens) {
+  if (tokens[0] === 'bundle') tokens = tokens.slice(1);
+  else fail('Usage: gicc support bundle [--json|--output FILE]', 2);
+  let json = false;
+  let destination = null;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === '--json') json = true;
+    else if (token === '--output') {
+      destination = tokens[index + 1];
+      if (!destination || destination.startsWith('--')) fail('--output requires a file path', 2);
+      index += 1;
+    } else fail(`unknown option: ${token}`, 2);
+  }
+  if (json && destination) fail('--json and --output are mutually exclusive', 2);
+  const value = supportBundle();
+  if (json) output(value, () => '', true);
+  else {
+    const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+    writeSupportBundle(value, destination || join(process.cwd(), `gicc-support-${stamp}.json`));
+  }
+}
+
+const [command, ...argumentsAfterCommand] = process.argv.slice(2);
+if (command === 'session') {
+  const [action = 'list', ...tokens] = argumentsAfterCommand;
+  await sessionCommand(action, tokens);
+} else if (command === 'context') {
+  const [action = 'status', ...tokens] = argumentsAfterCommand;
+  contextCommand(action, tokens);
+} else if (command === 'version') {
+  const options = simpleJsonOptions(argumentsAfterCommand, 'Usage: gicc version [--json]');
+  const value = versionInfo();
+  output(value, humanVersion, options.json);
+  if (!value.version) process.exitCode = 1;
+} else if (command === 'setup') {
+  const tokens = argumentsAfterCommand[0] === 'status' ? argumentsAfterCommand.slice(1) : argumentsAfterCommand;
+  const options = simpleJsonOptions(tokens, 'Usage: gicc setup [status] [--json]');
+  const value = setupStatus();
+  output(value, humanSetup, options.json);
+  if (!value.ready) process.exitCode = 1;
+} else if (command === 'support') supportCommand(argumentsAfterCommand);
+else fail('Usage: gicc-runtime <session|context|version|setup|support> ...', 2);

@@ -159,9 +159,14 @@ Run:
 
 ```text
 gicc --auth-status
+gicc setup status
 gicc --doctor
 gicc --usage-limit
 ```
+
+`setup status` checks the install receipt, upstream CLIs, standard Codex login
+file, and managed runtime files. Add `--json` when another tool needs a stable
+result contract.
 
 `--doctor` must report a healthy loopback proxy and advertise Sol, Terra, and
 Luna. If the account does not provide one of those models, GICC exits with

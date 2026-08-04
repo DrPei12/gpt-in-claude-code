@@ -1009,7 +1009,7 @@ if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('--login', '--lo
 
 $earlyRuntimeBypass = $false
 $earlyGlobalMaintenanceOptions = @('--help', '-h', '--version', '-v')
-$earlyMaintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'claude', 'codex', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup-token', 'skills', 'stop', 'ultrareview', 'update', 'upgrade')
+$earlyMaintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'claude', 'codex', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup', 'setup-token', 'skills', 'stop', 'support', 'ultrareview', 'update', 'upgrade', 'version')
 $earlyPositionalSeen = $false
 for ($earlyIndex = 0; $earlyIndex -lt $ClaudeArguments.Count; $earlyIndex++) {
     $earlyArgument = [string] $ClaudeArguments[$earlyIndex]
@@ -1131,8 +1131,8 @@ if (-not $earlyRuntimeBypass) {
 
 $env:CLAUDE_CONFIG_DIR = $configDir
 
-if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('session', 'context')) {
-    Assert-SkillBridgeNode 'session and context management'
+if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('session', 'context', 'version', 'setup', 'support')) {
+    Assert-SkillBridgeNode 'GICC runtime management'
     if (-not (Test-Path -LiteralPath $runtimeHelper -PathType Leaf)) { Fail 'runtime helper is missing; reinstall GICC.' }
     if ($ClaudeArguments[0] -eq 'session' -and $ClaudeArguments.Count -gt 1 -and $ClaudeArguments[1] -eq 'resume') {
         if ($ClaudeArguments.Count -ne 3 -or [string]$ClaudeArguments[2] -notmatch '^[0-9a-fA-F-]{36}$') {
@@ -2410,7 +2410,15 @@ function Model-Name([string] $Id) {
     }
 }
 
-function Invoke-Doctor {
+function Get-MachineVersion([object] $Value) {
+    $text = [string] $Value
+    if ($text -match '(?<![0-9])v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)') {
+        return [string] $Matches[1]
+    }
+    return $null
+}
+
+function Invoke-Doctor([bool] $Json = $false) {
     $script:doctorExitCode = 0
     Assert-ProxyConfiguration
     Update-ModelCache
@@ -2429,13 +2437,64 @@ function Invoke-Doctor {
     $claudeVersion = try {
         (Invoke-WithoutPrivateManagedEnvironment -Action { & claude --version 2>$null } | Select-Object -First 1)
     } catch { 'unavailable' }
+    if (-not $claudeVersion) { $claudeVersion = 'unavailable' }
+    $authOutput = @(Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
+        'GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_SOURCE_AUTH_FILE'
+    ) -Action { & $codexSessionHelper status 2>&1 })
+    $authExitCode = $script:lastPrivateBoundaryExitCode
+    $ids = @($models.data | ForEach-Object { $_.id })
+    $modelStatuses = @(
+        foreach ($id in @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')) {
+            [ordered]@{ id = $id; advertised = $ids -contains $id }
+        }
+    )
+    $missing = @($modelStatuses | Where-Object { -not $_.advertised }).Count -gt 0
+    $jsonSavedModel = if ($savedModel -in @(
+        'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'opusplan', 'solplan', 'opus', 'fable', 'sonnet', 'haiku'
+    )) { $savedModel } else { $null }
+
+    if ($Json) {
+        $result = [ordered]@{
+            schema = 1
+            ok = $authExitCode -eq 0 -and -not $missing
+            components = [ordered]@{
+                claudeCode = [ordered]@{ status = 'ready'; version = Get-MachineVersion $claudeVersion }
+                proxy = [ordered]@{ status = 'healthy'; version = Get-MachineVersion $proxyVersion }
+                codexAuth = [ordered]@{ status = if ($authExitCode -eq 0) { 'ready' } else { 'unavailable' } }
+            }
+            models = $modelStatuses
+            configuration = [ordered]@{
+                savedModel = $jsonSavedModel
+                permissionMode = $permissionMode
+                autoModeModel = $autoModeModel
+                backgroundModel = $backgroundModel
+                maxRetries = $maxRetriesNumber
+                maxOutputTokens = $maxOutputTokensNumber
+                contextWindow = $contextWindowNumber
+                autoCompactWindow = $compactWindowNumber
+                planModePolicy = $planModePolicy
+                usageSource = $usageSource
+                toolScheduling = 'native'
+                agentScheduling = 'model-directed'
+            }
+            capabilities = [ordered]@{
+                dynamicWorkflow = $true
+                ultrareview = $true
+                nestedDelegation = $true
+                agentTeams = $true
+            }
+        }
+        $result | ConvertTo-Json -Depth 8
+        if ($authExitCode -ne 0) { $script:doctorExitCode = $authExitCode }
+        elseif ($missing) { $script:doctorExitCode = 1 }
+        return
+    }
+
     Write-Output "Claude Code: $claudeVersion"
     Write-Output "CLIProxyAPI: $proxyVersion"
-    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
-        'GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_SOURCE_AUTH_FILE'
-    ) -Action { & $codexSessionHelper status }
-    if ($script:lastPrivateBoundaryExitCode -ne 0) {
-        $script:doctorExitCode = $script:lastPrivateBoundaryExitCode
+    $authOutput | ForEach-Object { Write-Output $_ }
+    if ($authExitCode -ne 0) {
+        $script:doctorExitCode = $authExitCode
         return
     }
     Write-Output "Proxy: healthy at $proxyUrl"
@@ -2466,17 +2525,17 @@ function Invoke-Doctor {
     Write-Output "Header model name: $(Model-Name $savedModel)"
     Write-Output "Mouse pointer: $mousePointer"
     Write-Output "Isolation: GICC config at $configDir; normal Claude config is untouched"
-    $missing = $false
-    $ids = @($models.data | ForEach-Object { $_.id })
-    foreach ($id in @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')) {
-        if ($ids -contains $id) { Write-Output "${id}: advertised" }
-        else { [Console]::Error.WriteLine("${id}: not advertised by the authenticated Codex account"); $missing = $true }
+    foreach ($modelStatus in $modelStatuses) {
+        if ($modelStatus.advertised) { Write-Output "$($modelStatus.id): advertised" }
+        else { [Console]::Error.WriteLine("$($modelStatus.id): not advertised by the authenticated Codex account") }
     }
     if ($missing) { $script:doctorExitCode = 1 }
 }
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '--doctor') {
-    Invoke-Doctor
+    if ($ClaudeArguments.Count -eq 1) { Invoke-Doctor $false }
+    elseif ($ClaudeArguments.Count -eq 2 -and $ClaudeArguments[1] -eq '--json') { Invoke-Doctor $true }
+    else { Fail 'Usage: gicc --doctor [--json]' 2 }
     Exit-GICC $script:doctorExitCode
 }
 
@@ -2565,7 +2624,7 @@ $suppressResumeFooter = $false
 $backgroundLaunch = $false
 $requestedResumeSessionId = ''
 $maintenanceGlobalOptions = @('--help', '-h', '--version', '-v')
-$maintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup-token', 'skills', 'stop', 'ultrareview', 'update', 'upgrade')
+$maintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup', 'setup-token', 'skills', 'stop', 'support', 'ultrareview', 'update', 'upgrade', 'version')
 $maintenancePositionalSeen = $false
 $maintenanceCommandDetected = $false
 for ($scanIndex = 0; $scanIndex -lt $forwardArguments.Count; $scanIndex++) {

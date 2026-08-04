@@ -80,6 +80,7 @@ sessions, and billing contexts never cross that boundary.
 | Status line | `statusline` | `statusline.ps1` | Render model, effort, stable context %, cached usage status |
 | Terminal preload | `preload.cjs` | shared | Translate Solplan input and replace only the positioned interactive welcome billing field before restoring native stdout |
 | Skill bridge | `skill-bridge.cjs` | shared | Snapshot and adapt existing Claude/Codex skills and plugin skills without activating source plugin code |
+| Session and diagnostics runtime | `gicc-runtime.mjs` | shared | Inspect native sessions and context checkpoints, report version and setup state, and create sanitized support bundles |
 | Settings template | `settings.json` | shared | Isolated default Claude Code settings written into the managed config |
 
 Every shared behavior change must touch both the Bash and PowerShell implementation (`gicc`/`gicc.ps1`, `codex-session`/`codex-session.ps1`, etc.): platform drift is treated as a bug unless the underlying OS genuinely lacks the feature, in which case the boundary must be documented, not silently emulated.

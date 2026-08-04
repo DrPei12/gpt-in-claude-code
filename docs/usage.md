@@ -318,3 +318,28 @@ passthrough matrix and upstream limitations.
 
 Doctor output never intentionally prints tokens. Sanitize account details,
 local paths, and other private context before posting it publicly.
+
+For scripts and support requests, use the structured commands:
+
+```text
+gicc version --json
+gicc setup status --json
+gicc --doctor --json
+gicc support bundle
+```
+
+`version` reports the source and installed version when available. `setup`
+checks Node.js, the two upstream CLIs, the standard Codex login file, the
+install receipt, and managed runtime files without reading credential content.
+The JSON doctor performs the live proxy, authentication, and model checks and
+reports native Tool scheduling, model directed Agent scheduling, Dynamic
+Workflow, Ultrareview, nested delegation, and Agent Teams capability flags.
+
+`support bundle` writes a new JSON file in the current directory unless
+`--output FILE` is supplied. It refuses to replace an existing file. The
+bundle contains only approved configuration fields with validated values plus
+aggregate session and context counts. It excludes credential content, proxy
+tokens, account details,
+prompts, responses, raw logs, raw update errors, local paths, and session IDs.
+Always review the JSON before sharing it because local configuration values can
+still reveal operational preferences.

@@ -2686,6 +2686,41 @@ process.stdout.write(JSON.stringify({
     Assert-True ($doctor.Contains('Plan mode policy: conservative')) 'doctor plan policy'
     Assert-True ($doctor.Contains('gpt-5.6-terra: advertised')) 'doctor models'
 
+    $doctorJsonText = (& (Join-Path $root 'gicc.ps1') --doctor --json | Out-String)
+    $doctorJson = $doctorJsonText | ConvertFrom-Json
+    Assert-True ($doctorJson.schema -eq 1) 'doctor JSON schema'
+    Assert-True $doctorJson.ok 'doctor JSON healthy status'
+    Assert-True ($doctorJson.components.claudeCode.status -eq 'ready') 'doctor JSON Claude status'
+    Assert-True ($doctorJson.components.claudeCode.version -eq '2.1.210') 'doctor JSON Claude version'
+    Assert-True ($doctorJson.components.proxy.status -eq 'healthy') 'doctor JSON proxy status'
+    Assert-True ($doctorJson.components.codexAuth.status -eq 'ready') 'doctor JSON auth status'
+    Assert-True (@($doctorJson.models | Where-Object { $_.advertised }).Count -eq 3) 'doctor JSON model catalog'
+    Assert-True ($doctorJson.configuration.maxOutputTokens -eq 128000) 'doctor JSON output budget'
+    Assert-True ($doctorJson.configuration.toolScheduling -eq 'native') 'doctor JSON native tool scheduling'
+    Assert-True ($doctorJson.configuration.agentScheduling -eq 'model-directed') 'doctor JSON model directed agents'
+    Assert-True $doctorJson.capabilities.dynamicWorkflow 'doctor JSON dynamic workflow capability'
+    Assert-True $doctorJson.capabilities.ultrareview 'doctor JSON ultrareview capability'
+    Assert-True $doctorJson.capabilities.nestedDelegation 'doctor JSON nested delegation capability'
+    Assert-True $doctorJson.capabilities.agentTeams 'doctor JSON Agent Teams capability'
+    Assert-True (-not $doctorJsonText.Contains('secret-access-token')) 'doctor JSON omits access token'
+    Assert-True (-not $doctorJsonText.Contains('private@example.com')) 'doctor JSON omits account email'
+    Assert-True (-not $doctorJsonText.Contains('test-token')) 'doctor JSON omits proxy token'
+
+    $doctorSettingsPath = Join-Path $testConfig 'settings.json'
+    $doctorSettingsBefore = [IO.File]::ReadAllText($doctorSettingsPath)
+    try {
+        $privateDoctorModel = 'private-doctor-model-value'
+        $doctorSettings = $doctorSettingsBefore | ConvertFrom-Json
+        $doctorSettings.model = $privateDoctorModel
+        [IO.File]::WriteAllText($doctorSettingsPath, ($doctorSettings | ConvertTo-Json -Depth 20), $utf8)
+        $privateDoctorJsonText = (& (Join-Path $root 'gicc.ps1') --doctor --json | Out-String)
+        $privateDoctorJson = $privateDoctorJsonText | ConvertFrom-Json
+        Assert-True ($null -eq $privateDoctorJson.configuration.savedModel) 'doctor JSON omits an unrecognized saved model'
+        Assert-True (-not $privateDoctorJsonText.Contains($privateDoctorModel)) 'doctor JSON does not echo an arbitrary saved model'
+    } finally {
+        [IO.File]::WriteAllText($doctorSettingsPath, $doctorSettingsBefore, $utf8)
+    }
+
     $bridgeAuthFile = Join-Path $testAuthDir 'codex-gicc-managed.json'
     [IO.Directory]::CreateDirectory((Join-Path $testConfig 'usage-cache')) | Out-Null
     [IO.File]::WriteAllText((Join-Path $testConfig 'usage-cache\limits.json'), "old`n", $utf8)

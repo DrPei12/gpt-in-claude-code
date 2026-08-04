@@ -139,7 +139,7 @@ Repair preserves the invalid file with a `corrupt` timestamp suffix and
 restores a valid `.previous` checkpoint. It never rewrites Claude history. An
 unrecoverable checkpoint can be regenerated from the unchanged transcript by
 the managed bridge on a later request; keep the quarantined file when gathering
-a private diagnostic bundle.
+a support bundle.
 
 ## Usage limits are missing or stale
 
@@ -197,4 +197,13 @@ boundary. Rerun the documented GICC installer so it repairs the official
 ## Still stuck
 
 Read [SUPPORT.md](../SUPPORT.md) and open the appropriate discussion or issue.
-Include a minimal reproduction and sanitized `gicc --doctor` output.
+Include a minimal reproduction and the result of:
+
+```text
+gicc support bundle
+```
+
+The bundle omits credential content, account details, prompts, responses, raw
+logs, local paths, and session IDs by design. Review the generated JSON before
+sharing it. If live state matters, also include `gicc --doctor --json`; unlike
+the support bundle, this command starts and checks the local proxy.

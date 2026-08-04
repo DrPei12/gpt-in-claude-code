@@ -14,6 +14,10 @@ All notable changes to this independent distribution are documented here.
 - Direct and archive installers can add a collision safe `claudex`
   compatibility alias that forwards to the canonical `gicc` launcher without
   creating separate configuration or session state.
+- `gicc version`, `gicc setup status`, and `gicc --doctor --json` provide
+  stable machine readable installation and live health contracts.
+- `gicc support bundle` writes approved configuration metadata and aggregate
+  runtime health counts for support requests.
 
 ### Changed
 
@@ -28,6 +32,9 @@ All notable changes to this independent distribution are documented here.
 
 - Session inspection omits prompt and response content, and scoped context
   repair leaves checkpoints with unknown session ownership untouched.
+- Support bundles exclude credential content, proxy tokens, account details,
+  prompts, responses, raw logs, raw update errors, local paths, and session IDs.
+  Arbitrary values in otherwise approved configuration fields are discarded.
 
 ## [0.1.2] - 2026-08-01
 

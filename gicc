@@ -25,7 +25,7 @@ fi
 
 gicc_is_maintenance_command() {
   case "$1" in
-    --help|-h|--version|-v|agents|attach|auth|auto-mode|context|doctor|gateway|install|kill|logs|mcp|plugin|plugins|project|remote-control|respawn|rm|self-update|session|setup-token|skills|stop|ultrareview|update|upgrade) return 0 ;;
+    --help|-h|--version|-v|agents|attach|auth|auto-mode|context|doctor|gateway|install|kill|logs|mcp|plugin|plugins|project|remote-control|respawn|rm|self-update|session|setup|setup-token|skills|stop|support|ultrareview|update|upgrade|version) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -638,9 +638,9 @@ node_supports_skill_bridge() {
     >/dev/null 2>&1
 }
 
-if [[ "${1:-}" == session || "${1:-}" == context ]]; then
+if [[ "${1:-}" == session || "${1:-}" == context || "${1:-}" == version || "${1:-}" == setup || "${1:-}" == support ]]; then
   activate_managed_node
-  node_supports_skill_bridge || { printf '%s\n' 'gicc: Node.js 18 or newer is required for session and context management.' >&2; exit 1; }
+  node_supports_skill_bridge || { printf '%s\n' 'gicc: Node.js 18 or newer is required for GICC runtime management.' >&2; exit 1; }
   [[ -r "$gicc_runtime_helper" ]] || { printf '%s\n' 'gicc: runtime helper is missing; reinstall GICC.' >&2; exit 1; }
   if [[ "$1" == session && "${2:-}" == resume ]]; then
     [[ $# -eq 3 && "$3" =~ ^[0-9a-fA-F-]{36}$ ]] || {
@@ -2069,12 +2069,22 @@ model_name() {
   esac
 }
 
+machine_version() {
+  local value="$1"
+  if [[ "$value" =~ v?([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  fi
+}
+
 doctor() {
+  local json_output="${1:-0}"
   load_claude_capabilities
   ensure_auto_mode_rules
   ensure_proxy
 
-  local saved_model models proxy_version missing=0 model
+  local saved_model models proxy_version missing=0 model claude_version
+  local auth_output auth_status=0 auth_state models_status
+  local json_claude_version json_proxy_version json_saved_model=""
   saved_model=$(jq -r '.model // "gpt-5.6-sol"' "$settings_file")
   models=$(fetch_models 5)
   local proxy_bin
@@ -2086,10 +2096,93 @@ doctor() {
   fi
   proxy_version="${proxy_version%%$'\n'*}"
   [[ -n "$proxy_version" ]] || proxy_version="unavailable"
+  claude_version=$(claude --version 2>/dev/null || printf unavailable)
+  claude_version="${claude_version%%$'\n'*}"
+  [[ -n "$claude_version" ]] || claude_version="unavailable"
+  json_claude_version=$(machine_version "$claude_version")
+  json_proxy_version=$(machine_version "$proxy_version")
+  case "$saved_model" in
+    gpt-5.6-sol|gpt-5.6-terra|gpt-5.6-luna|opusplan|solplan|opus|fable|sonnet|haiku)
+      json_saved_model="$saved_model"
+      ;;
+  esac
+  if auth_output=$("$codex_session_helper" status 2>&1); then
+    auth_state="ready"
+  else
+    auth_status=$?
+    auth_state="unavailable"
+  fi
 
-  printf '%s\n' "Claude Code: $(claude --version 2>/dev/null || printf unavailable)"
+  for model in gpt-5.6-sol gpt-5.6-terra gpt-5.6-luna; do
+    if ! printf '%s\n' "$models" | jq -e --arg model "$model" \
+      'any(.data[]?; .id == $model)' >/dev/null 2>&1; then
+      missing=1
+    fi
+  done
+
+  if (( json_output )); then
+    models_status=$(printf '%s\n' "$models" | jq -c '
+      ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as $required
+      | [$required[] as $id | {
+          id: $id,
+          advertised: any(.data[]?; .id == $id)
+        }]
+    ')
+    jq -n \
+      --arg claude_version "$json_claude_version" \
+      --arg proxy_version "$json_proxy_version" \
+      --arg auth_state "$auth_state" \
+      --arg saved_model "$json_saved_model" \
+      --arg permission_mode "$GICC_PERMISSION_MODE" \
+      --arg auto_mode_model "$GICC_AUTO_MODE_MODEL" \
+      --arg background_model "$GICC_BACKGROUND_MODEL" \
+      --arg max_retries "$GICC_MAX_RETRIES" \
+      --arg max_output_tokens "$GICC_MAX_OUTPUT_TOKENS" \
+      --arg context_window "$GICC_CONTEXT_WINDOW" \
+      --arg auto_compact_window "$GICC_AUTO_COMPACT_WINDOW" \
+      --arg plan_mode_policy "$GICC_PLAN_MODE_POLICY" \
+      --arg usage_source "$GICC_USAGE_SOURCE" \
+      --argjson models "$models_status" \
+      --argjson ok "$(( auth_status == 0 && missing == 0 ))" '
+      {
+        schema: 1,
+        ok: ($ok == 1),
+        components: {
+          claudeCode: {status: "ready", version: (if $claude_version == "" then null else $claude_version end)},
+          proxy: {status: "healthy", version: (if $proxy_version == "" then null else $proxy_version end)},
+          codexAuth: {status: $auth_state}
+        },
+        models: $models,
+        configuration: {
+          savedModel: (if $saved_model == "" then null else $saved_model end),
+          permissionMode: $permission_mode,
+          autoModeModel: $auto_mode_model,
+          backgroundModel: $background_model,
+          maxRetries: ($max_retries | tonumber),
+          maxOutputTokens: ($max_output_tokens | tonumber),
+          contextWindow: ($context_window | tonumber),
+          autoCompactWindow: ($auto_compact_window | tonumber),
+          planModePolicy: $plan_mode_policy,
+          usageSource: $usage_source,
+          toolScheduling: "native",
+          agentScheduling: "model-directed"
+        },
+        capabilities: {
+          dynamicWorkflow: true,
+          ultrareview: true,
+          nestedDelegation: true,
+          agentTeams: true
+        }
+      }
+    '
+    if (( auth_status != 0 )); then return "$auth_status"; fi
+    return "$missing"
+  fi
+
+  printf '%s\n' "Claude Code: ${claude_version}"
   printf '%s\n' "CLIProxyAPI: ${proxy_version}"
-  "$codex_session_helper" status
+  [[ -z "$auth_output" ]] || printf '%s\n' "$auth_output"
+  if (( auth_status != 0 )); then return "$auth_status"; fi
   printf '%s\n' "Proxy: healthy at ${GICC_PROXY_URL}"
   printf '%s\n' "Saved model: $(model_name "$saved_model") (${saved_model})"
   printf '%s\n' "Default permission mode: ${GICC_PERMISSION_MODE}"
@@ -2133,7 +2226,14 @@ doctor() {
 }
 
 if [[ "${1:-}" == "--doctor" ]]; then
-  doctor
+  if [[ $# -eq 1 ]]; then
+    doctor 0
+  elif [[ $# -eq 2 && "$2" == "--json" ]]; then
+    doctor 1
+  else
+    printf '%s\n' 'Usage: gicc --doctor [--json]' >&2
+    exit 2
+  fi
   exit
 fi
 

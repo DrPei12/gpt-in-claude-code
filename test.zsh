@@ -1601,11 +1601,35 @@ doctor_output=$(run_wrapper --doctor)
 [[ "$doctor_output" == *'gpt-5.6-terra: advertised'* ]]
 [[ "$doctor_output" != *'extra version detail'* ]]
 
+doctor_json=$(run_wrapper --doctor --json)
+printf '%s\n' "$doctor_json" | jq -e '
+  .schema == 1
+  and .ok == true
+  and .components.claudeCode.status == "ready"
+  and .components.claudeCode.version == "2.1.210"
+  and .components.proxy.status == "healthy"
+  and .components.codexAuth.status == "ready"
+  and ([.models[] | select(.advertised == true)] | length) == 3
+  and .configuration.maxOutputTokens == 128000
+  and .configuration.toolScheduling == "native"
+  and .configuration.agentScheduling == "model-directed"
+  and .capabilities.dynamicWorkflow == true
+  and .capabilities.ultrareview == true
+  and .capabilities.nestedDelegation == true
+  and .capabilities.agentTeams == true
+' >/dev/null
+[[ "$doctor_json" != *'secret-access-token'* ]]
+[[ "$doctor_json" != *'private@example.com'* ]]
+[[ "$doctor_json" != *'test-token'* ]]
+
 cp "$tmp/home/.config/gpt-in-claude-code/settings.json" "$tmp/settings-before-unknown.json"
 jq '.model = "gpt-unrecognized"' "$tmp/settings-before-unknown.json" > "$tmp/home/.config/gpt-in-claude-code/settings.json"
 unknown_doctor=$(run_wrapper --doctor)
 [[ "$unknown_doctor" == *'Saved model: gpt-unrecognized (gpt-unrecognized)'* ]]
 [[ "$unknown_doctor" == *'Header model name: gpt-unrecognized'* ]]
+unknown_doctor_json=$(run_wrapper --doctor --json)
+printf '%s\n' "$unknown_doctor_json" | jq -e '.configuration.savedModel == null' >/dev/null
+[[ "$unknown_doctor_json" != *'gpt-unrecognized'* ]]
 mv "$tmp/settings-before-unknown.json" "$tmp/home/.config/gpt-in-claude-code/settings.json"
 
 mv "$tmp/bin/claude" "$tmp/bin/claude.off"
@@ -1939,9 +1963,11 @@ crash_targets=(
   "$install_home/.config/gpt-in-claude-code/codex-session"
   "$install_home/.config/gpt-in-claude-code/preload.cjs"
   "$install_home/.config/gpt-in-claude-code/skill-bridge.cjs"
+  "$install_home/.config/gpt-in-claude-code/gicc-runtime.mjs"
   "$install_home/.config/gpt-in-claude-code/self-update"
   "$install_home/.config/gpt-in-claude-code/skills/usage-limit/SKILL.md"
   "$install_home/.config/gpt-in-claude-code/install.json"
+  "$install_home/.local/bin/claudex"
 )
 : > "$crash_transaction/manifest"
 for crash_index in "${!crash_targets[@]}"; do

@@ -138,6 +138,10 @@ gicc --usage-limit      Refresh and display Codex plan limits
 gicc skills             List Claude and Codex skills available in this project
 gicc --accounts         List locally available Codex usage accounts
 gicc --doctor           Check installation, authentication, and models
+gicc --doctor --json    Print live diagnostics as sanitized JSON
+gicc version --json     Print the GICC version contract as JSON
+gicc setup status --json  Check prerequisites and managed runtime files
+gicc support bundle     Write a sanitized support bundle for review
 gicc --login            Sign in through Codex and synchronize the session
 gicc --logout           Sign out and clear the managed bridge session
 gicc session list       List resumable sessions for the current directory
