@@ -313,7 +313,9 @@ function writeSupportBundle(value, destination) {
 
 function normalizePath(path) {
   let normalized = resolve(path);
-  try { normalized = realpathSync(normalized); }
+  // On Windows, the native resolver canonicalizes DOS 8.3 aliases such as
+  // RUNNER~1 to the same path PowerShell reports to child processes.
+  try { normalized = realpathSync.native(normalized); }
   catch { /* Preserve normalization for paths that no longer exist. */ }
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
