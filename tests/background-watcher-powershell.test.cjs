@@ -9,6 +9,7 @@ const root = path.resolve(__dirname, '..');
 const launcher = fs.readFileSync(path.join(root, 'gicc.ps1'), 'utf8');
 const auth = fs.readFileSync(path.join(root, 'codex-session.ps1'), 'utf8');
 const suite = fs.readFileSync(path.join(root, 'test.ps1'), 'utf8');
+const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'test.yml'), 'utf8');
 
 assert.match(launcher, /GICCInternalProxyWatchParentIdentity/, 'proxy watcher receives launcher start identity');
 assert.match(launcher, /Get-ManagedBackgroundRegistryState/, 'proxy watcher reads managed agent registry');
@@ -58,7 +59,22 @@ assert.match(suite, /'Harness' \{ 1500 \}/, 'Windows outer Harness stage has a b
 assert.match(suite, /gracefulExitDeadline = \[DateTime\]::UtcNow\.AddSeconds\(20\)/, 'Windows stages allow bounded watcher shutdown before declaring an orphan');
 assert.match(suite, /'SelfUpdateLocks' \{ 300 \}/, 'Windows self-update stage has a bounded timeout');
 assert.match(suite, /'Node' \{ 300 \}/, 'Windows Node stage has a bounded timeout');
+assert.match(suite, /Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop/,
+  'Windows stage process inventory cannot block its deadline indefinitely');
+assert.match(suite, /nextRegistryRefresh = \$now\.AddSeconds\(5\)/,
+  'Windows stage process inventory is throttled instead of polling WMI every second');
+assert.match(suite, /taskkill\.exe \/PID \$RootProcessId \/T \/F/,
+  'Windows stage timeout terminates the owned process tree');
 assert.match(suite, /left owned processes running/, 'Windows stage runner rejects orphaned descendants');
+const normalizedWorkflow = workflow.replace(/\r\n/g, '\n');
+for (const [name, stage] of [
+  ['Run Windows Harness', 'Harness'],
+  ['Run Windows self-update lock regressions', 'SelfUpdateLocks'],
+  ['Run Windows Node regressions', 'Node'],
+]) {
+  const step = `- name: ${name}\n        shell: powershell\n        run: .\\test.ps1 -Stage ${stage}`;
+  assert(normalizedWorkflow.includes(step), `GitHub Actions exposes the ${stage} stage independently`);
+}
 const modelLockFixtureStart = suite.indexOf("Write-TestStage 'starting model lock regressions'");
 const modelLockFixtureEnd = suite.indexOf("Write-TestStage 'model lock regressions passed'", modelLockFixtureStart);
 assert.notEqual(modelLockFixtureStart, -1, 'Windows suite is missing model lock regressions');

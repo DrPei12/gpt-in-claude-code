@@ -13,10 +13,19 @@ $root = $PSScriptRoot
 
 function Get-TestProcessSnapshot {
     $snapshot = @{}
-    foreach ($process in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+    # A stalled WMI provider must not disable the stage deadline below. Windows
+    # PowerShell 5.1 supports OperationTimeoutSec for this CIM call.
+    foreach ($process in @(Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop)) {
         $snapshot[[int] $process.ProcessId] = $process
     }
     return $snapshot
+}
+
+function Stop-TestProcessTree([int] $RootProcessId) {
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        try { & taskkill.exe /PID $RootProcessId /T /F 2>$null | Out-Null } catch { }
+    }
+    Stop-Process -Id $RootProcessId -Force -ErrorAction SilentlyContinue
 }
 
 function Update-TestProcessRegistry([int] $RootProcessId, [hashtable] $Registry) {
@@ -118,14 +127,19 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
     $outputWritten = $false
     $registry = @{}
     $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSeconds)
+    $nextRegistryRefresh = [DateTime]::MinValue
     try {
         while (-not $process.WaitForExit(1000)) {
-            Update-TestProcessRegistry $process.Id $registry
-            if ([DateTime]::UtcNow -lt $deadline) { continue }
-            Update-TestProcessRegistry $process.Id $registry
+            $now = [DateTime]::UtcNow
+            # Check the hard deadline before any optional process inventory.
+            if ($now -lt $deadline -and $now -ge $nextRegistryRefresh) {
+                Update-TestProcessRegistry $process.Id $registry
+                $nextRegistryRefresh = $now.AddSeconds(5)
+            }
+            if ($now -lt $deadline) { continue }
             $liveOnTimeout = @(Get-LiveRegisteredProcesses $registry)
             Stop-RegisteredProcesses $liveOnTimeout
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            Stop-TestProcessTree $process.Id
             try { $null = $process.WaitForExit(5000) } catch { }
             Write-TestStageTask $standardOutputTask $false
             Write-TestStageTask $standardErrorTask $true
@@ -136,11 +150,12 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
         $process.WaitForExit()
         $process.Refresh()
         $gracefulExitDeadline = [DateTime]::UtcNow.AddSeconds(20)
+        $orphans = @()
         do {
             Update-TestProcessRegistry $process.Id $registry
             $orphans = @(Get-LiveRegisteredProcesses $registry)
             if ($orphans.Count -eq 0 -or [DateTime]::UtcNow -ge $gracefulExitDeadline) { break }
-            Start-Sleep -Milliseconds 100
+            Start-Sleep -Seconds 1
         } while ($true)
         $orphanSummary = ''
         if ($orphans.Count -gt 0) {
@@ -158,6 +173,10 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
         if ($orphanSummary) { throw "test stage $Name left owned processes running after 20 seconds: $orphanSummary" }
         [Console]::WriteLine("test.ps1: stage $Name passed with zero orphan processes")
     } finally {
+        try {
+            if (-not $process.HasExited) { Stop-TestProcessTree $process.Id }
+        } catch { }
+        try { Stop-RegisteredProcesses @(Get-LiveRegisteredProcesses $registry) } catch { }
         if (-not $outputWritten) {
             Write-TestStageTask $standardOutputTask $false
             Write-TestStageTask $standardErrorTask $true

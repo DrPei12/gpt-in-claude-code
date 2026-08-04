@@ -43,11 +43,15 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - name: Run isolated PowerShell tests
+      - name: Run Windows Harness
         shell: powershell
-        run: |
-          .\test.ps1
-          .\tests\self-update-lock-regressions.ps1
+        run: .\test.ps1 -Stage Harness
+      - name: Run Windows self-update lock regressions
+        shell: powershell
+        run: .\test.ps1 -Stage SelfUpdateLocks
+      - name: Run Windows Node regressions
+        shell: powershell
+        run: .\test.ps1 -Stage Node
 
   legacy-linux-node:
     name: ubuntu-20.04-managed-node
