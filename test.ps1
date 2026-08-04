@@ -83,6 +83,21 @@ function ConvertTo-TestCommandLineArgument([string] $Value) {
     return $builder.ToString()
 }
 
+function Write-TestStageTask([object] $Task, [bool] $StandardError) {
+    try {
+        if (-not $Task.Wait(5000)) {
+            [Console]::Error.WriteLine('test.ps1: stage output did not close within 5 seconds')
+            return
+        }
+        $content = $Task.GetAwaiter().GetResult()
+        if (-not $content) { return }
+        if ($StandardError) { [Console]::Error.WriteLine($content.TrimEnd()) }
+        else { [Console]::Out.WriteLine($content.TrimEnd()) }
+    } catch {
+        [Console]::Error.WriteLine("test.ps1: could not read stage output: $($_.Exception.Message)")
+    }
+}
+
 function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $DefaultTimeoutSeconds) {
     $timeoutSeconds = if ($StageTimeoutSeconds -gt 0) { $StageTimeoutSeconds } else { $DefaultTimeoutSeconds }
     [Console]::WriteLine("test.ps1: starting stage $Name (timeout ${timeoutSeconds}s)")
@@ -93,9 +108,14 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
     $startInfo.Arguments = @($stageArguments | ForEach-Object { ConvertTo-TestCommandLineArgument ([string] $_) }) -join ' '
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $startInfo
     if (-not $process.Start()) { throw "test stage $Name could not start" }
+    $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
+    $standardErrorTask = $process.StandardError.ReadToEndAsync()
+    $outputWritten = $false
     $registry = @{}
     $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSeconds)
     try {
@@ -107,12 +127,18 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
             Stop-RegisteredProcesses $liveOnTimeout
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             try { $null = $process.WaitForExit(5000) } catch { }
+            Write-TestStageTask $standardOutputTask $false
+            Write-TestStageTask $standardErrorTask $true
+            $outputWritten = $true
             throw "test stage $Name timed out after $timeoutSeconds seconds"
         }
         # Drain any remaining process bookkeeping after the timed overload.
         $process.WaitForExit()
         $process.Refresh()
         Update-TestProcessRegistry $process.Id $registry
+        Write-TestStageTask $standardOutputTask $false
+        Write-TestStageTask $standardErrorTask $true
+        $outputWritten = $true
         if ($process.ExitCode -ne 0) {
             throw "test stage $Name failed with exit code $($process.ExitCode)"
         }
@@ -125,6 +151,10 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
         }
         [Console]::WriteLine("test.ps1: stage $Name passed with zero orphan processes")
     } finally {
+        if (-not $outputWritten) {
+            Write-TestStageTask $standardOutputTask $false
+            Write-TestStageTask $standardErrorTask $true
+        }
         try { $process.Dispose() } catch { }
     }
 }
