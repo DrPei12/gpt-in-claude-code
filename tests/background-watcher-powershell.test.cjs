@@ -55,6 +55,7 @@ assert.match(suite, /test\.ps1 watchdog timed out after/, 'Windows CI watchdog r
 assert.match(suite, /Stop-Process -Id \$PID -Force/, 'Windows CI watchdog terminates a hung test host');
 assert.match(suite, /testSuiteWatchdog\.Kill\(\)/, 'Windows CI suite cleans up its watchdog after success or failure');
 assert.match(suite, /'Harness' \{ 1500 \}/, 'Windows outer Harness stage has a bounded timeout');
+assert.match(suite, /gracefulExitDeadline = \[DateTime\]::UtcNow\.AddSeconds\(20\)/, 'Windows stages allow bounded watcher shutdown before declaring an orphan');
 assert.match(suite, /'SelfUpdateLocks' \{ 300 \}/, 'Windows self-update stage has a bounded timeout');
 assert.match(suite, /'Node' \{ 300 \}/, 'Windows Node stage has a bounded timeout');
 assert.match(suite, /left owned processes running/, 'Windows stage runner rejects orphaned descendants');

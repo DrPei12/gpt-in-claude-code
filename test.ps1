@@ -135,20 +135,27 @@ function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $D
         # Drain any remaining process bookkeeping after the timed overload.
         $process.WaitForExit()
         $process.Refresh()
-        Update-TestProcessRegistry $process.Id $registry
+        $gracefulExitDeadline = [DateTime]::UtcNow.AddSeconds(20)
+        do {
+            Update-TestProcessRegistry $process.Id $registry
+            $orphans = @(Get-LiveRegisteredProcesses $registry)
+            if ($orphans.Count -eq 0 -or [DateTime]::UtcNow -ge $gracefulExitDeadline) { break }
+            Start-Sleep -Milliseconds 100
+        } while ($true)
+        $orphanSummary = ''
+        if ($orphans.Count -gt 0) {
+            $orphanSummary = @($orphans | ForEach-Object {
+                "$($_.Name)[$($_.ProcessId)] parent=$($_.ParentProcessId) command=$($_.CommandLine)"
+            }) -join '; '
+            Stop-RegisteredProcesses $orphans
+        }
         Write-TestStageTask $standardOutputTask $false
         Write-TestStageTask $standardErrorTask $true
         $outputWritten = $true
         if ($process.ExitCode -ne 0) {
             throw "test stage $Name failed with exit code $($process.ExitCode)"
         }
-        Start-Sleep -Milliseconds 200
-        $orphans = @(Get-LiveRegisteredProcesses $registry)
-        if ($orphans.Count -gt 0) {
-            Stop-RegisteredProcesses $orphans
-            $summary = @($orphans | ForEach-Object { "$($_.Name)[$($_.ProcessId)]" }) -join ', '
-            throw "test stage $Name left owned processes running: $summary"
-        }
+        if ($orphanSummary) { throw "test stage $Name left owned processes running after 20 seconds: $orphanSummary" }
         [Console]::WriteLine("test.ps1: stage $Name passed with zero orphan processes")
     } finally {
         if (-not $outputWritten) {
