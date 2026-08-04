@@ -13,6 +13,7 @@ gicc --terra --print "Explain this repository"
 | Command | Behavior |
 | --- | --- |
 | `gicc` | Start the Sol leader with auto permissions |
+| `claudex` | Forward every argument to the sibling `gicc` launcher when the optional compatibility alias is installed |
 | `gicc --sol` | Explicitly start with GPT-5.6 Sol |
 | `gicc --terra` | Start with GPT-5.6 Terra |
 | `gicc --luna` | Start with GPT-5.6 Luna |
@@ -33,6 +34,11 @@ gicc --terra --print "Explain this repository"
 | `gicc ultrareview [ARGS]` | Run Claude Ultrareview through the clean first party profile |
 | `gicc codex [ARGS]` | Run the native Codex CLI without GICC provider, prompt, session, or policy translation |
 | `gicc claude [ARGS]` | Run native Claude Code with caller owned provider/profile configuration and without GICC provider/model injection |
+
+`claudex` is not a second runtime. It shares the same GICC configuration,
+session history, context checkpoints, models, and command behavior. Use `gicc`
+in scripts because it is always installed; the alias may be omitted when its
+name belongs to another local tool.
 
 `--max-effort` and `--ultracode` are mutually exclusive. Explicit `--effort`
 or `--settings` arguments cannot be combined with either shortcut because they
@@ -176,6 +182,57 @@ detected while GICC is running; the local bridge follows the new account and
 clears account scoped usage state automatically. Disabled and expired
 credentials are never selected.
 
+## Sessions and context
+
+GICC keeps Claude Code's native JSONL transcript as the session source of
+truth. It does not translate the transcript into a separate GICC history
+format. Native `--continue`, `--resume`, the interactive history picker, and
+the commands below therefore refer to the same isolated Claude Code profile.
+
+| Command | Behavior |
+| --- | --- |
+| `gicc session list` | List resumable sessions for the current working directory |
+| `gicc session list --all` | List resumable sessions across the GICC profile |
+| `gicc session status [SESSION_ID]` | Inspect transcript identity and matching context checkpoints |
+| `gicc session doctor [SESSION_ID]` | Validate every JSONL record and report unrecoverable context state |
+| `gicc session resume SESSION_ID` | Validate the session, then pass its ID to native Claude Code resume |
+| `gicc transfer [SESSION_ID]` | Import the selected native transcript into a new persistent Codex thread without invoking a model |
+| `gicc context status [--session SESSION_ID]` | Inspect active, previous, invalid, and quarantined checkpoints |
+| `gicc context repair [--session SESSION_ID]` | Quarantine invalid active files and restore a valid previous checkpoint |
+
+`session list`, `session status`, `session doctor`, and `context status` accept
+`--json`. The session list also accepts `--cwd PATH`; status and doctor use it
+when no session ID is supplied. Context commands accept `--session` so repair
+can stay scoped to one native session.
+
+These commands never print prompt or response content. They report session
+IDs, working directories, timestamps, sizes, health counts, and checkpoint
+metadata only. Treat that metadata as private when sharing diagnostics.
+
+Context repair is non destructive. An invalid active checkpoint is renamed
+with a `corrupt` timestamp suffix. A valid `.previous` file is promoted when
+available; files that cannot be associated with a requested session remain
+untouched. Raw Claude history is not edited, compacted, converted, or deleted.
+Use `gicc --resume SESSION_ID` when scripting against Claude Code's native
+interface; `gicc session resume SESSION_ID` adds an explicit local validation
+step first.
+
+`gicc transfer` selects the latest healthy root session for the current
+directory. Supply a session ID, `--cwd PATH`, or `--source FILE` to select it
+explicitly; add `--json` for machine output. An explicit source must resolve to
+a regular UUID named JSONL transcript inside GICC's isolated `projects`
+directory. The command validates the complete transcript, calls Codex
+app server's native external agent importer, waits for its completion event,
+then prints the resulting `codex resume THREAD-ID` command. It does not send a
+prompt, start a model turn, edit the Claude transcript, or copy credentials.
+
+Transfer is deliberately one way and point in time. It creates a new Codex
+thread containing the visible imported conversation; it does not make Claude
+and Codex session IDs, checkpoints, tools, subagents, permissions, or later
+messages interchangeable or continuously synchronized. A Codex CLI version
+without the importer fails with an update instruction instead of falling back
+to prompt reconstruction.
+
 ## Skills
 
 | Command or reference | Behavior |
@@ -278,3 +335,32 @@ passthrough matrix and upstream limitations.
 
 Doctor output never intentionally prints tokens. Sanitize account details,
 local paths, and other private context before posting it publicly.
+
+For scripts and support requests, use the structured commands:
+
+```text
+gicc version --json
+gicc setup status --json
+gicc --doctor --json
+gicc support bundle
+```
+
+`version` reports the source and installed version when available. `setup`
+checks Node.js, the two upstream CLIs, the standard Codex login file, the
+install receipt, and managed runtime files without reading credential content.
+The JSON doctor performs the live proxy, authentication, and model checks and
+reports native Tool scheduling, model directed Agent scheduling, Dynamic
+Workflow, Ultrareview, nested delegation, and Agent Teams capability flags. It
+also reports the option count, capability cache state, configured cache window,
+and auto mode defaults cache state. Doctor intentionally refreshes both Claude
+probes; ordinary launches reuse a valid cache until the configured window or
+resolved Claude executable changes.
+
+`support bundle` writes a new JSON file in the current directory unless
+`--output FILE` is supplied. It refuses to replace an existing file. The
+bundle contains only approved configuration fields with validated values plus
+aggregate session and context counts. It excludes credential content, proxy
+tokens, account details,
+prompts, responses, raw logs, raw update errors, local paths, and session IDs.
+Always review the JSON before sharing it because local configuration values can
+still reveal operational preferences.

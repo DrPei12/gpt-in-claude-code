@@ -70,6 +70,7 @@ directory_mode() {
 installer_env=(
   HOME="$home"
   PATH="$fake_bin:$PATH"
+  GICC_CLAUDEX_SHIM=force
   GICC_SKIP_DEPENDENCY_INSTALL=1
   GICC_SKIP_SERVICE_START=1
   GICC_TEST_REAL_STAT="$real_stat"
@@ -78,11 +79,44 @@ misleading_bsd_probe=$(env PATH="$fake_bin:$PATH" GICC_TEST_REAL_STAT="$real_sta
   stat -f '%Lp' "$home/.local/bin")
 [[ "$misleading_bsd_probe" == *'Type: overlayfs'* && "$misleading_bsd_probe" == *$'\n700' ]]
 env "${installer_env[@]}" GICC_PROXY_TOKEN=stable-installer-token "$root/install.sh" >/dev/null
+[[ -x "$home/.local/bin/claudex" ]]
+grep -F 'GICC compatibility shim for gpt-in-claude-code' "$home/.local/bin/claudex" >/dev/null
+jq -e '.claudexShim == true' "$config/install.json" >/dev/null
 direct_bin_mode=$(directory_mode "$home/.local/bin")
 [[ "$direct_bin_mode" == 700 ]]
 if [[ "$(uname -s)" == Darwin ]]; then
   ! ls -lde "$home/.local/bin" | grep -F 'everyone:allow:delete_child' >/dev/null
 fi
+
+# A previously managed target remains managed when another claudex command is
+# also present earlier on PATH. Updates must not lose rollback ownership.
+printf '%s\n' '#!/usr/bin/env bash' 'printf external-path-claudex' > "$fake_bin/claudex"
+chmod +x "$fake_bin/claudex"
+env "${installer_env[@]}" GICC_CLAUDEX_SHIM=auto GICC_PROXY_TOKEN=stable-installer-token \
+  "$root/install.sh" >/dev/null
+grep -F 'GICC compatibility shim for gpt-in-claude-code' "$home/.local/bin/claudex" >/dev/null
+[[ "$("$fake_bin/claudex")" == external-path-claudex ]]
+jq -e '.claudexShim == true' "$config/install.json" >/dev/null
+rm -f "$fake_bin/claudex"
+
+# Auto mode never replaces a caller owned command at the requested target.
+# Force remains an explicit recovery path after the caller reviews it.
+printf '%s\n' '#!/usr/bin/env bash' 'printf external-claudex' > "$home/.local/bin/claudex"
+chmod +x "$home/.local/bin/claudex"
+env "${installer_env[@]}" GICC_CLAUDEX_SHIM=auto GICC_PROXY_TOKEN=stable-installer-token \
+  "$root/install.sh" >"$temporary/claudex-collision.out" 2>"$temporary/claudex-collision.err"
+[[ "$("$home/.local/bin/claudex")" == external-claudex ]]
+grep -F 'existing non-GICC claudex command detected' "$temporary/claudex-collision.err" >/dev/null
+jq -e '.claudexShim == false' "$config/install.json" >/dev/null
+env "${installer_env[@]}" GICC_CLAUDEX_SHIM=off GICC_PROXY_TOKEN=stable-installer-token "$root/install.sh" >/dev/null
+[[ "$("$home/.local/bin/claudex")" == external-claudex ]]
+env "${installer_env[@]}" GICC_PROXY_TOKEN=stable-installer-token "$root/install.sh" >/dev/null
+grep -F 'GICC compatibility shim for gpt-in-claude-code' "$home/.local/bin/claudex" >/dev/null
+jq -e '.claudexShim == true' "$config/install.json" >/dev/null
+env "${installer_env[@]}" GICC_CLAUDEX_SHIM=off GICC_PROXY_TOKEN=stable-installer-token "$root/install.sh" >/dev/null
+[[ ! -e "$home/.local/bin/claudex" ]]
+jq -e '.claudexShim == false' "$config/install.json" >/dev/null
+env "${installer_env[@]}" GICC_PROXY_TOKEN=stable-installer-token "$root/install.sh" >/dev/null
 
 # Reinstalling must replace every shell-valid spelling of a managed assignment,
 # not leave an exported/indented duplicate that wins when the env file is
@@ -163,8 +197,8 @@ mkdir -p "$transaction/backup"
 targets=(
   "$home/.local/bin/gicc" "$config/env" "$config/cliproxyapi.yaml" "$config/bin/gicc-proxy"
   "$config/settings.json" "$config/statusline" "$config/usage-limit" "$config/codex-session"
-  "$config/preload.cjs" "$config/skill-bridge.cjs" "$config/self-update"
-  "$config/skills/usage-limit/SKILL.md" "$config/install.json"
+  "$config/preload.cjs" "$config/skill-bridge.cjs" "$config/gicc-runtime.mjs" "$config/self-update"
+  "$config/skills/usage-limit/SKILL.md" "$config/install.json" "$home/.local/bin/claudex"
 )
 : > "$transaction/manifest"
 for index in "${!targets[@]}"; do
@@ -178,9 +212,13 @@ for index in "${!targets[@]}"; do
 done
 printf '%s\n' committing > "$transaction/state"
 printf '%s\n' 'GICC_PROXY_TOKEN=crash-corruption' > "$config/env"
-recovery_output=$(env "${installer_env[@]}" "$root/install.sh")
+printf '%s\n' '#!/usr/bin/env bash' 'printf interrupted-claudex' > "$home/.local/bin/claudex"
+chmod +x "$home/.local/bin/claudex"
+recovery_output=$(env "${installer_env[@]}" GICC_CLAUDEX_SHIM=auto "$root/install.sh")
 [[ "$recovery_output" == *'Recovered the previous interrupted GICC installation'* ]]
 grep -F 'GICC_PROXY_TOKEN=stable-installer-token' "$config/env" >/dev/null
+grep -F 'GICC compatibility shim for gpt-in-claude-code' "$home/.local/bin/claudex" >/dev/null
+jq -e '.claudexShim == true' "$config/install.json" >/dev/null
 [[ ! -e "$transaction" ]]
 
 managed_home="$temporary/managed-home"
@@ -247,9 +285,10 @@ package_bin="$temporary/package-bin"
 mkdir -p "$package_bin"
 chmod 0755 "$package_bin"
 env "${installer_env[@]}" GICC_BIN_DIR="$package_bin" GICC_INSTALL_METHOD=homebrew \
-  GICC_PACKAGE_ROOT="$root" "$root/install.sh" >/dev/null
+  GICC_PACKAGE_ROOT="$root" GICC_CLAUDEX_SHIM=auto "$root/install.sh" >/dev/null
 package_bin_mode=$(directory_mode "$package_bin")
 [[ "$package_bin_mode" == 755 ]]
+[[ ! -e "$package_bin/claudex" ]]
 
 # Relative installer roots are anchored to the invocation directory before
 # locks, receipts, or managed files are created. The resulting installation

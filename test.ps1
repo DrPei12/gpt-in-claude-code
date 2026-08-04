@@ -1,7 +1,218 @@
+param(
+    [ValidateSet('All', 'Harness', 'SelfUpdateLocks', 'Node')]
+    [string[]] $Stage = @('All'),
+    [ValidateRange(0, 3600)]
+    [int] $StageTimeoutSeconds = 0,
+    [switch] $GICCInternalStage
+)
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
 $root = $PSScriptRoot
+
+function Get-TestProcessSnapshot {
+    $snapshot = @{}
+    # A stalled WMI provider must not disable the stage deadline below. Windows
+    # PowerShell 5.1 supports OperationTimeoutSec for this CIM call.
+    foreach ($process in @(Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop)) {
+        $snapshot[[int] $process.ProcessId] = $process
+    }
+    return $snapshot
+}
+
+function Stop-TestProcessTree([int] $RootProcessId) {
+    if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+        try { & taskkill.exe /PID $RootProcessId /T /F 2>$null | Out-Null } catch { }
+    }
+    Stop-Process -Id $RootProcessId -Force -ErrorAction SilentlyContinue
+}
+
+function Update-TestProcessRegistry([int] $RootProcessId, [hashtable] $Registry) {
+    $snapshot = Get-TestProcessSnapshot
+    $frontier = @($RootProcessId)
+    $visited = @{}
+    while ($frontier.Count -gt 0) {
+        $parentId = [int] $frontier[0]
+        $frontier = @($frontier | Select-Object -Skip 1)
+        if ($visited.ContainsKey($parentId)) { continue }
+        $visited[$parentId] = $true
+        foreach ($candidate in $snapshot.Values) {
+            if ([int] $candidate.ParentProcessId -ne $parentId) { continue }
+            $candidateId = [int] $candidate.ProcessId
+            $Registry[$candidateId] = [pscustomobject]@{
+                ProcessId = $candidateId
+                ParentProcessId = [int] $candidate.ParentProcessId
+                CreationDate = [string] $candidate.CreationDate
+                Name = [string] $candidate.Name
+                CommandLine = [string] $candidate.CommandLine
+            }
+            $frontier += $candidateId
+        }
+    }
+}
+
+function Get-LiveRegisteredProcesses([hashtable] $Registry) {
+    $live = @()
+    $snapshot = Get-TestProcessSnapshot
+    foreach ($record in $Registry.Values) {
+        if (-not $snapshot.ContainsKey([int] $record.ProcessId)) { continue }
+        $candidate = $snapshot[[int] $record.ProcessId]
+        if ([string] $candidate.CreationDate -ne [string] $record.CreationDate) { continue }
+        $live += $record
+    }
+    return @($live)
+}
+
+function Stop-RegisteredProcesses([object[]] $Records) {
+    foreach ($record in @($Records | Sort-Object ProcessId -Descending)) {
+        Stop-Process -Id ([int] $record.ProcessId) -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function ConvertTo-TestCommandLineArgument([string] $Value) {
+    if ($null -eq $Value -or $Value.Length -eq 0) { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+    $builder = New-Object Text.StringBuilder
+    [void] $builder.Append('"')
+    $slashes = 0
+    foreach ($character in $Value.ToCharArray()) {
+        if ($character -eq '\') { $slashes++; continue }
+        if ($character -eq '"') {
+            [void] $builder.Append(('\' * (($slashes * 2) + 1)))
+            [void] $builder.Append('"')
+        } else {
+            if ($slashes -gt 0) { [void] $builder.Append(('\' * $slashes)) }
+            [void] $builder.Append($character)
+        }
+        $slashes = 0
+    }
+    if ($slashes -gt 0) { [void] $builder.Append(('\' * ($slashes * 2))) }
+    [void] $builder.Append('"')
+    return $builder.ToString()
+}
+
+function Write-TestStageTask([object] $Task, [bool] $StandardError) {
+    try {
+        if (-not $Task.Wait(5000)) {
+            [Console]::Error.WriteLine('test.ps1: stage output did not close within 5 seconds')
+            return
+        }
+        $content = $Task.GetAwaiter().GetResult()
+        if (-not $content) { return }
+        if ($StandardError) { [Console]::Error.WriteLine($content.TrimEnd()) }
+        else { [Console]::Out.WriteLine($content.TrimEnd()) }
+    } catch {
+        [Console]::Error.WriteLine("test.ps1: could not read stage output: $($_.Exception.Message)")
+    }
+}
+
+function Invoke-TestStageProcess([string] $Name, [string[]] $Arguments, [int] $DefaultTimeoutSeconds) {
+    $timeoutSeconds = if ($StageTimeoutSeconds -gt 0) { $StageTimeoutSeconds } else { $DefaultTimeoutSeconds }
+    [Console]::WriteLine("test.ps1: starting stage $Name (timeout ${timeoutSeconds}s)")
+    $shell = (Get-Process -Id $PID).Path
+    $stageArguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath) + $Arguments
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $shell
+    $startInfo.Arguments = @($stageArguments | ForEach-Object { ConvertTo-TestCommandLineArgument ([string] $_) }) -join ' '
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) { throw "test stage $Name could not start" }
+    $standardOutputTask = $process.StandardOutput.ReadToEndAsync()
+    $standardErrorTask = $process.StandardError.ReadToEndAsync()
+    $outputWritten = $false
+    $registry = @{}
+    $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSeconds)
+    $nextRegistryRefresh = [DateTime]::MinValue
+    try {
+        while (-not $process.WaitForExit(1000)) {
+            $now = [DateTime]::UtcNow
+            # Check the hard deadline before any optional process inventory.
+            if ($now -lt $deadline -and $now -ge $nextRegistryRefresh) {
+                Update-TestProcessRegistry $process.Id $registry
+                $nextRegistryRefresh = $now.AddSeconds(5)
+            }
+            if ($now -lt $deadline) { continue }
+            $liveOnTimeout = @(Get-LiveRegisteredProcesses $registry)
+            Stop-RegisteredProcesses $liveOnTimeout
+            Stop-TestProcessTree $process.Id
+            try { $null = $process.WaitForExit(5000) } catch { }
+            Write-TestStageTask $standardOutputTask $false
+            Write-TestStageTask $standardErrorTask $true
+            $outputWritten = $true
+            throw "test stage $Name timed out after $timeoutSeconds seconds"
+        }
+        # Drain any remaining process bookkeeping after the timed overload.
+        $process.WaitForExit()
+        $process.Refresh()
+        $gracefulExitDeadline = [DateTime]::UtcNow.AddSeconds(20)
+        $orphans = @()
+        do {
+            Update-TestProcessRegistry $process.Id $registry
+            $orphans = @(Get-LiveRegisteredProcesses $registry)
+            if ($orphans.Count -eq 0 -or [DateTime]::UtcNow -ge $gracefulExitDeadline) { break }
+            Start-Sleep -Seconds 1
+        } while ($true)
+        $orphanSummary = ''
+        if ($orphans.Count -gt 0) {
+            $orphanSummary = @($orphans | ForEach-Object {
+                "$($_.Name)[$($_.ProcessId)] parent=$($_.ParentProcessId) command=$($_.CommandLine)"
+            }) -join '; '
+            Stop-RegisteredProcesses $orphans
+        }
+        Write-TestStageTask $standardOutputTask $false
+        Write-TestStageTask $standardErrorTask $true
+        $outputWritten = $true
+        if ($process.ExitCode -ne 0) {
+            throw "test stage $Name failed with exit code $($process.ExitCode)"
+        }
+        if ($orphanSummary) { throw "test stage $Name left owned processes running after 20 seconds: $orphanSummary" }
+        [Console]::WriteLine("test.ps1: stage $Name passed with zero orphan processes")
+    } finally {
+        try {
+            if (-not $process.HasExited) { Stop-TestProcessTree $process.Id }
+        } catch { }
+        try { Stop-RegisteredProcesses @(Get-LiveRegisteredProcesses $registry) } catch { }
+        if (-not $outputWritten) {
+            Write-TestStageTask $standardOutputTask $false
+            Write-TestStageTask $standardErrorTask $true
+        }
+        try { $process.Dispose() } catch { }
+    }
+}
+
+if (-not $GICCInternalStage) {
+    if ($Stage -contains 'All') {
+        if ($Stage.Count -ne 1) { throw 'All cannot be combined with individual test stages.' }
+        $selectedStages = @('Harness', 'SelfUpdateLocks', 'Node')
+    } else { $selectedStages = @($Stage | Select-Object -Unique) }
+    foreach ($selectedStage in $selectedStages) {
+        $defaultTimeout = switch ($selectedStage) {
+            'Harness' { 1500 }
+            'SelfUpdateLocks' { 300 }
+            'Node' { 300 }
+        }
+        Invoke-TestStageProcess $selectedStage @('-Stage', $selectedStage, '-GICCInternalStage') $defaultTimeout
+    }
+    [Console]::WriteLine("selected GICC Windows test stages passed: $($selectedStages -join ', ')")
+    exit 0
+}
+
+if ($Stage.Count -ne 1 -or $Stage[0] -eq 'All') { throw 'Internal test execution requires exactly one concrete stage.' }
+if ($Stage[0] -eq 'SelfUpdateLocks') {
+    & (Join-Path $root 'tests\self-update-lock-regressions.ps1')
+    exit 0
+}
+if ($Stage[0] -eq 'Node') {
+    & npm test
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    exit 0
+}
+
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('gicc-tests-' + [guid]::NewGuid().ToString('N'))
 $testHome = Join-Path $temporary 'home'
 $testConfig = Join-Path $testHome '.config\gpt-in-claude-code'
@@ -29,6 +240,13 @@ function Wait-ForTestPath([string] $Path, [string] $Message, [int] $TimeoutMilli
     Assert-True (Test-Path -LiteralPath $Path) $Message
 }
 
+function Test-FileContains([string] $Path, [string] $Expected) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    try { return [IO.File]::ReadAllText($Path).Contains($Expected) }
+    catch [IO.IOException] { return $false }
+    catch [UnauthorizedAccessException] { return $false }
+}
+
 function Start-TrackedTestProcess([string] $FilePath, [object[]] $ArgumentList, [string] $Label) {
     $logBase = Join-Path $temporary $Label
     $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru -WindowStyle Hidden `
@@ -38,7 +256,22 @@ function Start-TrackedTestProcess([string] $FilePath, [object[]] $ArgumentList, 
 }
 
 function Wait-ForTestProcess([Diagnostics.Process] $Process, [string] $Message, [int] $TimeoutMilliseconds = 20000) {
-    if ($Process.WaitForExit($TimeoutMilliseconds)) { return }
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        try {
+            $Process.Refresh()
+            if ($Process.HasExited) {
+                # Complete asynchronous stream bookkeeping before callers read
+                # ExitCode. PowerShell 5.1 can otherwise retain stale process
+                # state after a timed WaitForExit call.
+                $Process.WaitForExit()
+                return
+            }
+        } catch {
+            if ($null -eq (Get-Process -Id $Process.Id -ErrorAction SilentlyContinue)) { return }
+        }
+        Start-Sleep -Milliseconds 50
+    }
     try { $Process.Kill() } catch { }
     try { $null = $Process.WaitForExit(5000) } catch { }
     throw "assertion failed: $Message"
@@ -58,7 +291,7 @@ try {
     [IO.Directory]::CreateDirectory($testConfig) | Out-Null
     [IO.Directory]::CreateDirectory($fakeBin) | Out-Null
     if ($isWindowsPlatform -and $env:CI) {
-        $testSuiteTimeoutSeconds = 600
+        $testSuiteTimeoutSeconds = 1200
         if ($env:GICC_TEST_SUITE_TIMEOUT_SECONDS) {
             $configuredTimeout = 0
             Assert-True ([int]::TryParse($env:GICC_TEST_SUITE_TIMEOUT_SECONDS, [ref] $configuredTimeout) -and
@@ -89,6 +322,7 @@ exit 124
     Copy-Item -LiteralPath (Join-Path $root 'settings.json') -Destination (Join-Path $testConfig 'settings.json')
     Copy-Item -LiteralPath (Join-Path $root 'preload.cjs') -Destination (Join-Path $testConfig 'preload.cjs')
     Copy-Item -LiteralPath (Join-Path $root 'skill-bridge.cjs') -Destination (Join-Path $testConfig 'skill-bridge.cjs')
+    Copy-Item -LiteralPath (Join-Path $root 'gicc-runtime.mjs') -Destination (Join-Path $testConfig 'gicc-runtime.mjs')
     $existingClaudeSkill = Join-Path $testHome '.claude\skills\existing-claude'
     $existingCodexSkill = Join-Path $testHome '.agents\skills\existing-codex'
     [IO.Directory]::CreateDirectory($existingClaudeSkill) | Out-Null
@@ -270,6 +504,12 @@ public static class GICCTestProxy
             File.WriteAllText(ready, String.Empty);
             string log = Environment.GetEnvironmentVariable("FAKE_PROXY_START_LOG");
             if (!String.IsNullOrEmpty(log)) File.AppendAllText(log, "started" + Environment.NewLine);
+            // The real proxy is a resident service. Remain alive until the
+            // regression's exact managed PID cleanup stops this double. The
+            // bounded sleep is only a final safety valve for an interrupted
+            // suite; a short fixed lifetime makes identity publication race
+            // with ordinary scheduler load.
+            System.Threading.Thread.Sleep(60000);
             return 0;
         }
         Console.WriteLine("CLIProxyAPI test");
@@ -411,10 +651,12 @@ if "%~1"=="--version" (
   exit /b 0
 )
 if "%~1"=="--help" (
+  >>"%USERPROFILE%\gicc-test-capability-help.log" echo help
   echo --model --agents --append-system-prompt --permission-mode --settings --effort --add-dir --plugin-dir
   exit /b 0
 )
 if "%~1"=="auto-mode" if "%~2"=="defaults" (
+  >>"%USERPROFILE%\gicc-test-auto-defaults.log" echo defaults
   echo {"allow":["Default allow rule"],"environment":["Default environment rule"],"soft_deny":["Default soft deny"],"hard_deny":["Data Exfiltration: default hard deny"]}
   exit /b 0
 )
@@ -470,6 +712,7 @@ if ($env:FAKE_CLAUDE_NATIVE_LOG) {
 }
 if ($arg1 -eq '--version') { Write-Output '2.1.210 (test)'; exit 0 }
 if ($arg1 -eq '--help') {
+    Add-Content -LiteralPath (Join-Path $env:USERPROFILE 'gicc-test-capability-help.log') -Value 'help'
     Write-Output '--model --agents --append-system-prompt --permission-mode --settings --effort --add-dir --plugin-dir'
     exit 0
 }
@@ -489,6 +732,7 @@ if ($arg1 -eq 'agents' -and $arg2 -eq '--json') {
     exit 0
 }
 if ($arg1 -eq 'auto-mode' -and $arg2 -eq 'defaults') {
+    Add-Content -LiteralPath (Join-Path $env:USERPROFILE 'gicc-test-auto-defaults.log') -Value 'defaults'
     Write-Output '{"allow":["Default allow rule"],"environment":["Default environment rule"],"soft_deny":["Default soft deny"],"hard_deny":["Data Exfiltration: default hard deny"]}'
     exit 0
 }
@@ -714,6 +958,7 @@ exit 1
     $env:GICC_CURL_BIN = $fakeCurl
     $env:PATH = "$fakeBin$([IO.Path]::PathSeparator)$env:PATH"
     $env:GICC_SKIP_AUTO_UPDATE = '1'
+    $env:GICC_CAPABILITY_CACHE_SECONDS = '0'
     $env:GICC_SKIP_PROXY_WATCHER = '1'
     # The dedicated watcher lifecycle coverage below is Windows-only. Avoid
     # repeatedly spawning and force-stopping Unix watcher children from this
@@ -722,6 +967,50 @@ exit 1
     Remove-Item Env:GICC_PERMISSION_MODE -ErrorAction SilentlyContinue
     Remove-Item Env:GICC_AUTO_COMPACT_WINDOW -ErrorAction SilentlyContinue
     Remove-Item Env:GICC_MOUSE_POINTER_SHAPE -ErrorAction SilentlyContinue
+
+    if ($isWindowsPlatform) {
+        $capabilityHelpLog = Join-Path $testHome 'gicc-test-capability-help.log'
+        $autoDefaultsLog = Join-Path $testHome 'gicc-test-auto-defaults.log'
+        $capabilityCache = Join-Path $testConfig 'claude-capabilities.json'
+        $autoDefaultsSnapshot = Join-Path $testConfig 'auto-mode-defaults.json'
+        $autoDefaultsMeta = Join-Path $testConfig 'auto-mode-defaults.meta.json'
+        $cacheShellPath = (Get-Process -Id $PID).Path
+        $env:GICC_CAPABILITY_CACHE_SECONDS = '86400'
+        try {
+            Remove-Item -LiteralPath $capabilityHelpLog, $autoDefaultsLog, $capabilityCache,
+                $autoDefaultsSnapshot, $autoDefaultsMeta -Force -ErrorAction SilentlyContinue
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-cold | Out-Null
+            Assert-True ($LASTEXITCODE -eq 0) 'Windows cold capability cache launch succeeds'
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-warm | Out-Null
+            Assert-True ($LASTEXITCODE -eq 0) 'Windows warm capability cache launch succeeds'
+            Assert-True (@([IO.File]::ReadAllLines($capabilityHelpLog)).Count -eq 1) 'Windows warm launch skips Claude help probe'
+            Assert-True (@([IO.File]::ReadAllLines($autoDefaultsLog)).Count -eq 1) 'Windows warm launch skips auto mode defaults probe'
+
+            [IO.File]::WriteAllText($capabilityCache, '{malformed', $utf8)
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-repair-capabilities | Out-Null
+            Assert-True (@([IO.File]::ReadAllLines($capabilityHelpLog)).Count -eq 2) 'Windows corrupt capability cache is rebuilt'
+            Assert-True (@([IO.File]::ReadAllLines($autoDefaultsLog)).Count -eq 1) 'Windows capability repair keeps defaults cache'
+
+            [IO.File]::WriteAllText($autoDefaultsMeta, '{malformed', $utf8)
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-repair-defaults | Out-Null
+            Assert-True (@([IO.File]::ReadAllLines($capabilityHelpLog)).Count -eq 2) 'Windows defaults repair keeps capability cache'
+            Assert-True (@([IO.File]::ReadAllLines($autoDefaultsLog)).Count -eq 2) 'Windows corrupt defaults metadata is rebuilt'
+
+            $fakeClaudeItem = Get-Item -LiteralPath (Join-Path $fakeBin 'claude.ps1') -Force
+            $fakeClaudeItem.LastWriteTimeUtc = $fakeClaudeItem.LastWriteTimeUtc.AddSeconds(2)
+            & $cacheShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --print cache-new-claude | Out-Null
+            Assert-True (@([IO.File]::ReadAllLines($capabilityHelpLog)).Count -eq 3) 'Windows Claude change invalidates capability cache'
+            Assert-True (@([IO.File]::ReadAllLines($autoDefaultsLog)).Count -eq 3) 'Windows Claude change invalidates defaults cache'
+
+            $capabilityPayload = Get-Content -LiteralPath $capabilityCache -Raw | ConvertFrom-Json
+            $defaultsMetaPayload = Get-Content -LiteralPath $autoDefaultsMeta -Raw | ConvertFrom-Json
+            Assert-True ($capabilityPayload.schema -eq 1 -and @($capabilityPayload.options) -contains '--model') 'Windows capability cache has a validated schema'
+            Assert-True ($defaultsMetaPayload.schema -eq 1 -and -not [string]::IsNullOrWhiteSpace($defaultsMetaPayload.fingerprint)) 'Windows defaults metadata has a validated schema'
+        } finally {
+            $env:GICC_CAPABILITY_CACHE_SECONDS = '0'
+        }
+        Write-TestStage 'capability cache regressions passed'
+    }
 
     if ($isWindowsPlatform) {
         $codexConfigArgumentLog = Join-Path $temporary 'codex-config-argument.log'
@@ -1234,7 +1523,7 @@ process.stdout.write(JSON.stringify({ addDirs: [], pluginDirs: [], instructions:
     Assert-True ($output.Contains('BG=gpt-5.6-luna')) 'background classifier'
     Assert-True ($output.Contains('SUBAGENT=') -and -not $output.Contains('SUBAGENT=gpt-5.6-terra')) 'native Claude subagent routing is not globally overridden'
     Assert-True ($output.Contains('ADDITIONAL_DIR_MD=1')) 'generated overlay CLAUDE.md files are enabled for additional directories'
-    Assert-True ($output.Contains('CONCURRENCY=1')) 'stable tool concurrency'
+    Assert-True ($output.Contains('CONCURRENCY=') -and -not $output.Contains('CONCURRENCY=1')) 'tool concurrency is left to Claude Code native scheduling'
     Assert-True ($output.Contains('RETRIES=4')) 'bounded retries cover bridge recovery'
     Assert-True ($output.Contains('OUTPUT_TOKENS=128000')) 'maximum tested Claude output budget'
     Assert-True ($output.Contains('CONTEXT=272000')) 'context window'
@@ -1252,10 +1541,12 @@ process.stdout.write(JSON.stringify({ addDirs: [], pluginDirs: [], instructions:
     Assert-True ($output.Contains('--permission-mode auto')) 'auto permissions'
     Assert-True ($output.Contains('--model gpt-5.6-terra')) 'startup model'
     Assert-True ($output.Contains('--add-dir')) 'Claude and Codex skill overlay forwarded'
-    Assert-True ($output.Contains('Do not spawn or delegate to additional agents')) 'nested agent guard'
-    Assert-True ($output.Contains('Unless you are a teammate in a native Agent Team that the user explicitly requested')) 'team-compatible subagent task ownership'
-    Assert-True ($output.Contains('Native Agent Teams may be created only when the user explicitly requests')) 'explicit Agent Teams remain available within the managed capacity'
-    Assert-True ($output.Contains('for ordinary Agent delegation, the Sol leader owns')) 'ordinary delegation retains Sol task ownership'
+    Assert-True (-not $output.Contains('Do not spawn or delegate to additional agents')) 'nested subagent delegation is not blocked'
+    Assert-True (-not $output.Contains('keep at most 1 delegated')) 'fixed Agent capacity guard is absent'
+    Assert-True ($output.Contains('Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation')) 'full dynamic workflow remains available'
+    Assert-True ($output.Contains('Do not impose a fixed tool or Agent concurrency limit')) 'model-directed native concurrency is explicit'
+    Assert-True ($output.Contains('Native Dynamic Workflow, Agent delegation, and further subagent delegation are available')) 'managed agents may delegate further'
+    Assert-True ($output.Contains("use Claude Code's native task ownership semantics")) 'native task ownership remains available to dynamic workflows'
     Assert-True ($output.Contains('Before every final answer, call TaskList and reconcile every entry')) 'leader task reconciliation'
     Assert-True ($output.Contains('Never leave stale in_progress tasks after their work is done')) 'stale task guard'
     Assert-True ($output.Contains('operate as a Codex coding agent inside Claude Code')) 'Codex tuning guard'
@@ -1542,20 +1833,23 @@ process.stdout.write(JSON.stringify({
         $unmanaged401ErrorLog = Join-Path $temporary 'unmanaged-401-proxy-error.log'
         $env:FAKE_PROXY_HTTP_STATUS = '401'
         $env:FAKE_PROXY_START_LOG = $unmanaged401StartLog
-        $savedErrorPreference = $ErrorActionPreference
         try {
-            $ErrorActionPreference = 'Continue'
-            $unmanaged401Output = & $shellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'gicc.ps1') --terra unmanaged-401-test 2> $unmanaged401ErrorLog
-            $unmanaged401Exit = $LASTEXITCODE
+            $unmanaged401Process = Start-Process -FilePath $shellPath -ArgumentList @(
+                '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                ('"' + (Join-Path $root 'gicc.ps1') + '"'), '--terra', 'unmanaged-401-test'
+            ) -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $temporary 'unmanaged-401-proxy-output.log') `
+                -RedirectStandardError $unmanaged401ErrorLog
+            $script:trackedTestProcesses += $unmanaged401Process
+            Wait-ForTestProcess $unmanaged401Process 'unverified loopback 401 probe exits'
+            $unmanaged401Exit = $unmanaged401Process.ExitCode
         } finally {
-            $ErrorActionPreference = $savedErrorPreference
             Remove-Item Env:FAKE_PROXY_HTTP_STATUS -ErrorAction SilentlyContinue
             Remove-Item Env:FAKE_PROXY_START_LOG -ErrorAction SilentlyContinue
         }
         Assert-True ($unmanaged401Exit -ne 0) 'Windows launcher rejects an unverified loopback process after HTTP 401'
         $unmanaged401Stderr = if (Test-Path -LiteralPath $unmanaged401ErrorLog -PathType Leaf) { Get-Content -LiteralPath $unmanaged401ErrorLog -Raw } else { '' }
-        $unmanaged401Text = ((($unmanaged401Output | Out-String) + $unmanaged401Stderr) -replace '\s+', ' ')
-        Assert-True ($unmanaged401Text.Contains('will not stop an unverified process')) 'unverified loopback 401 explains the managed-process safety boundary'
+        $unmanaged401Text = ($unmanaged401Stderr -replace '\s+', ' ')
+        Assert-True ($unmanaged401Text.Contains('will not stop an unverified process')) "unverified loopback 401 explains the managed-process safety boundary; output=$unmanaged401Text"
         Assert-True (-not (Test-Path -LiteralPath $unmanaged401StartLog -PathType Leaf)) 'unverified loopback 401 never starts a replacement proxy'
 
         $proxyReady = Join-Path $temporary 'windows-proxy-ready'
@@ -1615,10 +1909,22 @@ process.stdout.write(JSON.stringify({
             Assert-True (@(Get-Content -LiteralPath $proxyStartLog).Count -eq 1) 'Windows proxy watcher starts one recovery process'
             Stop-Process -Id $dummyParent.Id -Force -ErrorAction SilentlyContinue
             $dummyParent = $null
-            Assert-True ($watcher.WaitForExit(5000)) 'Windows proxy watcher exits after its parent'
+            Wait-ForTestProcess $watcher 'Windows proxy watcher exits after its parent' 30000
         } finally {
             if ($dummyParent) { Stop-Process -Id $dummyParent.Id -Force -ErrorAction SilentlyContinue }
             if (-not $watcher.HasExited -and -not $watcher.WaitForExit(5000)) { Stop-Process -Id $watcher.Id -Force -ErrorAction SilentlyContinue }
+            $managedProxyMetadataPath = Join-Path $testConfig 'run\managed-proxy.json'
+            if (Test-Path -LiteralPath $managedProxyMetadataPath -PathType Leaf) {
+                try {
+                    $managedProxyMetadata = Get-Content -LiteralPath $managedProxyMetadataPath -Raw | ConvertFrom-Json
+                    $managedProxyPid = [int] $managedProxyMetadata.pid
+                    if ($managedProxyPid -gt 0) {
+                        Stop-Process -Id $managedProxyPid -Force -ErrorAction SilentlyContinue
+                        try { (Get-Process -Id $managedProxyPid -ErrorAction SilentlyContinue).WaitForExit(5000) } catch { }
+                    }
+                } catch { }
+                Remove-Item -LiteralPath $managedProxyMetadataPath -Force -ErrorAction SilentlyContinue
+            }
             Remove-Item Env:FAKE_PROXY_READY_FILE -ErrorAction SilentlyContinue
             Remove-Item Env:FAKE_PROXY_START_LOG -ErrorAction SilentlyContinue
             Remove-Item Env:GICC_TEST_PROXY_REACHABLE_FILE -ErrorAction SilentlyContinue
@@ -1907,7 +2213,7 @@ process.stdout.write(JSON.stringify({
         $modelLockLauncherBaseArguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
             ('"' + (Join-Path $root 'gicc.ps1') + '"'), '--terra')
         $liveOwnerProcess = Start-TrackedTestProcess $shellPath @($modelLockLauncherBaseArguments + 'windows-lock-fallback-test') 'windows-lock-live-owner'
-        Assert-True ($liveOwnerProcess.WaitForExit(20000)) 'Windows old live state owner contender exits'
+        Wait-ForTestProcess $liveOwnerProcess 'Windows old live state owner contender exits' 60000
         Assert-True (([IO.File]::ReadAllText((Join-Path $modelLock 'owner'))).Contains('nonce=live-windows-state-owner')) 'Windows old live state owner is not stolen'
         Remove-Item -LiteralPath $modelLock -Recurse -Force
         Write-TestStage 'live model lock owner regression passed'
@@ -1916,7 +2222,7 @@ process.stdout.write(JSON.stringify({
         $env:GICC_SKIP_AUTO_UPDATE = '1'
         $env:GICC_TEST_FORCE_HARDLINK_FAILURE = '1'
         $fallbackProcess = Start-TrackedTestProcess $shellPath @($modelLockLauncherBaseArguments + 'windows-lock-publication-failure-test') 'windows-lock-fallback'
-        Assert-True ($fallbackProcess.WaitForExit(20000)) 'Windows exclusive create fallback contender exits'
+        Wait-ForTestProcess $fallbackProcess 'Windows exclusive create fallback contender exits' 60000
         Remove-Item Env:GICC_TEST_FORCE_HARDLINK_FAILURE
         if ($null -eq $savedForcedLockSkipUpdate) { Remove-Item Env:GICC_SKIP_AUTO_UPDATE -ErrorAction SilentlyContinue } else { $env:GICC_SKIP_AUTO_UPDATE = $savedForcedLockSkipUpdate }
         Assert-True (-not (Test-Path -LiteralPath $modelLock)) 'Windows exclusive-create fallback publishes and releases state locks'
@@ -1924,9 +2230,12 @@ process.stdout.write(JSON.stringify({
         Write-TestStage 'model lock fallback regression passed'
 
         $env:GICC_TEST_FORCE_PUBLICATION_FAILURE = '1'
+        $publicationFailureTimer = [Diagnostics.Stopwatch]::StartNew()
         $publicationFailureProcess = Start-TrackedTestProcess $shellPath @($modelLockLauncherBaseArguments + 'windows-lock-forced-publication-failure-test') 'windows-lock-publication-failure'
-        Assert-True ($publicationFailureProcess.WaitForExit(20000)) 'Windows forced publication failure contender exits'
+        Wait-ForTestProcess $publicationFailureProcess 'Windows forced publication failure contender exits' 20000
+        $publicationFailureTimer.Stop()
         Remove-Item Env:GICC_TEST_FORCE_PUBLICATION_FAILURE
+        Assert-True ($publicationFailureTimer.Elapsed.TotalSeconds -lt 10) 'Windows forced publication failure fails promptly instead of retrying every independent state lock'
         Assert-True (-not (Test-Path -LiteralPath $modelLock)) 'Windows publication failure removes its incomplete lock'
         Assert-True (@(Get-ChildItem -LiteralPath $runDirectory -Directory -Filter 'model-display.lock.quarantine.*' -ErrorAction SilentlyContinue).Count -eq 0) 'Windows publication failure leaves no quarantine barrier'
         Write-TestStage 'model lock publication failure regression passed'
@@ -1946,10 +2255,10 @@ process.stdout.write(JSON.stringify({
         Wait-ForTestPath (Join-Path $temporary 'windows-aba-b-publish') 'Windows publication ABA replacement publishes before nonce capture'
         $abaBNonce = ([IO.File]::ReadAllLines((Join-Path $modelLock 'owner')) | Where-Object { $_.StartsWith('nonce=') })[0]
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-a-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $abaA 'Windows publication ABA creator exits'
+        Wait-ForTestProcess $abaA 'Windows publication ABA creator exits' 60000
         Assert-True (([IO.File]::ReadAllText((Join-Path $modelLock 'owner'))).Contains($abaBNonce)) 'Windows paused creator cannot overwrite B generation'
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-b-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $abaB 'Windows publication ABA owner exits'
+        Wait-ForTestProcess $abaB 'Windows publication ABA owner exits' 60000
         Write-TestStage 'model lock publication ABA regression passed'
 
         Remove-Item -LiteralPath $modelLock -Recurse -Force -ErrorAction SilentlyContinue
@@ -1973,12 +2282,12 @@ process.stdout.write(JSON.stringify({
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-x-before-continue'), "continue`n", $utf8)
         Wait-ForTestPath (Join-Path $temporary 'windows-aba-x-after') 'Windows rename ABA stale owner pauses behind quarantine barrier'
         $abaZ = Start-TrackedTestProcess $shellPath $lockLauncherArguments 'windows-aba-z'
-        Wait-ForTestProcess $abaZ 'Windows Z contender finishes behind quarantine barrier'
+        Wait-ForTestProcess $abaZ 'Windows Z contender finishes behind quarantine barrier' 60000
         Assert-True (([IO.File]::ReadAllText((Join-Path $modelLock 'owner'))).Contains($abaYNonce)) 'Windows rename ABA restores Y and excludes Z'
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-x-after-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $abaX 'Windows stale remover exits'
+        Wait-ForTestProcess $abaX 'Windows stale remover exits' 60000
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-y-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $abaY 'Windows Y owner exits'
+        Wait-ForTestProcess $abaY 'Windows Y owner exits' 60000
         Write-TestStage 'model lock rename ABA regression passed'
 
         Remove-Item -LiteralPath $modelLock -Recurse -Force -ErrorAction SilentlyContinue
@@ -2004,9 +2313,9 @@ process.stdout.write(JSON.stringify({
         Wait-ForTestPath (Join-Path $temporary 'windows-self-x-after') 'Windows self recovery stale owner pauses after rename'
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-self-y-continue'), "continue`n", $utf8)
         Wait-ForTestPath (Join-Path $temporary 'windows-self-y-recovered') 'Windows owner restores its own moved generation'
-        Wait-ForTestProcess $selfY 'Windows recovered owner exits without lock timeout'
+        Wait-ForTestProcess $selfY 'Windows recovered owner exits without lock timeout' 60000
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-self-x-after-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $selfX 'Windows paused remover exits after owner recovery'
+        Wait-ForTestProcess $selfX 'Windows paused remover exits after owner recovery' 60000
         Assert-True (-not (Test-Path -LiteralPath $modelLock) -and @(Get-ChildItem -LiteralPath $runDirectory -Directory -Filter 'model-display.lock.quarantine.*' -ErrorAction SilentlyContinue).Count -eq 0) 'Windows self recovery leaves no lock generation'
         Write-TestStage 'model lock self recovery regression passed'
 
@@ -2074,7 +2383,7 @@ process.stdout.write(JSON.stringify({
         [IO.Directory]::CreateDirectory($modelLock) | Out-Null
         [IO.File]::WriteAllText((Join-Path $modelLock 'owner.json'), "future-owner`n", $utf8)
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-unknown-owner-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $unknownOwner 'Windows future-format owner creator withdraws'
+        Wait-ForTestProcess $unknownOwner 'Windows future-format owner creator withdraws' 60000
         Assert-True (([IO.File]::ReadAllText((Join-Path $modelLock 'owner.json')).Trim() -eq 'future-owner') -and
             -not (Test-Path -LiteralPath (Join-Path $modelLock 'owner')) -and
             -not (Test-Path -LiteralPath (Join-Path $modelLock 'generation'))) 'Windows future-format owner survives structured publication'
@@ -2087,7 +2396,7 @@ process.stdout.write(JSON.stringify({
         [IO.File]::WriteAllText((Join-Path $mixedBarrier 'owner-pid'), '', $utf8)
         (Get-Item -LiteralPath $mixedBarrier).LastWriteTimeUtc = [DateTime]::Parse('2000-01-01T00:00:00Z').ToUniversalTime()
         $mixedBarrierProcess = Start-TrackedTestProcess $shellPath @($modelLockLauncherBaseArguments + 'windows-lock-mixed-barrier-test') 'windows-lock-mixed-barrier'
-        Assert-True ($mixedBarrierProcess.WaitForExit(20000)) 'Windows mixed legacy barrier contender exits'
+        Wait-ForTestProcess $mixedBarrierProcess 'Windows mixed legacy barrier contender exits' 60000
         Assert-True ((Test-Path -LiteralPath (Join-Path $modelLock 'owner-pid') -PathType Leaf) -and
             (Get-Item -LiteralPath (Join-Path $modelLock 'owner-pid')).Length -eq 0 -and
             -not (Test-Path -LiteralPath (Join-Path $modelLock 'owner')) -and
@@ -2101,7 +2410,7 @@ process.stdout.write(JSON.stringify({
         [IO.File]::WriteAllText((Join-Path $mixedDeadBarrier 'owner-pid'), "2147483000 old-token`n", $utf8)
         (Get-Item -LiteralPath $mixedDeadBarrier).LastWriteTimeUtc = [DateTime]::Parse('2000-01-01T00:00:00Z').ToUniversalTime()
         $deadBarrierProcess = Start-TrackedTestProcess $shellPath @($modelLockLauncherBaseArguments + 'windows-lock-dead-barrier-test') 'windows-lock-dead-barrier'
-        Assert-True ($deadBarrierProcess.WaitForExit(20000)) 'Windows dead legacy barrier contender exits'
+        Wait-ForTestProcess $deadBarrierProcess 'Windows dead legacy barrier contender exits' 60000
         Assert-True (-not (Test-Path -LiteralPath $modelLock) -and
             @(Get-ChildItem -LiteralPath $runDirectory -Directory -Filter 'model-display.lock.quarantine.*' -ErrorAction SilentlyContinue).Count -eq 0) 'Windows dead legacy barrier ignores and removes live structured injection after grace'
 
@@ -2111,7 +2420,7 @@ process.stdout.write(JSON.stringify({
         [IO.File]::WriteAllText((Join-Path $modelLock 'owner-pid'), "2147483000 old-token`n", $utf8)
         (Get-Item -LiteralPath $modelLock).LastWriteTimeUtc = [DateTime]::Parse('2000-01-01T00:00:00Z').ToUniversalTime()
         $deadCanonicalProcess = Start-TrackedTestProcess $shellPath @($modelLockLauncherBaseArguments + 'windows-lock-dead-canonical-test') 'windows-lock-dead-canonical'
-        Assert-True ($deadCanonicalProcess.WaitForExit(20000)) 'Windows dead canonical legacy owner contender exits'
+        Wait-ForTestProcess $deadCanonicalProcess 'Windows dead canonical legacy owner contender exits' 60000
         Assert-True (-not (Test-Path -LiteralPath $modelLock) -and
             @(Get-ChildItem -LiteralPath $runDirectory -Directory -Filter 'model-display.lock.quarantine.*' -ErrorAction SilentlyContinue).Count -eq 0) 'Windows dead canonical legacy owner ignores and removes live structured injection after grace'
         Write-TestStage 'model lock regressions passed'
@@ -2159,9 +2468,8 @@ process.stdout.write(JSON.stringify({
             $liveUpdateContender = Start-TrackedTestProcess $shellPath $updateLauncherArguments 'windows-live-update-contender'
             Wait-ForTestProcess $liveUpdateContender 'Windows live update owner contender launcher exits'
             for ($attempt = 0; $attempt -lt 200 -and
-                (-not (Test-Path -LiteralPath $updateAttempt) -or
-                 -not ([IO.File]::ReadAllText($updateAttempt).Contains('blocked '))); $attempt++) { Start-Sleep -Milliseconds 20 }
-            Assert-True ([IO.File]::ReadAllText($updateAttempt).Contains('blocked ')) 'Windows live owner contender reaches a deterministic blocked result'
+                -not (Test-FileContains $updateAttempt 'blocked '); $attempt++) { Start-Sleep -Milliseconds 20 }
+            Assert-True (Test-FileContains $updateAttempt 'blocked ') 'Windows live owner contender reaches a deterministic blocked result'
             Remove-Item Env:GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE
             Assert-True (@(Get-Content -LiteralPath $updateLog).Count -eq 1) 'Windows old live update owner is not stolen'
             [IO.File]::WriteAllText($updateRelease, "release`n", $utf8)
@@ -2179,7 +2487,7 @@ process.stdout.write(JSON.stringify({
             $completedUpdaterPid = [int] (@(Get-Content -LiteralPath $updateLog)[0])
             $completedUpdater = Get-Process -Id $completedUpdaterPid -ErrorAction SilentlyContinue
             if ($completedUpdater) {
-                Assert-True ($completedUpdater.WaitForExit(20000)) 'Windows completed updater process exits'
+                Wait-ForTestProcess $completedUpdater 'Windows completed updater process exits' 30000
             }
             Assert-True ($null -eq (Get-Process -Id $completedUpdaterPid -ErrorAction SilentlyContinue)) 'Windows completed updater is no longer running'
             Assert-True (Remove-TestPathWithRetry $updateDirectory) 'Windows completed updater releases its redirected log handles'
@@ -2191,9 +2499,8 @@ process.stdout.write(JSON.stringify({
             $legacyUpdateContender = Start-TrackedTestProcess $shellPath $updateLauncherArguments 'windows-legacy-update-contender'
             Wait-ForTestProcess $legacyUpdateContender 'Windows legacy ownerless update contender launcher exits'
             for ($attempt = 0; $attempt -lt 200 -and
-                (-not (Test-Path -LiteralPath $legacyAttempt) -or
-                 -not ([IO.File]::ReadAllText($legacyAttempt).Contains('blocked '))); $attempt++) { Start-Sleep -Milliseconds 20 }
-            Assert-True ([IO.File]::ReadAllText($legacyAttempt).Contains('blocked ')) 'Windows recent legacy ownerless update lock blocks a duplicate worker'
+                -not (Test-FileContains $legacyAttempt 'blocked '); $attempt++) { Start-Sleep -Milliseconds 20 }
+            Assert-True (Test-FileContains $legacyAttempt 'blocked ') 'Windows recent legacy ownerless update lock blocks a duplicate worker'
             Assert-True (Test-Path -LiteralPath (Join-Path $updateDirectory 'lock') -PathType Container) 'Windows legacy ownerless lock is preserved for the transition hour'
             Assert-True (-not (Test-Path -LiteralPath $updateLog)) 'Windows legacy ownerless lock prevents duplicate update execution'
             Remove-Item Env:GICC_TEST_UPDATE_WORKER_ATTEMPT_FILE
@@ -2273,6 +2580,8 @@ process.stdout.write(JSON.stringify({
         $backgroundProxyPid = 0
         $reusedAuthWatcher = $null
         $reusedProxyWatcher = $null
+        $unavailableAuthWatcher = $null
+        $unavailableProxyWatcher = $null
         $registryPrivateEnvironment = @{}
         $registryPrivateNames = @(
             'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'GICC_PROXY_TOKEN', 'GICC_PROXY_URL',
@@ -2286,7 +2595,7 @@ process.stdout.write(JSON.stringify({
                 '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                 ('"' + (Join-Path $root 'gicc.ps1') + '"'), '--bg', 'background-lifecycle-test'
             ) -PassThru
-            Assert-True ($backgroundLauncher.WaitForExit(15000)) 'Windows background launcher exits while detached watchers remain active'
+            Wait-ForTestProcess $backgroundLauncher 'Windows background launcher exits while detached watchers remain active' 60000
             Assert-True ($backgroundLauncher.ExitCode -eq 0) 'Windows background launcher returns after detaching Claude agent'
             for ($attempt = 0; $attempt -lt 200; $attempt++) {
                 if ((Test-Path -LiteralPath $backgroundAuthPidFile -PathType Leaf) -and
@@ -2324,13 +2633,18 @@ process.stdout.write(JSON.stringify({
             Assert-True (-not (Test-Path -LiteralPath $backgroundAuthExit) -and
                 -not (Test-Path -LiteralPath $backgroundProxyExit)) 'Windows invalid registry root is not treated as empty'
             [IO.File]::WriteAllText($backgroundRegistry, '[]', $utf8)
-            for ($attempt = 0; $attempt -lt 240; $attempt++) {
-                if ((Test-Path -LiteralPath $backgroundAuthExit -PathType Leaf) -and
-                    (Test-Path -LiteralPath $backgroundProxyExit -PathType Leaf)) { break }
+            for ($attempt = 0; $attempt -lt 600; $attempt++) {
+                if ($null -eq (Get-Process -Id $backgroundAuthPid -ErrorAction SilentlyContinue) -and
+                    $null -eq (Get-Process -Id $backgroundProxyPid -ErrorAction SilentlyContinue)) { break }
                 Start-Sleep -Milliseconds 50
             }
-            Assert-True ((Test-Path -LiteralPath $backgroundAuthExit -PathType Leaf) -and
-                (Test-Path -LiteralPath $backgroundProxyExit -PathType Leaf)) 'Windows detached watchers exit after registry is stably empty'
+            $backgroundAuthAlive = $null -ne (Get-Process -Id $backgroundAuthPid -ErrorAction SilentlyContinue)
+            $backgroundProxyAlive = $null -ne (Get-Process -Id $backgroundProxyPid -ErrorAction SilentlyContinue)
+            $backgroundAuthExitMarker = Test-Path -LiteralPath $backgroundAuthExit -PathType Leaf
+            $backgroundProxyExitMarker = Test-Path -LiteralPath $backgroundProxyExit -PathType Leaf
+            $backgroundRegistryTail = @([IO.File]::ReadAllLines($backgroundRegistryLog) | Select-Object -Last 6) -join ' | '
+            Assert-True (-not $backgroundAuthAlive -and -not $backgroundProxyAlive) `
+                "Windows detached watchers exit after registry is stably empty; authMarker=$backgroundAuthExitMarker proxyMarker=$backgroundProxyExitMarker authAlive=$backgroundAuthAlive proxyAlive=$backgroundProxyAlive registryTail=$backgroundRegistryTail"
 
             Remove-Item -LiteralPath $backgroundAuthExit, $backgroundProxyExit -Force -ErrorAction SilentlyContinue
             foreach ($name in $registryPrivateNames) {
@@ -2361,15 +2675,38 @@ process.stdout.write(JSON.stringify({
                 ('"' + (Join-Path $root 'gicc.ps1') + '"'),
                 '-GICCInternalProxyWatchParentProcessId', [string] $PID, '0', '1'
             ) -PassThru
-            Assert-True ($reusedAuthWatcher.WaitForExit(10000) -and $reusedAuthWatcher.ExitCode -eq 0) 'Windows auth watcher rejects a live reused parent PID'
-            Assert-True ($reusedProxyWatcher.WaitForExit(10000) -and $reusedProxyWatcher.ExitCode -eq 0) 'Windows proxy watcher rejects a live reused parent PID'
+            Wait-ForTestProcess $reusedAuthWatcher 'Windows auth watcher rejects a live reused parent PID' 30000
+            Wait-ForTestProcess $reusedProxyWatcher 'Windows proxy watcher rejects a live reused parent PID' 30000
+            Assert-True ($reusedAuthWatcher.ExitCode -eq 0) 'Windows auth watcher rejects a live reused parent PID cleanly'
+            Assert-True ($reusedProxyWatcher.ExitCode -eq 0) 'Windows proxy watcher rejects a live reused parent PID cleanly'
             Assert-True ((Test-Path -LiteralPath $backgroundAuthExit -PathType Leaf) -and
                 (Test-Path -LiteralPath $backgroundProxyExit -PathType Leaf)) 'Windows reused PID watcher exits are observable'
             foreach ($line in @([IO.File]::ReadAllLines($backgroundRegistryLog))) {
                 Assert-True ($line -eq 'BASE= AUTH= PROXY= URL= CONFIG= BIN= BEDROCK= MANTLE= VERTEX= FOUNDRY= CUSTOM= MODEL= DEFAULT= SUBAGENT= CODEX=') 'Windows direct watcher registry query also scrubs inherited private families'
             }
+
+            Remove-Item -LiteralPath $backgroundAuthExit, $backgroundProxyExit -Force -ErrorAction SilentlyContinue
+            $savedWatcherPath = $env:PATH
+            try {
+                $env:PATH = Split-Path $shellPath -Parent
+                $unavailableAuthWatcher = Start-Process -FilePath $shellPath -ArgumentList @(
+                    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    ('"' + (Join-Path $root 'codex-session.ps1') + '"'), 'watch',
+                    '-ParentProcessId', [string] $PID, '-ParentProcessIdentity', '0', '-BackgroundWatch'
+                ) -PassThru
+                $unavailableProxyWatcher = Start-Process -FilePath $shellPath -ArgumentList @(
+                    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    ('"' + (Join-Path $root 'gicc.ps1') + '"'),
+                    '-GICCInternalProxyWatchParentProcessId', [string] $PID, '0', '1'
+                ) -PassThru
+            } finally { $env:PATH = $savedWatcherPath }
+            Wait-ForTestProcess $unavailableAuthWatcher 'Windows auth watcher exits when Claude Code is unavailable' 15000
+            Wait-ForTestProcess $unavailableProxyWatcher 'Windows proxy watcher exits when Claude Code is unavailable' 15000
+            Assert-True ($unavailableAuthWatcher.ExitCode -eq 0 -and $unavailableProxyWatcher.ExitCode -eq 0) 'Windows detached watchers treat an unavailable Claude Code registry as terminal'
+            Assert-True ((Test-Path -LiteralPath $backgroundAuthExit -PathType Leaf) -and
+                (Test-Path -LiteralPath $backgroundProxyExit -PathType Leaf)) 'Windows unavailable-registry watcher exits are observable'
         } finally {
-            foreach ($watcherToStop in @($reusedAuthWatcher, $reusedProxyWatcher)) {
+            foreach ($watcherToStop in @($reusedAuthWatcher, $reusedProxyWatcher, $unavailableAuthWatcher, $unavailableProxyWatcher)) {
                 if ($watcherToStop -and -not $watcherToStop.HasExited) { $watcherToStop.Kill() }
             }
             foreach ($pidToStop in @($backgroundAuthPid, $backgroundProxyPid)) {
@@ -2423,6 +2760,26 @@ process.stdout.write(JSON.stringify({
     Assert-True (-not $bare.Contains('--append-system-prompt')) 'bare mode leader prompt suppressed'
     Assert-True (-not $bare.Contains('--permission-mode')) 'bare mode permission override suppressed'
 
+    $passThroughArguments = [string[]] @(
+        '--continue', '--resume', 'session-123', '--fork-session', '--from-pr', '42',
+        '--worktree', 'audit-tree', '--tmux', '--ide', '--plugin-dir', (Join-Path $temporary 'plugin'),
+        '--mcp-config', (Join-Path $temporary 'mcp.json'), '--strict-mcp-config',
+        '--settings', (Join-Path $testConfig 'settings.json'), '--system-prompt', 'system-text',
+        '--append-system-prompt', 'append-text', '--output-format', 'json',
+        '--input-format', 'stream-json', '--json-schema', '{}',
+        '--session-id', '00000000-0000-4000-8000-000000000000', '--debug', 'chrome',
+        '--verbose', '--brief', '--bg', '--chrome', '--no-chrome', 'test-prompt'
+    )
+    $passThrough = (& (Join-Path $root 'gicc.ps1') @passThroughArguments | Out-String)
+    foreach ($passThroughOption in @(
+        '--continue', '--resume', '--fork-session', '--from-pr', '--worktree', '--tmux', '--ide',
+        '--plugin-dir', '--mcp-config', '--strict-mcp-config', '--settings', '--system-prompt',
+        '--append-system-prompt', '--output-format', '--input-format', '--json-schema', '--session-id',
+        '--debug', '--verbose', '--brief', '--bg', '--chrome', '--no-chrome'
+    )) {
+        Assert-True ($passThrough.Contains($passThroughOption)) "Windows pass through preserves $passThroughOption"
+    }
+
     $explicitAgents = (& (Join-Path $root 'gicc.ps1') --agents '{}' test-prompt | Out-String)
     Assert-True ($explicitAgents.Contains('--agents {}')) 'explicit custom agents preserved'
     Assert-True (-not $explicitAgents.Contains('"Terra (high)"')) 'managed agents suppressed by explicit custom agents'
@@ -2452,7 +2809,9 @@ process.stdout.write(JSON.stringify({
     Assert-True ($doctor.Contains('CLIProxyAPI: CLIProxyAPI test')) 'proxy version first line'
     Assert-True (-not $doctor.Contains('extra version detail')) 'proxy version extra lines hidden'
     Assert-True ($doctor.Contains('Automatic compaction window: 244800 tokens')) 'doctor compaction'
-    Assert-True ($doctor.Contains('Task lifecycle: owned by Sol with final response reconciliation')) 'doctor task lifecycle'
+    Assert-True ($doctor.Contains('Tool concurrency: native Claude Code scheduling (no GICC limit)')) 'doctor reports uncapped native tool scheduling'
+    Assert-True ($doctor.Contains('Agent concurrency: model-directed native scheduling (no GICC limit)')) 'doctor reports uncapped model-directed Agent scheduling'
+    Assert-True ($doctor.Contains('Task lifecycle: native Claude Code ownership with final reconciliation')) 'doctor task lifecycle'
     Assert-True ($doctor.Contains('Managed agents: Terra (high), Luna (medium)')) 'doctor managed agent efforts'
     Assert-True ($doctor.Contains('Context status: stable session')) 'doctor context stabilization'
     Assert-True ($doctor.Contains('Codex usage: status line refresh every 300s')) 'doctor usage refresh'
@@ -2462,6 +2821,45 @@ process.stdout.write(JSON.stringify({
     Assert-True ($doctor.Contains('GICC updates: on')) 'doctor GICC self-updates'
     Assert-True ($doctor.Contains('Plan mode policy: conservative')) 'doctor plan policy'
     Assert-True ($doctor.Contains('gpt-5.6-terra: advertised')) 'doctor models'
+
+    $doctorJsonText = (& (Join-Path $root 'gicc.ps1') --doctor --json | Out-String)
+    $doctorJson = $doctorJsonText | ConvertFrom-Json
+    Assert-True ($doctorJson.schema -eq 1) 'doctor JSON schema'
+    Assert-True $doctorJson.ok 'doctor JSON healthy status'
+    Assert-True ($doctorJson.components.claudeCode.status -eq 'ready') 'doctor JSON Claude status'
+    Assert-True ($doctorJson.components.claudeCode.version -eq '2.1.210') 'doctor JSON Claude version'
+    Assert-True ($doctorJson.components.claudeCode.capabilityCache -eq 'disabled') 'doctor JSON capability cache state'
+    Assert-True ($doctorJson.components.claudeCode.detectedOptions -eq 8) 'doctor JSON capability count'
+    Assert-True ($doctorJson.components.proxy.status -eq 'healthy') 'doctor JSON proxy status'
+    Assert-True ($doctorJson.components.codexAuth.status -eq 'ready') 'doctor JSON auth status'
+    Assert-True (@($doctorJson.models | Where-Object { $_.advertised }).Count -eq 3) 'doctor JSON model catalog'
+    Assert-True ($doctorJson.configuration.maxOutputTokens -eq 128000) 'doctor JSON output budget'
+    Assert-True ($doctorJson.configuration.toolScheduling -eq 'native') 'doctor JSON native tool scheduling'
+    Assert-True ($doctorJson.configuration.agentScheduling -eq 'model-directed') 'doctor JSON model directed agents'
+    Assert-True ($doctorJson.configuration.capabilityCacheSeconds -eq 0) 'doctor JSON capability cache window'
+    Assert-True ($doctorJson.configuration.autoModeDefaultsCache -eq 'disabled') 'doctor JSON defaults cache state'
+    Assert-True $doctorJson.capabilities.dynamicWorkflow 'doctor JSON dynamic workflow capability'
+    Assert-True $doctorJson.capabilities.ultrareview 'doctor JSON ultrareview capability'
+    Assert-True $doctorJson.capabilities.nestedDelegation 'doctor JSON nested delegation capability'
+    Assert-True $doctorJson.capabilities.agentTeams 'doctor JSON Agent Teams capability'
+    Assert-True (-not $doctorJsonText.Contains('secret-access-token')) 'doctor JSON omits access token'
+    Assert-True (-not $doctorJsonText.Contains('private@example.com')) 'doctor JSON omits account email'
+    Assert-True (-not $doctorJsonText.Contains('test-token')) 'doctor JSON omits proxy token'
+
+    $doctorSettingsPath = Join-Path $testConfig 'settings.json'
+    $doctorSettingsBefore = [IO.File]::ReadAllText($doctorSettingsPath)
+    try {
+        $privateDoctorModel = 'private-doctor-model-value'
+        $doctorSettings = $doctorSettingsBefore | ConvertFrom-Json
+        $doctorSettings.model = $privateDoctorModel
+        [IO.File]::WriteAllText($doctorSettingsPath, ($doctorSettings | ConvertTo-Json -Depth 20), $utf8)
+        $privateDoctorJsonText = (& (Join-Path $root 'gicc.ps1') --doctor --json | Out-String)
+        $privateDoctorJson = $privateDoctorJsonText | ConvertFrom-Json
+        Assert-True ($null -eq $privateDoctorJson.configuration.savedModel) 'doctor JSON omits an unrecognized saved model'
+        Assert-True (-not $privateDoctorJsonText.Contains($privateDoctorModel)) 'doctor JSON does not echo an arbitrary saved model'
+    } finally {
+        [IO.File]::WriteAllText($doctorSettingsPath, $doctorSettingsBefore, $utf8)
+    }
 
     $bridgeAuthFile = Join-Path $testAuthDir 'codex-gicc-managed.json'
     [IO.Directory]::CreateDirectory((Join-Path $testConfig 'usage-cache')) | Out-Null
@@ -2797,12 +3195,11 @@ process.stdout.write(JSON.stringify({
         $emptyCreator = $null
         try {
             $emptyCreator = Start-Process -FilePath $shellPath -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $quotedUsageHelper, '-RefreshCache') -PassThru
-            for ($attempt = 0; $attempt -lt 100 -and -not (Test-Path -LiteralPath $emptyReady -PathType Leaf); $attempt++) { Start-Sleep -Milliseconds 20 }
-            Assert-True (Test-Path -LiteralPath $emptyReady -PathType Leaf) 'new usage creator pauses before the empty replacement test'
+            Wait-ForTestPath $emptyReady 'new usage creator pauses before the empty replacement test'
             Remove-Item -LiteralPath $usageRefreshLock -Recurse -Force
             [IO.Directory]::CreateDirectory($usageRefreshLock) | Out-Null
             [IO.File]::WriteAllText($emptyContinue, "continue`n", $utf8)
-            Assert-True ($emptyCreator.WaitForExit(10000)) 'usage creator terminates after an empty replacement'
+            Wait-ForTestProcess $emptyCreator 'usage creator terminates after an empty replacement' 30000
             Assert-True ($emptyCreator.ExitCode -ne 0) 'usage creator rejects an empty replacement directory'
         } finally {
             Remove-Item Env:GICC_TEST_MODE -ErrorAction SilentlyContinue
@@ -2824,13 +3221,12 @@ process.stdout.write(JSON.stringify({
         $oldCreator = $null
         try {
             $oldCreator = Start-Process -FilePath $shellPath -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $quotedUsageHelper, '-RefreshCache') -PassThru
-            for ($attempt = 0; $attempt -lt 100 -and -not (Test-Path -LiteralPath $oldReady -PathType Leaf); $attempt++) { Start-Sleep -Milliseconds 20 }
-            Assert-True (Test-Path -LiteralPath $oldReady -PathType Leaf) 'new usage creator pauses after mkdir for mixed-version replacement test'
+            Wait-ForTestPath $oldReady 'new usage creator pauses after mkdir for mixed-version replacement test'
             Remove-Item -LiteralPath $usageRefreshLock -Recurse -Force
             [IO.Directory]::CreateDirectory($usageRefreshLock) | Out-Null
             [IO.File]::WriteAllText((Join-Path $usageRefreshLock 'owner-pid'), "$legacyLiveRecord`n", $utf8)
             [IO.File]::WriteAllText($oldContinue, "continue`n", $utf8)
-            Assert-True ($oldCreator.WaitForExit(10000)) 'mixed-version usage creator terminates after replacement'
+            Wait-ForTestProcess $oldCreator 'mixed-version usage creator terminates after replacement' 30000
             Assert-True ($oldCreator.ExitCode -ne 0) 'mixed-version usage creator does not enter over legacy owner'
         } finally {
             Remove-Item Env:GICC_TEST_MODE -ErrorAction SilentlyContinue
@@ -3005,9 +3401,7 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
             $env:ANTHROPIC_FOUNDRY_RESOURCE = 'private-foundry-resource'
             $env:ANTHROPIC_FOUNDRY_API_KEY = 'private-foundry-secret'
             '{"session_id":"private-refresh","model":{"id":"gpt-5.6-sol"},"context_window":{"used_percentage":5}}' | & (Join-Path $root 'statusline.ps1') | Out-Null
-            for ($attempt = 0; $attempt -lt 100 -and -not (Test-Path -LiteralPath $statusRefreshLog -PathType Leaf); $attempt++) {
-                Start-Sleep -Milliseconds 20
-            }
+            Wait-ForTestPath $statusRefreshLog 'status refresh helper records its scrubbed environment'
             $statusRefreshLines = @([IO.File]::ReadAllLines($statusRefreshLog))
             Assert-True (($statusRefreshLines -join '|') -eq 'MANTLE=|VERTEX_PROJECT=|FOUNDRY_RESOURCE=|FOUNDRY_API_KEY=') 'status refresh helper receives no private cloud-provider environment'
         } finally {
@@ -3098,11 +3492,16 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     $env:GICC_CONFIG_DIR = Join-Path $installHome '.config\gpt-in-claude-code'
     $env:GICC_BIN_DIR = Join-Path $installHome '.local\bin'
     $env:GICC_PROXY_TOKEN = 'installer-test-token'
+    $env:GICC_CLAUDEX_SHIM = 'force'
     $env:GICC_SKIP_DEPENDENCY_INSTALL = '1'
     $env:GICC_SKIP_SERVICE_START = '1'
     & (Join-Path $root 'install.ps1') | Out-Null
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'gicc.cmd') -PathType Leaf) 'cmd launcher installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'gicc.ps1') -PathType Leaf) 'PowerShell launcher installed'
+    Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd') -PathType Leaf) 'claudex CMD compatibility shim installed'
+    Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -PathType Leaf) 'claudex PowerShell compatibility shim installed'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw).Contains('GICC compatibility shim for gpt-in-claude-code')) 'installed claudex shim carries the managed marker'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $true) 'install receipt records the managed claudex shim'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'statusline.ps1') -PathType Leaf) 'statusline installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'usage-limit.ps1') -PathType Leaf) 'usage helper installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'codex-session.ps1') -PathType Leaf) 'Codex session helper installed'
@@ -3111,6 +3510,50 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -PathType Leaf) 'install receipt written'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md') -PathType Leaf) 'usage skill installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -PathType Leaf) 'skill bridge installed'
+    Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -PathType Leaf) 'session runtime installed'
+
+    $pathClaudex = Join-Path $fakeBin 'claudex.cmd'
+    $pathClaudexText = "@echo off`r`necho external-path-claudex`r`n"
+    [IO.File]::WriteAllText($pathClaudex, $pathClaudexText, $utf8)
+    $env:GICC_CLAUDEX_SHIM = 'auto'
+    & (Join-Path $root 'install.ps1') | Out-Null
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw).Contains('GICC compatibility shim for gpt-in-claude-code')) 'auto reinstall retains ownership of its marked shim when another claudex is on PATH'
+    Assert-True ((Get-Content -LiteralPath $pathClaudex -Raw) -ceq $pathClaudexText) 'auto reinstall does not replace another claudex found on PATH'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $true) 'auto reinstall preserves managed shim ownership in the receipt'
+    Remove-Item -LiteralPath $pathClaudex -Force
+
+    $externalClaudexPs = "# caller owned claudex`n[Console]::Write('external-claudex')`n"
+    $externalClaudexCmd = "@echo off`r`necho external-claudex`r`n"
+    [IO.File]::WriteAllText((Join-Path $env:GICC_BIN_DIR 'claudex.ps1'), $externalClaudexPs, $utf8)
+    [IO.File]::WriteAllText((Join-Path $env:GICC_BIN_DIR 'claudex.cmd'), $externalClaudexCmd, $utf8)
+    $env:GICC_CLAUDEX_SHIM = 'auto'
+    $previousConsoleError = [Console]::Error
+    $collisionConsoleError = New-Object IO.StringWriter
+    [Console]::SetError($collisionConsoleError)
+    try { & (Join-Path $root 'install.ps1') | Out-Null }
+    finally {
+        [Console]::SetError($previousConsoleError)
+        $collisionOutput = $collisionConsoleError.ToString()
+        $collisionConsoleError.Dispose()
+    }
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw) -ceq $externalClaudexPs) 'auto shim mode preserves a caller owned PowerShell command'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd') -Raw) -ceq $externalClaudexCmd) 'auto shim mode preserves a caller owned CMD command'
+    Assert-True ($collisionOutput.Contains('existing non-GICC claudex command detected')) 'shim collision reports a safe fallback'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $false) 'collision receipt does not claim ownership of caller files'
+    $env:GICC_CLAUDEX_SHIM = 'off'
+    & (Join-Path $root 'install.ps1') | Out-Null
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw) -ceq $externalClaudexPs) 'off mode preserves a caller owned claudex command'
+    $env:GICC_CLAUDEX_SHIM = 'force'
+    & (Join-Path $root 'install.ps1') | Out-Null
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw).Contains('GICC compatibility shim for gpt-in-claude-code')) 'force mode installs the reviewed compatibility shim'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $true) 'force mode restores managed shim ownership'
+    $env:GICC_CLAUDEX_SHIM = 'off'
+    & (Join-Path $root 'install.ps1') | Out-Null
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1'))) 'off mode removes the managed PowerShell shim'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd'))) 'off mode removes the managed CMD shim'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $false) 'off mode clears managed shim ownership in the receipt'
+    $env:GICC_CLAUDEX_SHIM = 'force'
+    & (Join-Path $root 'install.ps1') | Out-Null
     $installedUsageSkill = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md') -Raw
     Assert-True ($installedUsageSkill.Contains('shell: powershell')) 'Windows usage skill selects PowerShell'
     Assert-True ($installedUsageSkill.Contains('allowed-tools: PowerShell(')) 'Windows usage skill grants only PowerShell helper invocation'
@@ -3211,9 +3654,12 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
         (Join-Path $env:GICC_CONFIG_DIR 'codex-session.ps1'),
         (Join-Path $env:GICC_CONFIG_DIR 'preload.cjs'),
         (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs'),
+        (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs'),
         (Join-Path $env:GICC_CONFIG_DIR 'self-update.ps1'),
         (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md'),
-        (Join-Path $env:GICC_CONFIG_DIR 'install.json')
+        (Join-Path $env:GICC_CONFIG_DIR 'install.json'),
+        (Join-Path $env:GICC_BIN_DIR 'claudex.ps1'),
+        (Join-Path $env:GICC_BIN_DIR 'claudex.cmd')
     )
     $crashEntries = @()
     for ($crashIndex = 0; $crashIndex -lt $crashTargets.Count; $crashIndex++) {
@@ -3226,7 +3672,10 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     [IO.File]::WriteAllText((Join-Path $crashTransaction 'manifest.json'), (($crashEntries | ConvertTo-Json -Depth 5) + "`n"), $utf8)
     [IO.File]::WriteAllText((Join-Path $crashTransaction 'state'), "committing`n", $utf8)
     [IO.File]::WriteAllText((Join-Path $env:GICC_CONFIG_DIR 'env'), "GICC_PROXY_TOKEN=corrupted-crash-token`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $env:GICC_BIN_DIR 'claudex.ps1'), "# interrupted caller file`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $env:GICC_BIN_DIR 'claudex.cmd'), "@rem interrupted caller file`r`n", $utf8)
     Remove-Item Env:GICC_PROXY_TOKEN
+    $env:GICC_CLAUDEX_SHIM = 'auto'
     $previousConsoleOut = [Console]::Out
     $recoveryConsoleOut = New-Object IO.StringWriter
     [Console]::SetOut($recoveryConsoleOut)
@@ -3240,9 +3689,12 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     Assert-True ($recoveryOutput.Contains('Recovered the previous interrupted GICC installation')) 'Windows installer recovers a durable interrupted transaction'
     $recoveredTokenLine = [IO.File]::ReadAllLines((Join-Path $env:GICC_CONFIG_DIR 'env')) | Where-Object { $_.StartsWith('GICC_PROXY_TOKEN=') } | Select-Object -First 1
     Assert-True ($recoveredTokenLine.Substring('GICC_PROXY_TOKEN='.Length) -ceq $specialInstallerToken) 'Windows interrupted-transaction recovery restores env before reinstall'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw).Contains('GICC compatibility shim for gpt-in-claude-code')) 'Windows interrupted recovery restores shim ownership before auto mode decides'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $true) 'Windows interrupted recovery keeps the restored shim managed'
     Assert-True (-not (Test-Path -LiteralPath $crashTransaction)) 'Windows interrupted transaction is removed after recovery'
     }
     $env:GICC_PROXY_TOKEN = $specialInstallerToken
+    $env:GICC_CLAUDEX_SHIM = 'force'
     $selfUpdateStatus = (& (Join-Path $root 'gicc.ps1') self-update --status | Out-String)
     Assert-True ($selfUpdateStatus.Contains("Installed version: $($packageManifest.version)")) 'self-update status dispatch'
     Assert-True ($selfUpdateStatus.Contains('Install method: git')) 'self-update preserves git source provenance'
@@ -3255,8 +3707,13 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
             $releaseRoot = Join-Path $source "gicc-$Version"
             [IO.Directory]::CreateDirectory($releaseRoot) | Out-Null
             [IO.File]::WriteAllText((Join-Path $releaseRoot 'package.json'), "{`"version`":`"$Version`"}`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $releaseRoot 'claudex.ps1'), "# GICC compatibility shim for gpt-in-claude-code`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $releaseRoot 'claudex.cmd'), "@rem GICC compatibility shim for gpt-in-claude-code`r`n", $utf8)
             if ($Mode -ne 'missing-bridge') {
                 [IO.File]::WriteAllText((Join-Path $releaseRoot 'skill-bridge.cjs'), "'use strict';`n", $utf8)
+            }
+            if ($Mode -ne 'missing-runtime') {
+                [IO.File]::WriteAllText((Join-Path $releaseRoot 'gicc-runtime.mjs'), "import 'node:fs';`n", $utf8)
             }
             $installerMode = $Mode
             $installer = @"
@@ -3264,9 +3721,14 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
 `$config = `$env:GICC_CONFIG_DIR
 [IO.Directory]::CreateDirectory(`$config) | Out-Null
 [IO.File]::WriteAllText((Join-Path `$config 'skill-bridge.cjs'), 'fixture bridge $Version')
-if ('$installerMode' -eq 'rollback') { exit 23 }
+[IO.File]::WriteAllText((Join-Path `$config 'gicc-runtime.mjs'), 'fixture runtime $Version')
+if ('$installerMode' -eq 'rollback') {
+    [IO.File]::WriteAllText((Join-Path `$env:GICC_BIN_DIR 'claudex.ps1'), 'partial fixture claudex')
+    [IO.File]::WriteAllText((Join-Path `$env:GICC_BIN_DIR 'claudex.cmd'), 'partial fixture claudex')
+    exit 23
+}
 [IO.File]::WriteAllText((Join-Path `$config 'node-migration.txt'), "`$(`$env:GICC_SKIP_DEPENDENCY_INSTALL):`$(`$env:GICC_ALLOW_NODE_INSTALL)")
-`$receipt = [ordered]@{ schema = 1; version = '$Version'; method = 'archive'; binDir = `$env:GICC_BIN_DIR; repository = 'DrPei12/gpt-in-claude-code' }
+`$receipt = [ordered]@{ schema = 1; version = '$Version'; method = 'archive'; binDir = `$env:GICC_BIN_DIR; repository = 'DrPei12/gpt-in-claude-code'; claudexShim = `$true }
 [IO.File]::WriteAllText((Join-Path `$config 'install.json'), ((`$receipt | ConvertTo-Json -Compress) + "`n"))
 "@
             [IO.File]::WriteAllText((Join-Path $releaseRoot 'install.ps1'), $installer, $utf8)
@@ -3306,6 +3768,9 @@ if ('$installerMode' -eq 'rollback') { exit 23 }
         $env:GICC_TEST_UPDATE_FIXTURE_DIR = $fixture
         try {
             $originalBridge = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -Raw
+            $originalRuntime = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -Raw
+            $originalClaudexPs = Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw
+            $originalClaudexCmd = Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd') -Raw
 
             New-ArchiveUpdateFixture $fixture '9.9.6' 'success' $true
             $badChecksum = Invoke-ArchiveUpdateFixture $fixture
@@ -3316,10 +3781,20 @@ if ('$installerMode' -eq 'rollback') { exit 23 }
             $missingBridge = Invoke-ArchiveUpdateFixture $fixture
             Assert-True ($missingBridge.ExitCode -eq 1 -and $missingBridge.Output.Contains('does not contain skill-bridge.cjs')) 'Windows archive updater rejects a missing bridge'
 
+            New-ArchiveUpdateFixture $fixture '9.9.71' 'missing-runtime'
+            $missingRuntime = Invoke-ArchiveUpdateFixture $fixture
+            Assert-True ($missingRuntime.ExitCode -eq 1 -and $missingRuntime.Output.Contains('does not contain gicc-runtime.mjs')) 'Windows archive updater rejects a missing session runtime'
+
             New-ArchiveUpdateFixture $fixture '9.9.8' 'rollback'
+            $markerOwnedReceipt = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json
+            $markerOwnedReceipt | Add-Member -NotePropertyName claudexShim -NotePropertyValue $false -Force
+            [IO.File]::WriteAllText((Join-Path $env:GICC_CONFIG_DIR 'install.json'), (($markerOwnedReceipt | ConvertTo-Json -Compress) + "`n"), $utf8)
             $rollback = Invoke-ArchiveUpdateFixture $fixture
             Assert-True ($rollback.ExitCode -eq 1 -and $rollback.Output.Contains('restored the previous managed installation')) 'Windows archive updater reports rollback'
             Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -Raw) -eq $originalBridge) 'Windows rollback restores the prior bridge'
+            Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -Raw) -eq $originalRuntime) 'Windows rollback restores the prior session runtime'
+            Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw) -ceq $originalClaudexPs) 'Windows rollback restores a marked shim even when a legacy receipt lost ownership'
+            Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd') -Raw) -ceq $originalClaudexCmd) 'Windows rollback restores both files in a marked shim pair'
 
             New-ArchiveUpdateFixture $fixture '9.9.9' 'success'
             $success = Invoke-ArchiveUpdateFixture $fixture
@@ -3371,6 +3846,9 @@ exit /b %ERRORLEVEL%
             if ($null -eq $oldFixtureDirectory) { Remove-Item Env:GICC_TEST_UPDATE_FIXTURE_DIR -ErrorAction SilentlyContinue } else { $env:GICC_TEST_UPDATE_FIXTURE_DIR = $oldFixtureDirectory }
         }
     }
+
+    & node (Join-Path $root 'tests\runtime-transfer.test.mjs')
+    Assert-True ($LASTEXITCODE -eq 0) 'native session transfer checks'
 
     & node (Join-Path $root 'scripts\check-docs.mjs')
     Assert-True ($LASTEXITCODE -eq 0) 'community and documentation checks'

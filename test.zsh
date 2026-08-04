@@ -82,6 +82,7 @@ if [[ "${1:-}" == "--version" ]]; then
   exit
 fi
 if [[ "${1:-}" == "--help" ]]; then
+  [[ -z "${FAKE_CLAUDE_HELP_LOG:-}" ]] || printf '%s\n' help >> "$FAKE_CLAUDE_HELP_LOG"
   if [[ "${FAKE_CLAUDE_HELP_NO_MODEL:-0}" == 1 ]]; then
     printf '%s\n' '--effort --settings'
   elif [[ "${FAKE_CLAUDE_HELP_PROSE_ONLY:-0}" == 1 ]]; then
@@ -93,6 +94,7 @@ if [[ "${1:-}" == "--help" ]]; then
   exit
 fi
 if [[ "${1:-}" == "auto-mode" && "${2:-}" == "defaults" ]]; then
+  [[ -z "${FAKE_CLAUDE_AUTO_DEFAULTS_LOG:-}" ]] || printf '%s\n' defaults >> "$FAKE_CLAUDE_AUTO_DEFAULTS_LOG"
   [[ "${FAKE_AUTO_MODE_DEFAULTS_FAIL:-0}" != 1 ]] || exit 1
   if [[ "${FAKE_AUTO_MODE_DEFAULT_VERSION:-1}" == 2 ]]; then
     printf '%s\n' '{"allow":["Updated default allow rule"],"environment":["Updated default environment rule"],"soft_deny":["Updated soft deny"],"hard_deny":["Data Exfiltration: updated hard deny"]}'
@@ -339,9 +341,51 @@ chmod +x "$tmp/bin/"*
 
 run_wrapper() {
   HOME="$tmp/home" PATH="$tmp/bin:$PATH" GICC_CURL_BIN="$tmp/bin/curl" GICC_SKIP_AUTO_UPDATE=1 \
-    GICC_SKIP_PROXY_WATCHER=1 \
+    GICC_SKIP_PROXY_WATCHER=1 GICC_CAPABILITY_CACHE_SECONDS=0 \
     "$root/gicc" "$@"
 }
+
+run_cached_wrapper() {
+  HOME="$tmp/home" PATH="$tmp/bin:$PATH" GICC_CURL_BIN="$tmp/bin/curl" GICC_SKIP_AUTO_UPDATE=1 \
+    GICC_SKIP_PROXY_WATCHER=1 GICC_CAPABILITY_CACHE_SECONDS=86400 \
+    FAKE_CLAUDE_HELP_LOG="$tmp/capability-help.log" \
+    FAKE_CLAUDE_AUTO_DEFAULTS_LOG="$tmp/auto-defaults.log" \
+    "$root/gicc" "$@"
+}
+
+# A normal launch probes each Claude capability surface once, then reuses a
+# private cache until its contents or executable fingerprint changes.
+rm -f "$tmp/capability-help.log" "$tmp/auto-defaults.log" \
+  "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json" \
+  "$tmp/home/.config/gpt-in-claude-code/auto-mode-defaults.json" \
+  "$tmp/home/.config/gpt-in-claude-code/auto-mode-defaults.meta.json"
+run_cached_wrapper --print cache-cold >/dev/null
+run_cached_wrapper --print cache-warm >/dev/null
+[[ "$(wc -l < "$tmp/capability-help.log")" == 1 ]]
+[[ "$(wc -l < "$tmp/auto-defaults.log")" == 1 ]]
+
+printf '%s\n' '{malformed' > "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json"
+run_cached_wrapper --print cache-repair-capabilities >/dev/null
+[[ "$(wc -l < "$tmp/capability-help.log")" == 2 ]]
+[[ "$(wc -l < "$tmp/auto-defaults.log")" == 1 ]]
+
+printf '%s\n' '{malformed' > "$tmp/home/.config/gpt-in-claude-code/auto-mode-defaults.meta.json"
+run_cached_wrapper --print cache-repair-defaults >/dev/null
+[[ "$(wc -l < "$tmp/capability-help.log")" == 2 ]]
+[[ "$(wc -l < "$tmp/auto-defaults.log")" == 2 ]]
+
+sleep 1
+touch "$tmp/bin/claude"
+run_cached_wrapper --print cache-new-claude >/dev/null
+[[ "$(wc -l < "$tmp/capability-help.log")" == 3 ]]
+[[ "$(wc -l < "$tmp/auto-defaults.log")" == 3 ]]
+jq -e '.schema == 1 and (.options | index("--model") != null)' \
+  "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json" >/dev/null
+jq -e '.schema == 1 and (.fingerprint | type == "string")' \
+  "$tmp/home/.config/gpt-in-claude-code/auto-mode-defaults.meta.json" >/dev/null
+if cache_mode=$(stat -c '%a' "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json" 2>/dev/null); then :
+else cache_mode=$(stat -f '%Lp' "$tmp/home/.config/gpt-in-claude-code/claude-capabilities.json"); fi
+[[ "$cache_mode" == 600 ]]
 
 cat > "$tmp/launcher-signal-driver.cjs" <<'EOF'
 const fs = require('node:fs');
@@ -696,7 +740,7 @@ jq -e '[.additionalModelOptionsCache[] | select(.value == "gpt-5.6-sol")] as $so
 [[ "$default_output" == *$'SUBAGENT=\n'* ]]
 [[ "$default_output" == *'ADDITIONAL_CLAUDE_MD=1'* ]]
 [[ "$default_output" == *'INSTRUCTION_BRIDGE=on'* ]]
-[[ "$default_output" == *'CONCURRENCY=1'* ]]
+[[ "$default_output" == *$'CONCURRENCY=\n'* ]]
 [[ "$default_output" == *'RETRIES=4'* ]]
 [[ "$default_output" == *'OUTPUT_TOKENS=128000'* ]]
 [[ "$default_output" == *'CONTEXT=272000'* ]]
@@ -715,9 +759,12 @@ jq -e '[.additionalModelOptionsCache[] | select(.value == "gpt-5.6-sol")] as $so
 [[ "$default_output" == *'--model gpt-5.6-terra'* ]]
 [[ "$default_output" == *'--add-dir '*'/skill-bridge/generations/'* ]]
 [[ "$default_output" == *'--plugin-dir '*'/gicc-skill-references'* ]]
-[[ "$default_output" == *'Do not spawn or delegate to additional agents'* ]]
-[[ "$default_output" == *'Unless you are a teammate in a native Agent Team that the user explicitly requested'* ]]
-[[ "$default_output" == *'keep at most 1 delegated workers active at once across Agent tasks and native Agent Teams'* ]]
+[[ "$default_output" != *'Do not spawn or delegate to additional agents'* ]]
+[[ "$default_output" != *'keep at most 1 delegated'* ]]
+[[ "$default_output" == *'Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation'* ]]
+[[ "$default_output" == *'Do not impose a fixed tool or Agent concurrency limit'* ]]
+[[ "$default_output" == *'Native Dynamic Workflow, Agent delegation, and further subagent delegation are available'* ]]
+[[ "$default_output" == *"use Claude Code's native task ownership semantics"* ]]
 [[ "$default_output" == *'Before every final answer, call TaskList and reconcile every entry'* ]]
 [[ "$default_output" == *'Never leave stale in_progress tasks after their work is done'* ]]
 [[ "$default_output" == *'operate as a Codex coding agent inside Claude Code'* ]]
@@ -730,9 +777,8 @@ jq -e '[.additionalModelOptionsCache[] | select(.value == "gpt-5.6-sol")] as $so
 [[ "$default_output" != *'"gicc-deep"'* ]]
 [[ "$default_output" != *'"gicc-builder"'* ]]
 [[ "$default_output" != *'"gicc-fast"'* ]]
-[[ "$default_output" == *'Sol capacity is reserved for the leader'* ]]
-[[ "$default_output" == *'Create a native Agent Team only when the user explicitly requests one'* ]]
-[[ "$default_output" == *'outside an explicitly requested native Agent Team'* ]]
+[[ "$default_output" != *'Sol capacity is reserved for the leader'* ]]
+[[ "$default_output" != *'Create a native Agent Team only when the user explicitly requests one'* ]]
 [[ "$default_output" != *'"model":"gpt-5.6-sol"'* ]]
 
 managed_provider_output=$(CLAUDE_CODE_USE_BEDROCK=1 CLAUDE_CODE_USE_VERTEX=1 CLAUDE_CODE_USE_FOUNDRY=1 \
@@ -1487,12 +1533,15 @@ prefixed_maintenance=$(GICC_NODE_BIN=relative/node run_wrapper --verbose mcp lis
 
 passthrough_output=$(run_wrapper --continue --resume session-123 --fork-session --from-pr 42 \
   --worktree audit-tree --tmux --ide --remote-control --plugin-dir /tmp/plugin \
-  --mcp-config /tmp/mcp.json --strict-mcp-config --output-format json \
+  --mcp-config /tmp/mcp.json --strict-mcp-config \
+  --settings "$tmp/home/.config/gpt-in-claude-code/settings.json" \
+  --system-prompt system-text --append-system-prompt append-text --output-format json \
   --input-format stream-json --json-schema '{}' --session-id 00000000-0000-4000-8000-000000000000 \
   --debug chrome --verbose --brief --bg --chrome --no-chrome test-prompt)
 for expected_argument in --continue '--resume session-123' --fork-session '--from-pr 42' \
   '--worktree audit-tree' --tmux --ide --remote-control '--plugin-dir /tmp/plugin' \
-  '--mcp-config /tmp/mcp.json' --strict-mcp-config '--output-format json' \
+  '--mcp-config /tmp/mcp.json' --strict-mcp-config --settings '--system-prompt system-text' \
+  '--append-system-prompt append-text' '--output-format json' \
   '--input-format stream-json' '--json-schema {}' --session-id '--debug chrome' \
   --verbose --brief --bg --chrome --no-chrome; do
   [[ "$passthrough_output" == *"$expected_argument"* ]]
@@ -1580,8 +1629,9 @@ doctor_output=$(run_wrapper --doctor)
 [[ "$doctor_output" == *'Auto mode provider: Codex/OpenAI through the authenticated loopback bridge'* ]]
 [[ "$doctor_output" == *'Delegated models: native routing for each agent (Sol is reserved for the leader)'* ]]
 [[ "$doctor_output" == *'Managed agents: Terra (high), Luna (medium)'* ]]
-[[ "$doctor_output" == *'Agent concurrency: 1'* ]]
-[[ "$doctor_output" == *'Task lifecycle: owned by Sol with final response reconciliation'* ]]
+[[ "$doctor_output" == *'Tool concurrency: native Claude Code scheduling (no GICC limit)'* ]]
+[[ "$doctor_output" == *'Agent concurrency: model-directed native scheduling (no GICC limit)'* ]]
+[[ "$doctor_output" == *'Task lifecycle: native Claude Code ownership with final reconciliation'* ]]
 [[ "$doctor_output" == *'API retries: 4'* ]]
 [[ "$doctor_output" == *'Claude output budget: 128000 tokens (reasoning continuation enabled)'* ]]
 [[ "$doctor_output" == *'Context window: 272000 tokens'* ]]
@@ -1598,11 +1648,39 @@ doctor_output=$(run_wrapper --doctor)
 [[ "$doctor_output" == *'gpt-5.6-terra: advertised'* ]]
 [[ "$doctor_output" != *'extra version detail'* ]]
 
+doctor_json=$(run_wrapper --doctor --json)
+printf '%s\n' "$doctor_json" | jq -e '
+  .schema == 1
+  and .ok == true
+  and .components.claudeCode.status == "ready"
+  and .components.claudeCode.version == "2.1.210"
+  and .components.claudeCode.capabilityCache == "disabled"
+  and .components.claudeCode.detectedOptions == 8
+  and .components.proxy.status == "healthy"
+  and .components.codexAuth.status == "ready"
+  and ([.models[] | select(.advertised == true)] | length) == 3
+  and .configuration.maxOutputTokens == 128000
+  and .configuration.toolScheduling == "native"
+  and .configuration.agentScheduling == "model-directed"
+  and .configuration.capabilityCacheSeconds == 0
+  and .configuration.autoModeDefaultsCache == "disabled"
+  and .capabilities.dynamicWorkflow == true
+  and .capabilities.ultrareview == true
+  and .capabilities.nestedDelegation == true
+  and .capabilities.agentTeams == true
+' >/dev/null
+[[ "$doctor_json" != *'secret-access-token'* ]]
+[[ "$doctor_json" != *'private@example.com'* ]]
+[[ "$doctor_json" != *'test-token'* ]]
+
 cp "$tmp/home/.config/gpt-in-claude-code/settings.json" "$tmp/settings-before-unknown.json"
 jq '.model = "gpt-unrecognized"' "$tmp/settings-before-unknown.json" > "$tmp/home/.config/gpt-in-claude-code/settings.json"
 unknown_doctor=$(run_wrapper --doctor)
 [[ "$unknown_doctor" == *'Saved model: gpt-unrecognized (gpt-unrecognized)'* ]]
 [[ "$unknown_doctor" == *'Header model name: gpt-unrecognized'* ]]
+unknown_doctor_json=$(run_wrapper --doctor --json)
+printf '%s\n' "$unknown_doctor_json" | jq -e '.configuration.savedModel == null' >/dev/null
+[[ "$unknown_doctor_json" != *'gpt-unrecognized'* ]]
 mv "$tmp/settings-before-unknown.json" "$tmp/home/.config/gpt-in-claude-code/settings.json"
 
 mv "$tmp/bin/claude" "$tmp/bin/claude.off"
@@ -1936,9 +2014,11 @@ crash_targets=(
   "$install_home/.config/gpt-in-claude-code/codex-session"
   "$install_home/.config/gpt-in-claude-code/preload.cjs"
   "$install_home/.config/gpt-in-claude-code/skill-bridge.cjs"
+  "$install_home/.config/gpt-in-claude-code/gicc-runtime.mjs"
   "$install_home/.config/gpt-in-claude-code/self-update"
   "$install_home/.config/gpt-in-claude-code/skills/usage-limit/SKILL.md"
   "$install_home/.config/gpt-in-claude-code/install.json"
+  "$install_home/.local/bin/claudex"
 )
 : > "$crash_transaction/manifest"
 for crash_index in "${!crash_targets[@]}"; do
@@ -2600,6 +2680,7 @@ HOME="$update_home" PATH="$tmp/bin:$PATH" GICC_CURL_BIN="$tmp/bin/curl" GICC_SKI
 "$root/tests/auth-usage-regressions.sh"
 "$root/tests/self-update-regressions.sh"
 bash "$root/tests/installer-regressions.sh"
+node "$root/tests/runtime-transfer.test.mjs"
 node "$root/scripts/check-docs.mjs"
 
 printf '%s\n' 'all GICC tests passed'

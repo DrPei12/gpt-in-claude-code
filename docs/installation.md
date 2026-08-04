@@ -110,7 +110,8 @@ The installer:
 4. downloads the patched GICC reasoning/context bridge and verifies its SHA-256 digest;
 5. generates a random localhost only proxy key;
 6. creates private state in `~/.config/gpt-in-claude-code`;
-7. installs `gicc` into `~/.local/bin`;
+7. installs `gicc` into `~/.local/bin` and adds the optional `claudex` alias
+   when that command name is free;
 8. opens the official Codex browser login when needed in an interactive terminal;
 9. synchronizes the Codex login and runs `gicc --doctor`.
 
@@ -144,15 +145,28 @@ the native PowerShell launcher plus a Command Prompt shim. Git Bash is not
 required. Open a new terminal after the first installation so the updated user
 `PATH` is visible.
 
+On every direct or archive install, `gicc` is the canonical command. The
+installer adds `claudex` as a forwarding alias only when no unrelated command
+or target file already owns that name. A collision is reported and left
+unchanged. Set `GICC_CLAUDEX_SHIM=off` to disable the alias. Use
+`GICC_CLAUDEX_SHIM=force` only after reviewing the existing command and
+intentionally choosing to replace it. Package manager installations do not add
+the alias automatically because the package manager owns public command names.
+
 ## Verify the installation
 
 Run:
 
 ```text
 gicc --auth-status
+gicc setup status
 gicc --doctor
 gicc --usage-limit
 ```
+
+`setup status` checks the install receipt, upstream CLIs, standard Codex login
+file, and managed runtime files. Add `--json` when another tool needs a stable
+result contract.
 
 `--doctor` must report a healthy loopback proxy and advertise Sol, Terra, and
 Luna. If the account does not provide one of those models, GICC exits with

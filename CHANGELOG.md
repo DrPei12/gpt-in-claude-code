@@ -4,6 +4,49 @@ All notable changes to this independent distribution are documented here.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-04
+
+### Added
+
+- `gicc session list`, `status`, `doctor`, and `resume` provide one management
+  surface over Claude Code's native isolated transcripts.
+- `gicc context status` reports checkpoint health, while scoped
+  `gicc context repair` quarantines invalid active state and restores a valid
+  previous checkpoint without editing raw history.
+- Direct and archive installers can add a collision safe `claudex`
+  compatibility alias that forwards to the canonical `gicc` launcher without
+  creating separate configuration or session state.
+- `gicc version`, `gicc setup status`, and `gicc --doctor --json` provide
+  stable machine readable installation and live health contracts.
+- `gicc support bundle` writes approved configuration metadata and aggregate
+  runtime health counts for support requests.
+- A checked JSON compatibility manifest keeps harness classifications, pass
+  through arguments, and native uncapped workflow ownership synchronized with
+  the public documentation and both launchers.
+- `gicc transfer` validates a selected GICC Claude transcript and uses Codex's
+  native external agent importer to create a persistent `codex resume` thread
+  without starting a model turn or modifying the source transcript.
+
+### Changed
+
+- Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation,
+  and native Agent Teams now use Claude Code's native scheduling, directed by
+  the model.
+  GICC no longer sets fixed Tool or Agent concurrency limits.
+- Install receipts record optional alias ownership so reinstall and archive
+  rollback touch only GICC managed command files.
+- Normal launches cache validated Claude option and auto mode default probes by
+  resolved executable identity. Expiry, corruption, executable changes, and
+  doctor checks refresh the data automatically.
+
+### Security
+
+- Session inspection omits prompt and response content, and scoped context
+  repair leaves checkpoints with unknown session ownership untouched.
+- Support bundles exclude credential content, proxy tokens, account details,
+  prompts, responses, raw logs, raw update errors, local paths, and session IDs.
+  Arbitrary values in otherwise approved configuration fields are discarded.
+
 ## [0.1.2] - 2026-08-01
 
 ### Fixed
@@ -76,7 +119,8 @@ All notable changes to this independent distribution are documented here.
 - Installers verify release and bridge assets before extraction or execution.
 - Normal `claude` and `codex` profiles are not modified.
 
-[Unreleased]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/DrPei12/gpt-in-claude-code/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/DrPei12/gpt-in-claude-code/releases/tag/v0.1.0

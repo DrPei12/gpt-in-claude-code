@@ -18,10 +18,15 @@ User
   |             -> caller owned Claude Code profile with requested model
   |             -> caller owned Anthropic authentication
   |
-  `-- Fableplan route
+  |-- Fableplan route
         native Fable read only planner
              -> validated plan text in private temporary file
              -> isolated managed Terra implementer
+
+  `-- session transfer
+        validated GICC Claude JSONL transcript
+             -> native Codex external-agent importer
+             -> persistent Codex thread (no model turn)
 ```
 
 Each running process belongs to one provider route. Native Claude and managed
@@ -54,13 +59,14 @@ the plan file and workspace after completion or interruption.
 
 | Component | Unix | Windows | Responsibility |
 | --- | --- | --- | --- |
-| Launcher | `gicc` | `gicc.ps1`, `gicc.cmd` | Parse GICC flags, negotiate Claude capabilities, configure the session, and launch Claude Code |
+| Launcher | `gicc`, optional `claudex` alias | `gicc.ps1`, `gicc.cmd`, optional `claudex` alias | Parse GICC flags, negotiate Claude capabilities, configure the session, and launch Claude Code; the alias only forwards to the canonical launcher |
 | Installer | `install.sh` | `install.ps1` | Install dependencies, private config, launchers, and verified compatibility binary |
 | Auth bridge | `codex-session` | `codex-session.ps1` | Validate Codex login and atomically synchronize the minimum credential fields |
 | Usage helper | `usage-limit` | `usage-limit.ps1` | Fetch, sanitize, cache, and display usage limits |
 | Status line | `statusline` | `statusline.ps1` | Render model, effort, stable context, and cached usage status |
 | Terminal preload | `preload.cjs` | shared | Translate Solplan input and replace only the interactive startup billing field without modifying Claude Code or machine output |
 | Skill bridge | `skill-bridge.cjs` | shared | Discover existing Claude and Codex skills, preserve project scope, adapt provider specific policy/model metadata, and build an immutable private overlay |
+| Session runtime | `gicc-runtime.mjs` | shared | Inventory and validate native transcripts, report checkpoint health, perform scoped non destructive checkpoint recovery, and request native one way Codex session imports |
 | Settings template | `settings.json` | shared | Provide isolated default Claude Code settings |
 
 ## Authentication lifecycle
@@ -98,12 +104,34 @@ and uses it only for that same session. Real sub percent usage is shown as
 `<1%`; a new session with no trustworthy data omits the percentage instead of
 showing a false zero.
 
+Claude Code's JSONL transcript remains authoritative for native history and
+resume. GICC's model visible checkpoint is derived state for the Codex bridge,
+not a replacement transcript. The shared session runtime reads transcript
+identity and health without emitting message content. Its repair path never
+edits a transcript: it quarantines an invalid active checkpoint and promotes a
+valid previous checkpoint when one exists. Session scoped repair leaves files
+with unknown ownership untouched.
+
+Session transfer is a separate explicit operation. GICC accepts only a healthy
+UUID named transcript whose canonical path remains inside its isolated session
+store. It starts Codex app server directly, negotiates the JSONL protocol,
+requests `externalAgentConfig/import`, and waits for the completion
+notification. The resulting thread ID is accepted only when Codex records the
+same canonical source path and content digest in its import ledger. No
+`turn/start` request is made, so transfer itself consumes no model turn. The
+source transcript is never edited and no reverse or continuous synchronization
+is implied.
+
 ## Update and compatibility strategy
 
 The installer performs a best effort Claude Code update. The launcher checks
 again on a configurable interval without blocking startup, recovers stale lock
-directories, and avoids racing explicit update commands. At every launch,
-GICC reads `claude --help` and injects optional switches only when supported.
+directories, and avoids racing explicit update commands. GICC parses
+`claude --help` and injects optional switches only when supported. Normal
+launches reuse private validated option and auto mode defaults caches tied to
+the resolved Claude executable and a configurable time window. A changed
+executable, expired or malformed metadata, or `gicc --doctor` causes a live
+refresh. Cache failure never enables an unobserved option.
 Unknown arguments are forwarded exactly.
 
 Before an ordinary GPT backed launch, the shared skill bridge discovers native
@@ -145,6 +173,9 @@ all asset digests and running the full platform matrix.
 - **Fableplan transfer boundary:** only bounded validated plan text moves from
   the native planner to the managed implementer, through a private temporary
   file that is removed at workflow exit.
+- **Session import boundary:** only an explicitly selected healthy transcript
+  inside the isolated GICC session store is handed to the installed Codex
+  import API; prompts are never copied into command arguments or GICC output.
 - **Third party boundary:** Codex, Claude Code, provider APIs, browser
   extensions, and CLIProxyAPI remain separately maintained software and
   services.

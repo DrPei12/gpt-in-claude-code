@@ -38,9 +38,9 @@ interchangeable.
 | Plugins | Claude plugin management and explicit `--plugin-dir` arguments remain Claude interfaces | Validated Codex plugin skill content can be adapted, but plugin hooks, MCP servers, agents, settings, and app runtime are not activated in the default mode | **Pass through** for Claude plugins, **translated** for skill content, and otherwise **not portable** between harnesses; native routes retain each harness's plugin runtime |
 | MCP servers | Claude's native configuration and explicit `--mcp-config` arguments remain authoritative | Codex `[mcp_servers]`, managed MCP policy, and plugin provided MCP configuration are not translated into Claude configuration | **Pass through** on the Claude side and **native** on the Codex route; configurations are **not portable** between them |
 | Hooks | Claude hooks remain part of the Claude runtime; GICC generates one bounded `UserPromptSubmit` adapter for Codex style `$skill` references | Codex hook layers and plugin hooks are not imported into the default mode | **Native** plus a narrow **translated** adapter; other hooks stay **native** to their explicit harness route |
-| Agents and tasks | Claude custom agents and task tools remain authoritative; GICC adds bounded Terra and Luna agents unless the caller supplies `--agents` | Codex custom agent files, thread controls, and native collaboration protocol are not imported into Claude Code | **Translated** managed agents in the default mode; custom agents stay **native** to their harness route |
+| Agents and tasks | Claude custom agents, task tools, Dynamic Workflow, Ultrareview, nested delegation, and Agent Teams remain authoritative; GICC adds Terra and Luna agent profiles unless the caller supplies `--agents` | Codex custom agent files, thread controls, and native collaboration protocol are not imported into Claude Code | **Translated** managed agents in the default mode and **Native** Claude scheduling; the model decides delegation without a fixed GICC Tool or Agent cap |
 | Permissions and sandboxing | Claude permission modes and the sandbox available on the host platform remain authoritative | Codex approval policy, rules, managed requirements, and sandbox configuration are not enforcement inputs to Claude Code | **Native** controls on each explicit harness route; policy semantics are **not portable** between them |
-| Sessions, resume, and worktrees | Claude session IDs, resume, fork, PR, worktree, IDE, and tmux arguments are preserved | Codex thread IDs and resume, fork, archive, cloud, and app server state remain separate | **Pass through** for Claude sessions and **native** on each explicit route; session stores are **not portable** |
+| Sessions, resume, and worktrees | Claude session IDs, resume, fork, PR, worktree, IDE, and tmux arguments are preserved | `gicc transfer` can ask Codex's native importer to create one new persistent thread from one validated GICC transcript | **Pass through** for Claude sessions and **native** on each explicit route; IDs, checkpoints, live state, and reverse synchronization remain **not portable** |
 | Structured and streaming output | Claude Code emits text, JSON, stream JSON, and schema constrained output | Codex JSONL and app server thread/turn/item events are not exposed by the default Claude harness | **Native** output on each explicit route; event protocols are **not portable** |
 | Usage limits | A bundled skill and status helper render sanitized Codex account limits | Data comes from the authenticated Codex usage endpoint or bounded app server fallback | **Translated** |
 | Browser, web search, and apps | `--claude-chrome` uses a normal Claude profile; other Claude flags remain upstream controlled | Codex web search modes, browser behavior, apps, and connectors are not recreated in Claude Code | Claude in Chrome is **first party only**; each native route preserves its own browser, search, and app surfaces, which are **not portable** |
@@ -48,7 +48,7 @@ interchangeable.
 
 ## Harness routes
 
-The route is an execution boundary, not a session converter. Complete
+The route is an execution boundary, not a general session converter. Complete
 harness specific access means executing the feature in its installed native
 harness: `gicc codex ...` for Codex and `gicc claude ...` for the native
 Claude harness. It does not mean that configuration, sessions,
@@ -59,13 +59,15 @@ plugins, policy, tools, or event protocols become portable between products.
 | `gicc [GICC-OPTIONS] [CLAUDE-ARGS]` | Default portable mode: Claude Code UI and tools backed by the Codex model bridge, with the translations documented above. |
 | `gicc codex [CODEX-ARGS]` | Native Codex route: hand off to the installed Codex CLI so Codex configuration, instructions, policy, sandbox, MCP, hooks, plugins, apps, sessions, and output protocols retain their native semantics. |
 | `gicc claude [CLAUDE-ARGS]` | Native Claude route: hand off without Codex provider or GICC session injection. Caller owned Claude provider and profile configuration remain authoritative; managed GICC state is scrubbed when crossing out of a managed session. |
+| `gicc transfer [SESSION_ID]` | Model free one way import: validate one GICC Claude transcript and ask Codex's native external agent importer to create a persistent Codex thread. This does not translate tools, policy, checkpoints, subagent state, or future messages. |
 | `gicc --fable`, `--opus`, `--sonnet`, or `--haiku` | Native Claude model convenience routes: pass the selected alias through `--model` without loading managed GPT state. |
 | `gicc --claude-model MODEL` | Native Claude model route for any alias or full model ID accepted by the installed CLI and account. |
 | `gicc --fableplan "TASK"` | Coordinated route: run a native Fable read only planner, validate its bounded plan text, then start an isolated managed Terra implementer with private read access to that plan. |
 | `gicc --claude-chrome [CLAUDE-ARGS]` | First party Claude convenience route that also requests Claude in Chrome. |
 
-Claude and Codex session identifiers, configuration files, policy decisions,
-plugin runtime state, and event streams are not converted between routes. A
+Apart from the explicit one way transcript import above, Claude and Codex
+session identifiers, configuration files, policy decisions, plugin runtime
+state, and event streams are not converted between routes. A
 feature that is marked not portable remains fully available through its native
 route when the installed CLI, account, platform, and external services support
 it.
@@ -112,7 +114,7 @@ and account state remain separate.
 | Max effort | `--max-effort` maps to native `--effort max` and labels the session `max` | Isolated launcher regression and manual exact output prompt |
 | Ultracode | `--ultracode` enables session only `ultracode`, `workflows`, and xhigh effort | Isolated launcher regression and manual exact output prompt |
 | Auto mode | Terra classifier is pinned through the Codex bridge, explicit named approvals are carried into classification, and Anthropic model IDs are rejected for classifier overrides | Environment, settings schema, and doctor regressions |
-| Managed agents and tasks | `Terra (high)` and `Luna (medium)` expose the actual model and configured reasoning effort; concurrency and no recursion guards limit cooldown storms; Sol reconciles task state | Argument contract regressions |
+| Managed agents and tasks | `Terra (high)` and `Luna (medium)` expose the actual model and configured reasoning effort; the model and Claude Code's native scheduler decide concurrency and further delegation without a fixed GICC Tool or Agent cap; Sol reconciles final task state | Argument and dynamic workflow policy regressions |
 | Claude and Codex skills | Existing personal/project skills, legacy Claude commands, admin skills, and enabled plugin skills are exposed through a non destructive private overlay; compatible files and frontmatter are preserved for Claude Code's native skill runtime, while Codex manual only policy and Claude model family pins are adapted | Shared helper fixtures, launcher arguments, and cross platform installer regressions; upstream skill runtime behavior is not emulated by GICC |
 | Context and compaction | GPT-5.6 Sol catalog accounting at 272000 model visible tokens, proactive compaction near 244800, checkpoint reapplication per session, agent, and model, Anthropic only 1M selector suppression, and session cache suppression of transient false zero values | Launcher, bridge, and status line regressions |
 | Usage limits | Direct web response, cached outage behavior, low quota alert, account selection, and app server recovery | Fake service regressions and manual live app server query |
@@ -121,7 +123,7 @@ and account state remain separate.
 | macOS/Linux install | Bash installer, dependency selection, service startup, backups, and private permissions | Isolated installer regression and hosted OS matrix |
 | Native Windows install | PowerShell tool mode, CMD shim, native installer, backups, and private config | PowerShell isolated suite and hosted Windows runner |
 | Codex authentication | Standard Codex file backed session is synchronized atomically; live account changes invalidate account scoped state; logout removes the bridge | Logged in, refreshed session, switched account, missing file, and logged out regressions |
-| Claude Code updates | Installer checks immediately; launcher checks daily without blocking and negotiates optional flags from current `--help` | Capability and update scheduling regressions |
+| Claude Code updates | Installer checks immediately; launcher checks daily without blocking and negotiates optional flags from current `--help`; normal launches reuse executable scoped validated probe caches | Capability cache, invalidation, repair, and update scheduling regressions |
 | Resume hints | An unambiguous GICC or direct Chrome resume command is appended without cursor movement or row erasure | Concurrent session and narrow terminal safety regressions |
 | Machine output | After the one positioned interactive welcome field replacement, stdout/stderr, JSON, stream JSON, and schema constrained output remain byte preserving | One shot writer restoration, split UTF-8, callback order, and structured output regressions |
 
@@ -211,6 +213,10 @@ classification in this document should be promoted only when both platform
 implementations and the corresponding regression evidence exist. Upstream only
 or account dependent behavior remains labeled pass through, first party only,
 or not portable.
+
+The adjacent [compatibility manifest](compatibility-matrix.json) records the
+same classifications, workflow scheduler ownership, and documented pass through
+arguments for automated drift checks.
 
 The shared Node.js bridge tests run on Node.js 18 and the hosted runners' current
 Node.js version. Hosted platform jobs currently cover GitHub's current macOS,

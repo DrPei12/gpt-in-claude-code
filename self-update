@@ -43,6 +43,7 @@ current=$(jq -r 'if (.version | type) == "string" then .version else empty end' 
 method=$(jq -r 'if (.method | type) == "string" then .method else empty end' "$receipt_file")
 bin_dir=$(jq -r 'if (.binDir | type) == "string" then .binDir else empty end' "$receipt_file")
 receipt_repository=$(jq -r 'if (.repository | type) == "string" then .repository else empty end' "$receipt_file")
+claudex_shim_managed=$(jq -r 'if .claudexShim == true then 1 else 0 end' "$receipt_file")
 
 parse_semver() {
   local value="$1"
@@ -495,12 +496,21 @@ validate_archive() {
 backup_managed_files() {
   local destination="$1" path relative existed
   mkdir -p "$destination"
-  for path in "$bin_dir/gicc" "$config_dir/settings.json" "$config_dir/statusline" \
-    "$config_dir/usage-limit" "$config_dir/codex-session" "$config_dir/preload.cjs" "$config_dir/skill-bridge.cjs" \
+  local -a managed_paths=(
+    "$bin_dir/gicc" "$config_dir/settings.json" "$config_dir/statusline" \
+    "$config_dir/usage-limit" "$config_dir/codex-session" "$config_dir/preload.cjs" "$config_dir/skill-bridge.cjs" "$config_dir/gicc-runtime.mjs" \
     "$config_dir/self-update" "$config_dir/skills/usage-limit/SKILL.md" "$config_dir/env" "$config_dir/cliproxyapi.yaml" \
-    "$config_dir/install.json"; do
-    relative=${path#"$config_dir"/}
-    [[ "$relative" != "$path" ]] || relative="launcher/gicc"
+    "$config_dir/install.json"
+  )
+  if (( claudex_shim_managed )) || [[ ! -e "$bin_dir/claudex" ]] ||
+      { [[ -f "$bin_dir/claudex" && ! -L "$bin_dir/claudex" ]] &&
+        grep -F 'GICC compatibility shim for gpt-in-claude-code' "$bin_dir/claudex" >/dev/null 2>&1; }; then
+    managed_paths+=("$bin_dir/claudex")
+  fi
+  for path in "${managed_paths[@]}"; do
+    if [[ "$path" == "$bin_dir/gicc" ]]; then relative="launcher/gicc"
+    elif [[ "$path" == "$bin_dir/claudex" ]]; then relative="launcher/claudex"
+    else relative=${path#"$config_dir"/}; fi
     existed=0
     [[ -e "$path" ]] && existed=1
     printf '%s\t%s\n' "$existed" "$relative" >> "$destination/.manifest"
@@ -515,6 +525,7 @@ restore_managed_files() {
   [[ -r "$source/.manifest" ]] || return 1
   while IFS=$'\t' read -r existed relative; do
     if [[ "$relative" == launcher/gicc ]]; then target="$bin_dir/gicc"
+    elif [[ "$relative" == launcher/claudex ]]; then target="$bin_dir/claudex"
     else target="$config_dir/$relative"; fi
     if [[ "$existed" == 1 ]]; then
       mkdir -p "$(dirname "$target")"
@@ -541,9 +552,11 @@ apply_archive_update() {
   mkdir -p "$stage"; tar -xzf "$archive" -C "$stage"
   staged_root="$stage/gicc-$latest"
   [[ -x "$staged_root/install.sh" ]] || { rm -rf "$archive" "$sums" "$stage"; fail 'release archive is missing its installer'; }
+  [[ -x "$staged_root/claudex" ]] || { rm -rf "$archive" "$sums" "$stage"; fail 'release archive is missing its claudex compatibility shim'; }
   [[ -r "$staged_root/skill-bridge.cjs" ]] || { rm -rf "$archive" "$sums" "$stage"; fail 'release archive is missing its skill bridge'; }
+  [[ -r "$staged_root/gicc-runtime.mjs" ]] || { rm -rf "$archive" "$sums" "$stage"; fail 'release archive is missing its session runtime'; }
   [[ "$(jq -r '.version // empty' "$staged_root/package.json")" == "$latest" ]] || { rm -rf "$archive" "$sums" "$stage"; fail 'release archive version does not match its tag'; }
-  for shell_entrypoint in bootstrap.sh install.sh gicc codex-session self-update statusline usage-limit; do
+  for shell_entrypoint in bootstrap.sh install.sh gicc claudex codex-session self-update statusline usage-limit; do
     [[ -f "$staged_root/$shell_entrypoint" ]] \
       && bash -n "$staged_root/$shell_entrypoint" \
       || { rm -rf "$archive" "$sums" "$stage"; fail "release shell entrypoint failed validation: $shell_entrypoint"; }
@@ -551,10 +564,15 @@ apply_archive_update() {
   [[ -f "$staged_root/install.zsh" ]] && sh -n "$staged_root/install.zsh" \
     || { rm -rf "$archive" "$sums" "$stage"; fail 'release shell entrypoint failed validation: install.zsh'; }
   if command -v node >/dev/null 2>&1 && \
-      node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(Number.isInteger(major) && major >= 18 ? 0 : 1)' >/dev/null 2>&1 && \
-      ! node --check "$staged_root/skill-bridge.cjs" >/dev/null; then
-    rm -rf "$archive" "$sums" "$stage"
-    fail 'release skill bridge failed Node.js syntax validation'
+      node -e 'const major = Number(process.versions.node.split(".")[0]); process.exit(Number.isInteger(major) && major >= 18 ? 0 : 1)' >/dev/null 2>&1; then
+    node --check "$staged_root/skill-bridge.cjs" >/dev/null || {
+      rm -rf "$archive" "$sums" "$stage"
+      fail 'release skill bridge failed Node.js syntax validation'
+    }
+    node --check "$staged_root/gicc-runtime.mjs" >/dev/null || {
+      rm -rf "$archive" "$sums" "$stage"
+      fail 'release session runtime failed Node.js syntax validation'
+    }
   fi
   backup_managed_files "$backup"
   if ! GICC_INSTALL_METHOD=archive GICC_BIN_DIR="$bin_dir" GICC_SKIP_DEPENDENCY_INSTALL=1 \

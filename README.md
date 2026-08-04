@@ -88,14 +88,18 @@ For release downloads, system requirements, updating, and removal, see the [inst
   Terra. Only bounded plan text crosses between the two processes.
 - Concurrent Claude and GPT sessions with separate provider environments and
   no shared credential process.
+- One way, model free transfer of a validated GICC Claude transcript into a
+  persistent Codex thread, using Codex's native `externalAgentConfig/import`
+  session importer.
 - Auto, max effort, and Ultracode modes with explicit and separate behavior.
 - Transparent continuation when Codex consumes one output segment with
   encrypted reasoning before it can produce a visible answer. This fixes the
   repeated 32000, 64000, and 128000 `max_tokens` failures that a larger Claude
   Code environment value alone cannot fix.
-- Conservative defaults of one active tool batch and one delegated Agent. The
-  Agent and dynamic workflow features remain available without the earlier
-  request storm behavior.
+- Dynamic Workflow, Ultrareview, Agent delegation, nested delegation, and
+  native Agent Teams remain available. GICC sets no fixed Tool or Agent
+  concurrency cap; the model chooses useful fanout and Claude Code's native
+  scheduler enforces runtime capacity.
 - Codex aware context accounting and automatic compaction near 244800
   model visible tokens for the GPT-5.6 Sol catalog window.
 - Codex usage limit reporting in the status line and through `/usage-limit`.
@@ -112,6 +116,9 @@ For release downloads, system requirements, updating, and removal, see the [inst
 - Explicit native Codex and clean native Claude routes for harness specific
   features that should not be translated.
 - Claude Code argument pass through, resume command rewriting, task cleanup, bounded retries, and compatibility detection.
+- Validated Claude option and auto mode defaults caches avoid repeated startup
+  probes and rebuild automatically after expiry, corruption, or a Claude Code
+  executable change.
 - A clean full screen terminal experience without exposing launch commands or internal tool traffic unnecessarily.
 - An optional direct Claude profile for the officially supported Claude in Chrome path.
 
@@ -137,8 +144,19 @@ gicc --usage-limit      Refresh and display Codex plan limits
 gicc skills             List Claude and Codex skills available in this project
 gicc --accounts         List locally available Codex usage accounts
 gicc --doctor           Check installation, authentication, and models
+gicc --doctor --json    Print live diagnostics as sanitized JSON
+gicc version --json     Print the GICC version contract as JSON
+gicc setup status --json  Check prerequisites and managed runtime files
+gicc support bundle     Write a sanitized support bundle for review
 gicc --login            Sign in through Codex and synchronize the session
 gicc --logout           Sign out and clear the managed bridge session
+gicc session list       List resumable sessions for the current directory
+gicc session status     Inspect the latest session and its context checkpoints
+gicc session doctor     Validate the latest native transcript and context state
+gicc session resume ID  Resume one validated session through Claude Code
+gicc transfer [ID]      Import a validated GICC session into a resumable Codex thread
+gicc context status     Inspect persisted model context checkpoints
+gicc context repair     Quarantine damaged checkpoints and restore safe backups
 gicc self-update --status  Inspect automatic update state
 gicc self-update --apply   Apply the latest stable release now
 gicc codex ...             Use the native Codex harness
@@ -147,6 +165,12 @@ gicc --remote-control      Use Claude Remote Control with the direct Anthropic p
 gicc ultrareview ...       Use Claude Ultrareview with the direct Anthropic profile
 gicc --claude-chrome    Use the direct Claude profile with Chrome support
 ```
+
+Direct and archive installs also provide `claudex` when that command name is
+free. It is only a compatibility alias for `gicc`: both commands use the same
+configuration, sessions, arguments, and update channel. `gicc` remains the
+canonical command. The installer never replaces an unrelated existing
+`claudex` command automatically.
 
 Inside GICC, `/model solplan` selects Solplan and `/usage-limit` prints the detailed quota report. Existing Claude and Codex skills can be referenced with `/skill-name` or `$skill-name`; see the [skills guide](docs/skills.md) for discovery and collision behavior. Unknown options and supported Claude Code subcommands are passed through unchanged. See the [usage guide](docs/usage.md) for the complete command reference.
 

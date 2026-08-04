@@ -8,6 +8,8 @@
 *.mjs text eol=lf
 *.patch text eol=lf -whitespace
 gicc text eol=lf
+claudex text eol=lf
 codex-session text eol=lf
+self-update text eol=lf
 statusline text eol=lf
 usage-limit text eol=lf

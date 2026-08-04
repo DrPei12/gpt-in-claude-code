@@ -18,8 +18,6 @@ key.
 | `GICC_PERMISSION_MODE` | `auto` | `manual`, `auto`, `acceptEdits`, `dontAsk`, or `plan` |
 | `GICC_AUTO_MODE_MODEL` | `gpt-5.6-terra` | Auto mode classifier model; restricted to managed Codex GPT models |
 | `GICC_BACKGROUND_MODEL` | `gpt-5.6-luna` | Background classifier model |
-| `GICC_MAX_TOOL_USE_CONCURRENCY` | `1` | Positive integer; conservative by default to avoid request bursts |
-| `GICC_MAX_AGENT_CONCURRENCY` | `1` | Positive integer; Agent remains available but fan out is bounded |
 | `GICC_MAX_RETRIES` | `4` | Integer from 0 through 15 |
 | `GICC_MAX_OUTPUT_TOKENS` | `128000` | Claude Code visible output budget; the bridge continues reasoning only incomplete Responses internally |
 | `GICC_CONTEXT_WINDOW` | `272000` | GPT-5.6 Sol model visible context window; integer from 100000 through 1000000 |
@@ -35,10 +33,11 @@ key.
 | `GICC_SKILL_EXTRA_DIRS` | unset | OS path list of additional Agent Skills roots |
 | `GICC_CODEX_ADMIN_SKILLS_DIR` | platform admin root | Override Codex's admin skill directory |
 | `GICC_NODE_BIN` | managed automatically | Private verified Node.js runtime path on legacy Linux distributions |
+| `GICC_CAPABILITY_CACHE_SECONDS` | `86400` | Reuse validated Claude option and auto mode default probes for 0 through 604800 seconds; `0` disables reuse |
 
-The concurrency values are GICC safeguards, not promises that an upstream
-account will always accept that many simultaneous requests. Lower them when an
-account or provider has tighter capacity.
+GICC does not set a fixed Tool or Agent concurrency limit. The model chooses
+useful delegation and Claude Code's scheduler enforces the runtime capacity.
+Upstream account and provider limits can still reduce successful concurrency.
 
 ## Provider and model routing
 
@@ -153,6 +152,7 @@ These are primarily for packaging, CI, and advanced installations:
 | --- | --- |
 | `GICC_BIN_DIR` | Alternate launcher installation directory |
 | `GICC_PROXY_PORT` | Alternate generated loopback port |
+| `GICC_CLAUDEX_SHIM` | `auto` installs the optional alias only when safe; `off` disables it; `force` explicitly replaces the target |
 | `GICC_SKIP_DEPENDENCY_INSTALL=1` | Skip dependency download and installation |
 | `GICC_SKIP_SERVICE_START=1` | Install files without starting or verifying the service |
 
@@ -170,6 +170,7 @@ details and are not a stable public interface.
 | --- | --- |
 | `~/.local/bin/gicc` | Unix launcher |
 | `~/.local/bin/gicc.ps1` and `gicc.cmd` | Windows launchers |
+| `~/.local/bin/claudex` or `claudex.ps1` and `claudex.cmd` | Optional forwarding alias installed only when enabled and collision free |
 | `~/.config/gpt-in-claude-code/env` | Private environment config and generated key |
 | `~/.config/gpt-in-claude-code/settings.json` | Isolated Claude Code settings |
 | `~/.config/gpt-in-claude-code/skill-bridge.cjs` | Cross platform skill discovery and compatibility helper |
@@ -178,6 +179,8 @@ details and are not a stable public interface.
 | `~/.config/gpt-in-claude-code/codex-accounts` | Mode restricted local credential bridge |
 | `~/.config/gpt-in-claude-code/usage-cache` | Sanitized usage values only |
 | `~/.config/gpt-in-claude-code/statusline-cache` | Per session context percentages |
+| `~/.config/gpt-in-claude-code/claude-capabilities.json` | Private validated Claude option cache tied to the resolved executable |
+| `~/.config/gpt-in-claude-code/auto-mode-defaults.json` and `.meta.json` | Private validated upstream auto mode defaults and cache metadata |
 | `~/.config/gpt-in-claude-code/backups` | Private transaction generations containing previous managed files, including env and proxy config, from successful reinstalls |
 
 Run `gicc --doctor` after changing configuration. Invalid values fail fast

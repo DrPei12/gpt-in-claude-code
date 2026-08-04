@@ -6,6 +6,35 @@ readonly version="$(node -p 'require(process.argv[1]).version' "$root/package.js
 temporary=$(mktemp -d "${TMPDIR:-/tmp}/gicc-release-check.XXXXXX")
 trap 'rm -rf "$temporary"' EXIT
 
+zip_listing() {
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -Z1 "$1"
+  else
+    python3 - "$1" <<'PY'
+import sys
+from zipfile import ZipFile
+
+with ZipFile(sys.argv[1]) as archive:
+    print("\n".join(entry.filename for entry in archive.infolist()))
+PY
+  fi
+}
+
+zip_member_mode() {
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -Z -l "$1" "$2" | awk 'NR == 1 {print $1}'
+  else
+    python3 - "$1" "$2" <<'PY'
+import stat
+import sys
+from zipfile import ZipFile
+
+with ZipFile(sys.argv[1]) as archive:
+    print(stat.filemode(archive.getinfo(sys.argv[2]).external_attr >> 16))
+PY
+  fi
+}
+
 # The parent artifact check re-enters a copied checkout whose path contains a
 # quote. Keep that nested probe focused so it verifies this script's version
 # lookup and the builder without recursively running the complete suite.
@@ -61,6 +90,7 @@ extracted="$archive_smoke/gicc-$version"
 if ! HOME="$archive_home" PATH="$archive_bin:$PATH" \
     GICC_BIN_DIR="$archive_install_bin" GICC_CONFIG_DIR="$archive_config" \
     GICC_PROXY_TOKEN=artifact-test-token GICC_INSTALL_METHOD=archive \
+    GICC_CLAUDEX_SHIM=force \
     GICC_SKIP_DEPENDENCY_INSTALL=1 GICC_SKIP_SERVICE_START=1 \
     "$extracted/install.sh" >"$temporary/archive-install.stdout" 2>"$temporary/archive-install.stderr"; then
   printf '%s\n' 'extracted release installer failed; captured output follows' >&2
@@ -71,21 +101,37 @@ fi
 test "$(jq -r '.version // empty' "$archive_config/install.json")" = "$version"
 test "$(jq -r '.method // empty' "$archive_config/install.json")" = archive
 test -f "$archive_config/skill-bridge.cjs"
+test -f "$archive_config/gicc-runtime.mjs"
 node --check "$archive_config/skill-bridge.cjs"
+node --check "$archive_config/gicc-runtime.mjs"
+test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive_config" \
+  "$archive_install_bin/gicc" session list --all --json | jq -r '.schema')" = 1
 test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive_config" \
   "$archive_install_bin/gicc" codex --version 'argument with spaces')" = \
   'artifact-codex|--version|argument with spaces'
 test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive_config" \
   "$archive_install_bin/gicc" claude --version 'argument with spaces')" = \
   'artifact-claude|--version|argument with spaces'
+test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive_config" \
+  "$archive_install_bin/claudex" codex --version 'argument with spaces')" = \
+  'artifact-codex|--version|argument with spaces'
 
 make_fixture() {
   fixture_root=$1
   mkdir -p "$fixture_root"
+  git_command=(git -C "$root")
+  if ! "${git_command[@]}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    if command -v git.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
+      git_command=(git.exe -C "$(wslpath -w "$root")")
+    else
+      printf '%s\n' 'release fixture creation requires Git metadata readable by this environment' >&2
+      exit 1
+    fi
+  fi
   while IFS= read -r -d '' tracked; do
     mkdir -p "$fixture_root/$(dirname "$tracked")"
     cp -p "$root/$tracked" "$fixture_root/$tracked"
-  done < <(git -C "$root" ls-files --cached --others --exclude-standard -z)
+  done < <("${git_command[@]}" ls-files --cached --others --exclude-standard -z)
 
   # Retain compatibility with older checkouts where this dependency predates
   # the untracked-file fixture support above.
@@ -132,7 +178,7 @@ const text = fs.readFileSync(file, 'utf8');
 if (/\r/.test(text)) throw new Error(`${file} contains a non-LF newline`);
 NODE
 done
-for command_file in gicc.cmd gicc-package.cmd; do
+for command_file in gicc.cmd gicc-package.cmd claudex.cmd; do
   node - "$eol_fixture/dist/gicc-$version/$command_file" <<'NODE'
 const fs = require('fs');
 const file = process.argv[2];
@@ -197,12 +243,12 @@ node "$canonical_fixture/scripts/create-release-archives.mjs" "$mode_stage" \
 cmp "$root/dist/gicc-$version.tar.gz" "$temporary/mode-normalized.tar.gz"
 cmp "$root/dist/gicc-$version-windows.zip" "$temporary/mode-normalized-windows.zip"
 executable_release_files=(
-  bootstrap.sh gicc codex-session install.sh install.zsh self-update statusline usage-limit bin/gicc-package.mjs
+  bootstrap.sh gicc claudex codex-session install.sh install.zsh self-update statusline usage-limit bin/gicc-package.mjs
 )
 for executable in "${executable_release_files[@]}"; do
   tar_mode=$(tar -tvzf "$temporary/mode-normalized.tar.gz" "gicc-$version/$executable" | awk '{print $1}')
   [[ "$tar_mode" == -rwxr-xr-x ]]
-  zip_mode=$(unzip -Z -l "$temporary/mode-normalized-windows.zip" "gicc-$version/$executable" | awk 'NR == 1 {print $1}')
+  zip_mode=$(zip_member_mode "$temporary/mode-normalized-windows.zip" "gicc-$version/$executable")
   [[ "$zip_mode" == -rwxr-xr-x ]]
 done
 
@@ -249,7 +295,7 @@ cmp "$temporary/allowlist.tar.gz" "$untracked_fixture/dist/gicc-$version.tar.gz"
 cmp "$temporary/allowlist-windows.zip" "$untracked_fixture/dist/gicc-$version-windows.zip"
 cmp "$temporary/allowlist-SHA256SUMS" "$untracked_fixture/dist/SHA256SUMS"
 tar_listing=$(tar -tzf "$untracked_fixture/dist/gicc-$version.tar.gz")
-zip_listing=$(unzip -Z1 "$untracked_fixture/dist/gicc-$version-windows.zip")
+zip_listing=$(zip_listing "$untracked_fixture/dist/gicc-$version-windows.zip")
 for untracked in "${untracked_files[@]}"; do
   ! grep -F "/$untracked" <<<"$tar_listing" >/dev/null
   ! grep -F "/$untracked" <<<"$zip_listing" >/dev/null

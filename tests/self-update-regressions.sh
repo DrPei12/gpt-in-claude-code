@@ -346,7 +346,7 @@ jq -e '.failureCount >= 1 and .nextAttemptAt > .lastCheckedAt' "$config/update/g
 # Unsafe archive paths are rejected before the installer can run.
 unset FAKE_CURL_FAIL GICC_UPDATE_BACKGROUND
 cat > "$config/install.json" <<EOF
-{"schema":1,"version":"1.3.1","method":"archive","binDir":"$temporary/install-bin","repository":"DrPei12/gpt-in-claude-code"}
+{"schema":1,"version":"1.3.1","method":"archive","binDir":"$temporary/install-bin","repository":"DrPei12/gpt-in-claude-code","claudexShim":false}
 EOF
 cat > "$fixtures/release.json" <<'EOF'
 {"tag_name":"v1.3.2","draft":false,"prerelease":false}
@@ -369,7 +369,7 @@ grep -F 'unsafe paths or file types' "$temporary/unsafe.stderr" >/dev/null
 rm -rf "$temporary/archive-source"
 mkdir -p "$temporary/archive-source/gicc-1.3.2"
 printf '%s\n' '{"version":"1.3.2"}' > "$temporary/archive-source/gicc-1.3.2/package.json"
-for script in install.sh gicc self-update; do
+for script in install.sh gicc claudex self-update; do
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/$script"
   chmod +x "$temporary/archive-source/gicc-1.3.2/$script"
 done
@@ -383,19 +383,33 @@ if "$root/self-update" --apply >"$temporary/missing-bridge.stdout" 2>"$temporary
 fi
 grep -F 'release archive is missing its skill bridge' "$temporary/missing-bridge.stderr" >/dev/null
 
+# A release with the skill bridge but without the session runtime is rejected
+# before the installer can produce a partial upgrade.
+printf '%s\n' "'use strict';" > "$temporary/archive-source/gicc-1.3.2/skill-bridge.cjs"
+tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" gicc-1.3.2
+if command -v sha256sum >/dev/null 2>&1; then digest=$(sha256sum "$fixtures/release.tar.gz" | awk '{print $1}')
+else digest=$(shasum -a 256 "$fixtures/release.tar.gz" | awk '{print $1}'); fi
+printf '%s  %s\n' "$digest" 'gicc-1.3.2.tar.gz' > "$fixtures/SHA256SUMS"
+if "$root/self-update" --apply >"$temporary/missing-runtime.stdout" 2>"$temporary/missing-runtime.stderr"; then
+  printf '%s\n' 'expected release without a session runtime to be rejected' >&2
+  exit 1
+fi
+grep -F 'release archive is missing its session runtime' "$temporary/missing-runtime.stderr" >/dev/null
+
 # Every shipped shell entrypoint is syntax-checked as its own script. Passing
 # additional paths to one `bash -n` invocation only treats them as arguments
 # and previously allowed a broken launcher to be installed.
 rm -rf "$temporary/archive-source"
 mkdir -p "$temporary/archive-source/gicc-1.3.2"
 printf '%s\n' '{"version":"1.3.2"}' > "$temporary/archive-source/gicc-1.3.2/package.json"
-for script in bootstrap.sh install.sh codex-session self-update statusline usage-limit; do
+for script in bootstrap.sh install.sh claudex codex-session self-update statusline usage-limit; do
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/$script"
 done
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/install.zsh"
 printf '%s\n' '#!/usr/bin/env bash' 'if then' > "$temporary/archive-source/gicc-1.3.2/gicc"
 printf '%s\n' "'use strict';" > "$temporary/archive-source/gicc-1.3.2/skill-bridge.cjs"
-chmod +x "$temporary/archive-source/gicc-1.3.2/"{bootstrap.sh,install.sh,install.zsh,gicc,codex-session,self-update,statusline,usage-limit}
+printf '%s\n' "import 'node:fs';" > "$temporary/archive-source/gicc-1.3.2/gicc-runtime.mjs"
+chmod +x "$temporary/archive-source/gicc-1.3.2/"{bootstrap.sh,install.sh,install.zsh,gicc,claudex,codex-session,self-update,statusline,usage-limit}
 tar -czf "$fixtures/release.tar.gz" -C "$temporary/archive-source" gicc-1.3.2
 if command -v sha256sum >/dev/null 2>&1; then digest=$(sha256sum "$fixtures/release.tar.gz" | awk '{print $1}')
 else digest=$(shasum -a 256 "$fixtures/release.tar.gz" | awk '{print $1}'); fi
@@ -411,7 +425,10 @@ grep -F 'release shell entrypoint failed validation: gicc' "$temporary/syntax.st
 rm -rf "$temporary/archive-source"
 mkdir -p "$temporary/archive-source/gicc-1.3.2" "$temporary/install-bin"
 printf '%s\n' old-statusline > "$config/statusline"
-rm -f "$config/self-update" "$config/skill-bridge.cjs"
+printf '%s\n' '# GICC compatibility shim for gpt-in-claude-code' old-claudex > "$temporary/install-bin/claudex"
+chmod +x "$temporary/install-bin/claudex"
+cp -p "$temporary/install-bin/claudex" "$temporary/old-claudex.expected"
+rm -f "$config/self-update" "$config/skill-bridge.cjs" "$config/gicc-runtime.mjs"
 cat > "$temporary/archive-source/gicc-1.3.2/package.json" <<'EOF'
 {"version":"1.3.2"}
 EOF
@@ -421,9 +438,15 @@ set -euo pipefail
 printf '%s\n' partial-statusline > "$GICC_CONFIG_DIR/statusline"
 printf '%s\n' partial-updater > "$GICC_CONFIG_DIR/self-update"
 printf '%s\n' partial-skill-bridge > "$GICC_CONFIG_DIR/skill-bridge.cjs"
+printf '%s\n' partial-session-runtime > "$GICC_CONFIG_DIR/gicc-runtime.mjs"
+printf '%s\n' partial-claudex > "$GICC_BIN_DIR/claudex"
 exit 23
 EOF
 cat > "$temporary/archive-source/gicc-1.3.2/gicc" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat > "$temporary/archive-source/gicc-1.3.2/claudex" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
@@ -438,8 +461,10 @@ printf '%s\n' '#!/bin/sh' 'exit 0' > "$temporary/archive-source/gicc-1.3.2/insta
 cat > "$temporary/archive-source/gicc-1.3.2/skill-bridge.cjs" <<'EOF'
 'use strict';
 EOF
+printf '%s\n' "import 'node:fs';" > "$temporary/archive-source/gicc-1.3.2/gicc-runtime.mjs"
 chmod +x "$temporary/archive-source/gicc-1.3.2/install.sh" \
   "$temporary/archive-source/gicc-1.3.2/gicc" \
+  "$temporary/archive-source/gicc-1.3.2/claudex" \
   "$temporary/archive-source/gicc-1.3.2/self-update" \
   "$temporary/archive-source/gicc-1.3.2/bootstrap.sh" \
   "$temporary/archive-source/gicc-1.3.2/codex-session" \
@@ -456,7 +481,9 @@ if "$root/self-update" --apply >"$temporary/rollback.stdout" 2>"$temporary/rollb
 fi
 grep -F 'restored the previous managed files' "$temporary/rollback.stderr" >/dev/null
 [[ "$(<"$config/statusline")" == old-statusline ]]
+cmp -s "$temporary/old-claudex.expected" "$temporary/install-bin/claudex"
 [[ ! -e "$config/self-update" ]]
 [[ ! -e "$config/skill-bridge.cjs" ]]
+[[ ! -e "$config/gicc-runtime.mjs" ]]
 
 printf '%s\n' 'self-update regressions passed'

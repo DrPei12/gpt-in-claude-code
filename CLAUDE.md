@@ -73,13 +73,14 @@ sessions, and billing contexts never cross that boundary.
 
 | Component | Unix | Windows | Responsibility |
 | --- | --- | --- | --- |
-| Launcher | `gicc` | `gicc.ps1`, `gicc.cmd` | Parse GICC flags, negotiate Claude Code capabilities, configure the session, launch Claude Code |
+| Launcher | `gicc`, optional `claudex` alias | `gicc.ps1`, `gicc.cmd`, optional `claudex` alias | Parse GICC flags, negotiate Claude Code capabilities, configure the session, launch Claude Code; the alias only forwards to the canonical launcher |
 | Installer | `install.sh` | `install.ps1` | Install dependencies, private config, launchers, verified compatibility binary |
 | Auth bridge | `codex-session` | `codex-session.ps1` | Validate Codex login, atomically sync the minimum credential fields |
 | Usage helper | `usage-limit` | `usage-limit.ps1` | Fetch, sanitize, cache, and display Codex usage limits |
 | Status line | `statusline` | `statusline.ps1` | Render model, effort, stable context %, cached usage status |
 | Terminal preload | `preload.cjs` | shared | Translate Solplan input and replace only the positioned interactive welcome billing field before restoring native stdout |
 | Skill bridge | `skill-bridge.cjs` | shared | Snapshot and adapt existing Claude/Codex skills and plugin skills without activating source plugin code |
+| Session and diagnostics runtime | `gicc-runtime.mjs` | shared | Inspect native sessions and context checkpoints, report version and setup state, and create sanitized support bundles |
 | Settings template | `settings.json` | shared | Isolated default Claude Code settings written into the managed config |
 
 Every shared behavior change must touch both the Bash and PowerShell implementation (`gicc`/`gicc.ps1`, `codex-session`/`codex-session.ps1`, etc.): platform drift is treated as a bug unless the underlying OS genuinely lacks the feature, in which case the boundary must be documented, not silently emulated.
@@ -98,7 +99,7 @@ Claude Code can emit zero/missing context data transiently during startup and co
 
 ### Update and compatibility strategy
 
-At every launch, `gicc` reads `claude --help` and only injects flags Claude Code actually supports; unrecognized arguments are passed through unchanged. The installer does a best effort Claude Code update; the launcher re checks on a configurable interval without blocking startup, recovers stale lock directories, and avoids racing an explicit update command. The CLIProxyAPI dependency is pinned by version and SHA-256 per OS/arch pair and verified at install time: never vendored into the repo.
+GICC parses `claude --help` and injects only flags Claude Code actually supports; unrecognized arguments are passed through unchanged. Normal launches reuse a private validated option cache and an upstream auto mode defaults cache tied to the resolved Claude executable and a configurable time window. A changed executable, expired or malformed metadata, or `gicc --doctor` triggers a live refresh. The installer does a best effort Claude Code update; the launcher re checks on a configurable interval without blocking startup, recovers stale lock directories, and avoids racing an explicit update command. The CLIProxyAPI dependency is pinned by version and SHA-256 per OS/arch pair and verified at install time: never vendored into the repo.
 
 ### Trust boundaries
 
@@ -129,7 +130,7 @@ Updating the CLIProxyAPI pin is security sensitive: collect every macOS/Linux/Wi
 
 | Path | Purpose |
 | --- | --- |
-| `gicc`, `gicc.ps1`, `gicc.cmd` | Cross platform launchers |
+| `gicc`, `gicc.ps1`, `gicc.cmd`, `claudex*` | Cross platform launcher and optional compatibility alias |
 | `install.sh`, `install.ps1`, `install.zsh` | Install and compatibility entry points |
 | `codex-session*` | Authentication bridge |
 | `usage-limit*` | Detailed and cached quota reporting |

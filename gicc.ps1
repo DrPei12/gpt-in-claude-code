@@ -591,6 +591,7 @@ function Acquire-OwnedLock([string] $LockDirectory, [int] $Attempts = 100, [int]
         $created = $false
         $ownerPublished = $false
         $generationPublished = $false
+        $publicationFailed = $false
         $ownerTemporary = ''
         $generationTemporary = ''
         $directoryIdentity = ''
@@ -611,11 +612,13 @@ function Acquire-OwnedLock([string] $LockDirectory, [int] $Attempts = 100, [int]
             Invoke-LockTestPause 'AFTER_MKDIR' $LockDirectory
             $directoryReplaced = -not $directoryIdentity -or (Get-LockDirectoryIdentity $LockDirectory) -ne $directoryIdentity
             if ($directoryReplaced) { throw 'lock directory identity changed' }
-            Publish-LockFile $generationTemporary (Join-Path $LockDirectory 'generation')
+            try { Publish-LockFile $generationTemporary (Join-Path $LockDirectory 'generation') }
+            catch { $publicationFailed = $true; throw }
             $generationPublished = $true
             if ((Get-LockDirectoryIdentity $LockDirectory) -ne $directoryIdentity) { throw 'lock directory identity changed' }
             if ((Get-LockGenerationNonce $LockDirectory) -ne $nonce) { throw 'lock generation publication changed' }
-            Publish-LockFile $ownerTemporary $ownerFile
+            try { Publish-LockFile $ownerTemporary $ownerFile }
+            catch { $publicationFailed = $true; throw }
             $ownerPublished = $true
             if ((Get-LockDirectoryIdentity $LockDirectory) -ne $directoryIdentity) { throw 'lock directory identity changed' }
             if ((Get-OwnedLockField $ownerFile 'nonce') -ne $nonce) { throw 'lock ownership publication changed' }
@@ -664,6 +667,11 @@ function Acquire-OwnedLock([string] $LockDirectory, [int] $Attempts = 100, [int]
             }
         }
         Remove-Item -LiteralPath $ownerTemporary, $generationTemporary -Force -ErrorAction SilentlyContinue
+        # Once this process has created and verified a private lock directory,
+        # failure to publish either ownership file is not lock contention.
+        # Retrying the same unsupported or denied filesystem operation can make
+        # one launcher spend many seconds on every independent state lock.
+        if ($publicationFailed) { return '' }
 
         $age = Get-OwnedLockAgeSeconds $LockDirectory
         $observedNonce = Get-OwnedLockField $ownerFile 'nonce'
@@ -905,11 +913,11 @@ function Get-NodeMajorVersion {
     return 0
 }
 
-function Assert-SkillBridgeNode {
+function Assert-SkillBridgeNode([string] $Purpose = 'skill compatibility') {
     $nodeMajor = Get-NodeMajorVersion
     if ($nodeMajor -ge 18) { return }
     $detected = if ($nodeMajor -gt 0) { "found Node.js $nodeMajor" } else { 'Node.js was not found' }
-    Fail "Node.js 18 or newer is required for skill compatibility ($detected); rerun the GICC installer to install or upgrade Node.js."
+    Fail "Node.js 18 or newer is required for $Purpose ($detected); rerun the GICC installer to install or upgrade Node.js."
 }
 
 if (Test-Path -LiteralPath $configFile -PathType Leaf) {
@@ -942,8 +950,6 @@ $model = Env-OrDefault 'GICC_MODEL' 'gpt-5.6-sol'
 $permissionMode = Env-OrDefault 'GICC_PERMISSION_MODE' 'auto'
 $autoModeModel = Env-OrDefault 'GICC_AUTO_MODE_MODEL' 'gpt-5.6-terra'
 $backgroundModel = Env-OrDefault 'GICC_BACKGROUND_MODEL' 'gpt-5.6-luna'
-$toolConcurrency = Env-OrDefault 'GICC_MAX_TOOL_USE_CONCURRENCY' '1'
-$agentConcurrency = Env-OrDefault 'GICC_MAX_AGENT_CONCURRENCY' '1'
 $maxRetries = Env-OrDefault 'GICC_MAX_RETRIES' '4'
 $maxOutputTokens = Env-OrDefault 'GICC_MAX_OUTPUT_TOKENS' '128000'
 $contextWindow = Env-OrDefault 'GICC_CONTEXT_WINDOW' '272000'
@@ -957,6 +963,7 @@ $usageSource = Env-OrDefault 'GICC_USAGE_SOURCE' 'auto'
 $usageAlert = Env-OrDefault 'GICC_USAGE_ALERT_PERCENT' '20'
 $claudeAutoUpdate = Env-OrDefault 'GICC_CLAUDE_AUTO_UPDATE' 'on'
 $claudeUpdateInterval = Env-OrDefault 'GICC_CLAUDE_UPDATE_INTERVAL_SECONDS' '86400'
+$capabilityCacheSeconds = Env-OrDefault 'GICC_CAPABILITY_CACHE_SECONDS' '86400'
 $giccAutoUpdate = Env-OrDefault 'GICC_AUTO_UPDATE' 'on'
 $giccUpdateInterval = Env-OrDefault 'GICC_UPDATE_INTERVAL_SECONDS' '86400'
 $planModePolicy = Env-OrDefault 'GICC_PLAN_MODE_POLICY' 'conservative'
@@ -967,6 +974,11 @@ $instructionBridgeMode = Env-OrDefault 'GICC_INSTRUCTION_BRIDGE' 'on'
 $codexSessionHelper = Env-OrDefault 'GICC_CODEX_SESSION_HELPER' (Join-Path $configDir 'codex-session.ps1')
 $selfUpdateHelper = Env-OrDefault 'GICC_SELF_UPDATE_HELPER' (Join-Path $configDir 'self-update.ps1')
 $skillBridgeHelper = Env-OrDefault 'GICC_SKILL_BRIDGE_HELPER' (Join-Path $configDir 'skill-bridge.cjs')
+$runtimeHelper = Env-OrDefault 'GICC_RUNTIME_HELPER' (Join-Path $configDir 'gicc-runtime.mjs')
+if (-not (Test-Path -LiteralPath $runtimeHelper -PathType Leaf)) {
+    $sourceRuntimeHelper = Join-Path $PSScriptRoot 'gicc-runtime.mjs'
+    if (Test-Path -LiteralPath $sourceRuntimeHelper -PathType Leaf) { $runtimeHelper = $sourceRuntimeHelper }
+}
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq 'self-update') {
     if (-not (Test-Path -LiteralPath $selfUpdateHelper -PathType Leaf)) { Fail 'self-update helper is missing; rerun the installer.' }
@@ -998,7 +1010,7 @@ if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('--login', '--lo
 
 $earlyRuntimeBypass = $false
 $earlyGlobalMaintenanceOptions = @('--help', '-h', '--version', '-v')
-$earlyMaintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'claude', 'codex', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'setup-token', 'skills', 'stop', 'ultrareview', 'update', 'upgrade')
+$earlyMaintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'claude', 'codex', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup', 'setup-token', 'skills', 'stop', 'support', 'transfer', 'ultrareview', 'update', 'upgrade', 'version')
 $earlyPositionalSeen = $false
 for ($earlyIndex = 0; $earlyIndex -lt $ClaudeArguments.Count; $earlyIndex++) {
     $earlyArgument = [string] $ClaudeArguments[$earlyIndex]
@@ -1082,8 +1094,6 @@ function Require-Integer([string] $Name, [string] $Value, [int] $Minimum, [int] 
 }
 
 if (-not $earlyRuntimeBypass) {
-    $toolConcurrencyNumber = Require-Integer 'GICC_MAX_TOOL_USE_CONCURRENCY' $toolConcurrency 1 2147483647
-    $agentConcurrencyNumber = Require-Integer 'GICC_MAX_AGENT_CONCURRENCY' $agentConcurrency 1 2147483647
     $maxRetriesNumber = Require-Integer 'GICC_MAX_RETRIES' $maxRetries 0 15
     $maxOutputTokensNumber = Require-Integer 'GICC_MAX_OUTPUT_TOKENS' $maxOutputTokens 1024 128000
     $contextWindowNumber = Require-Integer 'GICC_CONTEXT_WINDOW' $contextWindow 100000 1000000
@@ -1093,6 +1103,7 @@ if (-not $earlyRuntimeBypass) {
     $usageMaxStaleNumber = Require-Integer 'GICC_USAGE_MAX_STALE_SECONDS' $usageMaxStale $usageRefreshNumber 604800
     $usageAlertNumber = Require-Integer 'GICC_USAGE_ALERT_PERCENT' $usageAlert 0 100
     $claudeUpdateIntervalNumber = Require-Integer 'GICC_CLAUDE_UPDATE_INTERVAL_SECONDS' $claudeUpdateInterval 3600 2592000
+    $capabilityCacheSecondsNumber = Require-Integer 'GICC_CAPABILITY_CACHE_SECONDS' $capabilityCacheSeconds 0 604800
     $giccUpdateIntervalNumber = Require-Integer 'GICC_UPDATE_INTERVAL_SECONDS' $giccUpdateInterval 3600 2592000
     if ($mousePointer -notin @('pointer', 'default', 'off')) { Fail 'GICC_MOUSE_POINTER_SHAPE must be pointer, default, or off.' 2 }
     if ($usageDisplay -notin @('on', 'off')) { Fail 'GICC_USAGE_DISPLAY must be on or off.' 2 }
@@ -1105,10 +1116,10 @@ if (-not $earlyRuntimeBypass) {
     if ($skillDollarReferenceMode -notin @('on', 'off')) { Fail 'GICC_SKILL_DOLLAR_REFERENCES must be on or off.' 2 }
     if ($instructionBridgeMode -notin @('on', 'off')) { Fail 'GICC_INSTRUCTION_BRIDGE must be on or off.' 2 }
 } else {
-    $toolConcurrencyNumber = 1; $agentConcurrencyNumber = 1; $maxRetriesNumber = 4; $maxOutputTokensNumber = 128000
+    $maxRetriesNumber = 4; $maxOutputTokensNumber = 128000
     $contextWindowNumber = 272000; $compactWindowNumber = 244800
     $usageRefreshNumber = 300; $usageTimeoutNumber = 8; $usageMaxStaleNumber = 86400; $usageAlertNumber = 20
-    $claudeUpdateIntervalNumber = 86400; $giccUpdateIntervalNumber = 86400
+    $claudeUpdateIntervalNumber = 86400; $capabilityCacheSecondsNumber = 86400; $giccUpdateIntervalNumber = 86400
     if ($mousePointer -notin @('pointer', 'default', 'off')) { $mousePointer = 'pointer' }
     if ($usageDisplay -notin @('on', 'off')) { $usageDisplay = 'on' }
     if ($usageSource -notin @('auto', 'web', 'app-server')) { $usageSource = 'auto' }
@@ -1121,6 +1132,31 @@ if (-not $earlyRuntimeBypass) {
 }
 
 $env:CLAUDE_CONFIG_DIR = $configDir
+
+if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('session', 'context', 'version', 'setup', 'support', 'transfer')) {
+    Assert-SkillBridgeNode 'GICC runtime management'
+    if (-not (Test-Path -LiteralPath $runtimeHelper -PathType Leaf)) { Fail 'runtime helper is missing; reinstall GICC.' }
+    if ($ClaudeArguments[0] -eq 'session' -and $ClaudeArguments.Count -gt 1 -and $ClaudeArguments[1] -eq 'resume') {
+        if ($ClaudeArguments.Count -ne 3 -or [string]$ClaudeArguments[2] -notmatch '^[0-9a-fA-F-]{36}$') {
+            Fail 'Usage: gicc session resume <session-id>' 2
+        }
+        $resumeSessionId = [string]$ClaudeArguments[2]
+        Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
+            & node $runtimeHelper session status $resumeSessionId --json | Out-Null
+        }
+        if ($script:lastPrivateBoundaryExitCode -ne 0) { Exit-GICC $script:lastPrivateBoundaryExitCode }
+        $powerShellHost = (Get-Process -Id $PID).Path
+        Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
+            & $powerShellHost -NoLogo -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath --resume $resumeSessionId
+        }
+        Exit-GICC $script:lastPrivateBoundaryExitCode
+    } else {
+        Invoke-WithoutPrivateManagedEnvironment -PreserveNames @('GICC_CONFIG_DIR') -Action {
+            & node $runtimeHelper @ClaudeArguments
+        }
+        Exit-GICC $script:lastPrivateBoundaryExitCode
+    }
+}
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq 'skills') {
     if ($ClaudeArguments.Count -ne 1) { Fail 'Usage: gicc skills' 2 }
@@ -1583,11 +1619,30 @@ function Remove-ManagedProxyMetadata($ExpectedRecord) {
 }
 
 function Write-ManagedProxyMetadata([Diagnostics.Process] $Process, [string] $Executable) {
-    $processPath = [IO.Path]::GetFullPath($Process.MainModule.FileName)
+    $processPath = ''
+    $startedUtcTicks = 0L
+    $identityError = $null
+    $identityDeadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        try {
+            $Process.Refresh()
+            if ($Process.HasExited) { throw 'the proxy exited before its identity could be recorded' }
+            $processPath = [IO.Path]::GetFullPath($Process.MainModule.FileName)
+            $startedUtcTicks = $Process.StartTime.ToUniversalTime().Ticks
+            if ($processPath -and $startedUtcTicks -gt 0) { break }
+        } catch {
+            $identityError = $_.Exception
+        }
+        Start-Sleep -Milliseconds 50
+    } while ([DateTime]::UtcNow -lt $identityDeadline)
+    if (-not $processPath -or $startedUtcTicks -le 0) {
+        $identityMessage = if ($identityError) { $identityError.Message } else { 'process identity was unavailable' }
+        throw "could not inspect the started proxy identity: $identityMessage"
+    }
     $record = [ordered]@{
         schema = 1
         pid = $Process.Id
-        startedUtcTicks = $Process.StartTime.ToUniversalTime().Ticks
+        startedUtcTicks = $startedUtcTicks
         executable = $processPath
         launcher = [IO.Path]::GetFullPath($Executable)
         recordedAt = [DateTimeOffset]::UtcNow.ToString('o')
@@ -1597,7 +1652,19 @@ function Write-ManagedProxyMetadata([Diagnostics.Process] $Process, [string] $Ex
     $temporary = "$($script:ManagedProxyMetadataPath).tmp.$PID.$([guid]::NewGuid().ToString('N'))"
     try {
         [IO.File]::WriteAllText($temporary, (($record | ConvertTo-Json -Compress) + "`n"), $utf8)
-        Move-Item -LiteralPath $temporary -Destination $script:ManagedProxyMetadataPath -Force
+        $publicationDeadline = [DateTime]::UtcNow.AddSeconds(2)
+        while ($true) {
+            try {
+                Move-Item -LiteralPath $temporary -Destination $script:ManagedProxyMetadataPath -Force
+                break
+            } catch [IO.IOException] {
+                if ([DateTime]::UtcNow -ge $publicationDeadline) { throw }
+                Start-Sleep -Milliseconds 50
+            } catch [UnauthorizedAccessException] {
+                if ([DateTime]::UtcNow -ge $publicationDeadline) { throw }
+                Start-Sleep -Milliseconds 50
+            }
+        }
     } finally {
         Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
     }
@@ -1836,6 +1903,9 @@ function Ensure-Proxy([string[]] $RequiredModels = @($model)) {
         try {
             $spawnedProxyRecord = Write-ManagedProxyMetadata $spawnedProxy $proxyBinary
         } catch {
+            $metadataFailure = $_.Exception.GetType().FullName + ': ' + $_.Exception.Message
+            Write-ProxyWatcherTestTrace "recovery: managed metadata failed: $metadataFailure"
+            Write-ProxyRecoveryDiagnostic "managed proxy metadata failed: $metadataFailure"
             Stop-NewlySpawnedProxy $spawnedProxy $null 'managed process metadata could not be recorded'
             throw 'the local proxy started, but GICC could not record safe process metadata; the process was stopped.'
         }
@@ -1980,7 +2050,7 @@ function Get-ManagedBackgroundRegistryState {
     }
     try {
         $claude = Resolve-HarnessCommand 'claude'
-        if (-not $claude -or -not $claude.Source) { return 'unknown' }
+        if (-not $claude -or -not $claude.Source) { return 'unavailable' }
         $global:LASTEXITCODE = $null
         $raw = (& $claude.Source agents --json 2>$null | Out-String)
         if (($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) -or -not $raw.TrimStart().StartsWith('[')) { return 'unknown' }
@@ -2003,15 +2073,22 @@ function Invoke-ProxyWatchLoop([int] $ParentProcessId, [string] $ParentIdentity,
     Write-ProxyWatcherTestTrace "watcher entered for parent $ParentProcessId"
     $consecutiveFailures = 0
     $emptyPolls = 0
+    $unknownSince = $null
     while ($true) {
-        if (Test-WatchParentCurrent $ParentProcessId $ParentIdentity) { $emptyPolls = 0 }
+        if (Test-WatchParentCurrent $ParentProcessId $ParentIdentity) { $emptyPolls = 0; $unknownSince = $null }
         elseif ($BackgroundWatch) {
             $registryState = Get-ManagedBackgroundRegistryState
-            if ($registryState -eq 'active') { $emptyPolls = 0 }
+            if ($registryState -eq 'active') { $emptyPolls = 0; $unknownSince = $null }
             elseif ($registryState -eq 'empty') {
+                $unknownSince = $null
                 $emptyPolls++
                 if ($emptyPolls -ge 3) { break }
-            } else { $emptyPolls = 0 }
+            } elseif ($registryState -eq 'unavailable') { break }
+            else {
+                $emptyPolls = 0
+                if ($null -eq $unknownSince) { $unknownSince = [DateTime]::UtcNow }
+                elseif (([DateTime]::UtcNow - $unknownSince).TotalSeconds -ge 300) { break }
+            }
         } else { break }
         Start-Sleep -Seconds 1
         if (Test-ProxyReachable) {
@@ -2069,40 +2146,132 @@ function Resolve-ClaudeCommand {
     $script:claudeInvocation = if ($claudeCommand.CommandType -eq 'Function') { $claudeCommand.Name } else { $claudeCommand.Source }
 }
 
-function Test-ClaudeOption([string] $Option) {
-    foreach ($line in @($script:claudeHelp -split "`r?`n")) {
+function Get-ClaudeOptions([string] $HelpText) {
+    $options = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($line in @($HelpText -split "`r?`n")) {
         $fields = @($line.TrimStart() -split '\s+' | Where-Object { $_ })
         foreach ($field in $fields) {
             $candidate = ([string] $field).TrimEnd(',')
             if (-not $candidate.StartsWith('-')) { break }
             $candidate = ($candidate -split '=', 2)[0]
-            if ($candidate -eq $Option) { return $true }
+            if ($candidate.Length -le 64 -and $candidate -match '^--?[A-Za-z][A-Za-z0-9-]*$' -and
+                -not $options.Contains($candidate)) { $options.Add($candidate) }
         }
     }
-    return $false
+    return @($options | Sort-Object)
 }
 
-function Load-ClaudeCapabilities {
+function Test-ClaudeOption([string] $Option) {
+    return $script:claudeOptions -contains $Option
+}
+
+function Get-ClaudeCommandFingerprint {
+    if (-not $script:claudeCommand -or $script:claudeCommand.CommandType -eq 'Function' -or
+        [string]::IsNullOrWhiteSpace([string] $script:claudeCommand.Source)) { return $null }
+    try {
+        $item = Get-Item -LiteralPath ([string] $script:claudeCommand.Source) -Force
+        if (-not $item.PSIsContainer) {
+            return "$($item.FullName)|$($item.Length):$($item.LastWriteTimeUtc.Ticks)"
+        }
+    } catch { }
+    return $null
+}
+
+function Read-ClaudeCapabilityCache([string] $Fingerprint) {
+    if ($capabilityCacheSecondsNumber -le 0 -or [string]::IsNullOrWhiteSpace($Fingerprint)) { return $null }
+    $cacheFile = Join-Path $configDir 'claude-capabilities.json'
+    if (-not (Test-Path -LiteralPath $cacheFile -PathType Leaf)) { return $null }
+    try {
+        $cacheItem = Get-Item -LiteralPath $cacheFile -Force
+        if (($cacheItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $cacheItem.Length -gt 262144) { return $null }
+        $cache = Get-Content -LiteralPath $cacheFile -Raw | ConvertFrom-Json
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        if ($cache.schema -ne 1 -or [string] $cache.fingerprint -cne $Fingerprint -or
+            $null -eq $cache.PSObject.Properties['capturedAt']) { return $null }
+        $capturedAt = 0L
+        if (-not [long]::TryParse([string] $cache.capturedAt, [ref] $capturedAt) -or
+            $capturedAt -lt $now - $capabilityCacheSecondsNumber -or $capturedAt -gt $now + 300) { return $null }
+        $options = @($cache.options)
+        if ($options.Count -eq 0 -or $options.Count -gt 256) { return $null }
+        foreach ($option in $options) {
+            if (([string] $option).Length -gt 64 -or [string] $option -notmatch '^--?[A-Za-z][A-Za-z0-9-]*$') { return $null }
+        }
+        return @($options | Select-Object -Unique | Sort-Object)
+    } catch { return $null }
+}
+
+function Write-ClaudeCapabilityCache([string] $Fingerprint, [string[]] $Options) {
+    if ($capabilityCacheSecondsNumber -le 0 -or [string]::IsNullOrWhiteSpace($Fingerprint)) { return }
+    $cacheFile = Join-Path $configDir 'claude-capabilities.json'
+    $temporary = $null
+    try {
+        if (Test-Path -LiteralPath $cacheFile) {
+            $cacheItem = Get-Item -LiteralPath $cacheFile -Force
+            if (($cacheItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return }
+        }
+        $temporary = Join-Path $configDir ('.claude-capabilities.' + [guid]::NewGuid().ToString('N') + '.tmp')
+        $payload = [ordered]@{
+            schema = 1
+            capturedAt = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+            fingerprint = $Fingerprint
+            options = @($Options | Select-Object -Unique | Sort-Object)
+        }
+        [IO.File]::WriteAllText($temporary, (($payload | ConvertTo-Json -Depth 5) + "`n"), $utf8)
+        Protect-PrivatePath $temporary $false
+        Move-Item -LiteralPath $temporary -Destination $cacheFile -Force
+        $temporary = $null
+    } catch {
+        if ($temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+function Load-ClaudeCapabilities([bool] $ForceRefresh = $false) {
     Resolve-ClaudeCommand
-    $script:claudeHelp = (Invoke-WithoutPrivateManagedEnvironment -Action {
-        & $script:claudeInvocation --help 2>$null
-    } | Out-String)
-    if ([string]::IsNullOrWhiteSpace($script:claudeHelp)) { Fail 'Claude Code did not return its capability list.' }
+    $script:claudeCapabilityFingerprint = Get-ClaudeCommandFingerprint
+    $script:claudeCapabilityCacheState = 'miss'
+    if (-not $ForceRefresh) {
+        $script:claudeOptions = [string[]] @(Read-ClaudeCapabilityCache $script:claudeCapabilityFingerprint |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string] $_) })
+    } else {
+        $script:claudeOptions = [string[]] @()
+    }
+    if ($script:claudeOptions.Count -gt 0) {
+        $script:claudeCapabilityCacheState = 'hit'
+    } else {
+        $script:claudeHelp = (Invoke-WithoutPrivateManagedEnvironment -Action {
+            & $script:claudeInvocation --help 2>$null
+        } | Out-String)
+        if ([string]::IsNullOrWhiteSpace($script:claudeHelp)) { Fail 'Claude Code did not return its capability list.' }
+        $script:claudeOptions = [string[]] @(Get-ClaudeOptions $script:claudeHelp)
+        if ($capabilityCacheSecondsNumber -eq 0) { $script:claudeCapabilityCacheState = 'disabled' }
+        elseif ([string]::IsNullOrWhiteSpace($script:claudeCapabilityFingerprint)) { $script:claudeCapabilityCacheState = 'bypassed' }
+        else { $script:claudeCapabilityCacheState = 'refreshed' }
+    }
+    $script:claudeHelp = $script:claudeOptions -join "`n"
     if (-not (Test-ClaudeOption '--model')) {
         Fail 'this Claude Code build does not support custom models; run `claude update`.'
     }
+    if ($script:claudeCapabilityCacheState -ne 'hit') {
+        Write-ClaudeCapabilityCache $script:claudeCapabilityFingerprint $script:claudeOptions
+    }
 }
 
-function Update-AutoModeRules {
+function Update-AutoModeRules([bool] $ForceRefresh = $false) {
+    $script:autoModeCacheState = 'miss'
     $managedSettings = Join-Path $configDir 'settings.json'
-    if ([IO.Path]::GetFullPath($settingsFile) -ne [IO.Path]::GetFullPath($managedSettings)) { return }
+    if ([IO.Path]::GetFullPath($settingsFile) -ne [IO.Path]::GetFullPath($managedSettings)) {
+        $script:autoModeCacheState = 'not-managed'
+        return
+    }
     $lockDirectory = Join-Path (Join-Path $configDir 'run') 'auto-mode.lock'
     $lockNonce = Acquire-OwnedLock $lockDirectory 100 20
-    if (-not $lockNonce) { return }
+    if (-not $lockNonce) { $script:autoModeCacheState = 'unavailable'; return }
     $tempFile = $null
     $snapshotTemp = $null
+    $snapshotMetaTemp = $null
     try {
         $snapshotFile = Join-Path $configDir 'auto-mode-defaults.json'
+        $snapshotMetaFile = Join-Path $configDir 'auto-mode-defaults.meta.json'
         $previousSnapshot = $null
         if (Test-Path -LiteralPath $snapshotFile -PathType Leaf) {
             try {
@@ -2115,45 +2284,72 @@ function Update-AutoModeRules {
             } catch { }
         }
         $defaultsAreFresh = $false
-        try {
-            $defaults = (Invoke-WithoutPrivateManagedEnvironment -Action {
-                & $script:claudeInvocation auto-mode defaults 2>$null
-            } | Out-String) | ConvertFrom-Json
-            foreach ($property in @('allow', 'environment', 'soft_deny', 'hard_deny')) {
-                if ($null -eq $defaults.PSObject.Properties[$property]) { throw "missing auto mode default: $property" }
-            }
-            $defaultsAreFresh = $true
-        } catch {
-            if ($null -eq $previousSnapshot) {
-                $fallbackSettings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
-                if ($null -eq $fallbackSettings.PSObject.Properties['autoMode']) { return }
-                $fallbackAutoMode = $fallbackSettings.autoMode
-                $fallbackAllow = if ($null -ne $fallbackAutoMode.PSObject.Properties['allow']) { @($fallbackAutoMode.allow) } else { @() }
-                $fallbackEnvironment = if ($null -ne $fallbackAutoMode.PSObject.Properties['environment']) { @($fallbackAutoMode.environment) } else { @() }
-                $fallbackSoftDeny = if ($null -ne $fallbackAutoMode.PSObject.Properties['soft_deny']) { @($fallbackAutoMode.soft_deny) } else { @() }
-                $fallbackHardDeny = if ($null -ne $fallbackAutoMode.PSObject.Properties['hard_deny']) { @($fallbackAutoMode.hard_deny) } else { @() }
-                $managedAllowOnly = @($fallbackAllow | Where-Object {
-                    -not ($_.StartsWith('Explicit Action Approval:') -or $_.StartsWith('Requested Agent Configuration:'))
-                }).Count -eq 0
-                $managedEnvironmentOnly = @($fallbackEnvironment | Where-Object {
-                    -not ($_.StartsWith('User designated task boundary:') -or $_.StartsWith('Explicitly approved development transfer:'))
-                }).Count -eq 0
-                if ($managedAllowOnly -and $managedEnvironmentOnly -and
-                    $fallbackSoftDeny.Count -eq 0 -and $fallbackHardDeny.Count -eq 0) {
-                    $fallbackAutoMode.PSObject.Properties.Remove('allow')
-                    $fallbackAutoMode.PSObject.Properties.Remove('environment')
-                    if (@($fallbackAutoMode.PSObject.Properties).Count -eq 0) {
-                        $fallbackSettings.PSObject.Properties.Remove('autoMode')
+        $defaults = $null
+        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        if (-not $ForceRefresh -and $capabilityCacheSecondsNumber -gt 0 -and
+            $null -ne $previousSnapshot -and -not [string]::IsNullOrWhiteSpace($script:claudeCapabilityFingerprint) -and
+            (Test-Path -LiteralPath $snapshotMetaFile -PathType Leaf)) {
+            try {
+                $metaItem = Get-Item -LiteralPath $snapshotMetaFile -Force
+                if (($metaItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0 -and $metaItem.Length -le 16384) {
+                    $snapshotMeta = Get-Content -LiteralPath $snapshotMetaFile -Raw | ConvertFrom-Json
+                    $capturedAt = 0L
+                    if ($snapshotMeta.schema -eq 1 -and
+                        [string] $snapshotMeta.fingerprint -ceq $script:claudeCapabilityFingerprint -and
+                        [long]::TryParse([string] $snapshotMeta.capturedAt, [ref] $capturedAt) -and
+                        $capturedAt -ge $now - $capabilityCacheSecondsNumber -and $capturedAt -le $now + 300) {
+                        $defaults = $previousSnapshot
+                        $script:autoModeCacheState = 'hit'
                     }
-                    $fallbackSerialized = $fallbackSettings | ConvertTo-Json -Depth 100
-                    $fallbackTemp = Join-Path $configDir ('settings.json.tmp.' + [guid]::NewGuid().ToString('N'))
-                    [IO.File]::WriteAllText($fallbackTemp, $fallbackSerialized, $utf8)
-                    Move-Item -LiteralPath $fallbackTemp -Destination $settingsFile -Force
-                    return
                 }
-                throw 'Claude Code auto mode defaults are unavailable; custom rules were preserved instead of composing an unsafe partial configuration. Update Claude Code or restore the defaults snapshot, then retry.'
+            } catch { }
+        }
+        if ($null -eq $defaults) {
+            try {
+                $defaults = (Invoke-WithoutPrivateManagedEnvironment -Action {
+                    & $script:claudeInvocation auto-mode defaults 2>$null
+                } | Out-String) | ConvertFrom-Json
+                foreach ($property in @('allow', 'environment', 'soft_deny', 'hard_deny')) {
+                    if ($null -eq $defaults.PSObject.Properties[$property]) { throw "missing auto mode default: $property" }
+                }
+                $defaultsAreFresh = $true
+                if ($capabilityCacheSecondsNumber -eq 0) { $script:autoModeCacheState = 'disabled' }
+                elseif ([string]::IsNullOrWhiteSpace($script:claudeCapabilityFingerprint)) { $script:autoModeCacheState = 'bypassed' }
+                else { $script:autoModeCacheState = 'refreshed' }
+            } catch {
+                if ($null -eq $previousSnapshot) {
+                    $fallbackSettings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+                    if ($null -eq $fallbackSettings.PSObject.Properties['autoMode']) { $script:autoModeCacheState = 'unavailable'; return }
+                    $fallbackAutoMode = $fallbackSettings.autoMode
+                    $fallbackAllow = if ($null -ne $fallbackAutoMode.PSObject.Properties['allow']) { @($fallbackAutoMode.allow) } else { @() }
+                    $fallbackEnvironment = if ($null -ne $fallbackAutoMode.PSObject.Properties['environment']) { @($fallbackAutoMode.environment) } else { @() }
+                    $fallbackSoftDeny = if ($null -ne $fallbackAutoMode.PSObject.Properties['soft_deny']) { @($fallbackAutoMode.soft_deny) } else { @() }
+                    $fallbackHardDeny = if ($null -ne $fallbackAutoMode.PSObject.Properties['hard_deny']) { @($fallbackAutoMode.hard_deny) } else { @() }
+                    $managedAllowOnly = @($fallbackAllow | Where-Object {
+                        -not ($_.StartsWith('Explicit Action Approval:') -or $_.StartsWith('Requested Agent Configuration:'))
+                    }).Count -eq 0
+                    $managedEnvironmentOnly = @($fallbackEnvironment | Where-Object {
+                        -not ($_.StartsWith('User designated task boundary:') -or $_.StartsWith('Explicitly approved development transfer:'))
+                    }).Count -eq 0
+                    if ($managedAllowOnly -and $managedEnvironmentOnly -and
+                        $fallbackSoftDeny.Count -eq 0 -and $fallbackHardDeny.Count -eq 0) {
+                        $fallbackAutoMode.PSObject.Properties.Remove('allow')
+                        $fallbackAutoMode.PSObject.Properties.Remove('environment')
+                        if (@($fallbackAutoMode.PSObject.Properties).Count -eq 0) {
+                            $fallbackSettings.PSObject.Properties.Remove('autoMode')
+                        }
+                        $fallbackSerialized = $fallbackSettings | ConvertTo-Json -Depth 100
+                        $fallbackTemp = Join-Path $configDir ('settings.json.tmp.' + [guid]::NewGuid().ToString('N'))
+                        [IO.File]::WriteAllText($fallbackTemp, $fallbackSerialized, $utf8)
+                        Move-Item -LiteralPath $fallbackTemp -Destination $settingsFile -Force
+                        $script:autoModeCacheState = 'unavailable'
+                        return
+                    }
+                    throw 'Claude Code auto mode defaults are unavailable; custom rules were preserved instead of composing an unsafe partial configuration. Update Claude Code or restore the defaults snapshot, then retry.'
+                }
+                $defaults = $previousSnapshot
+                $script:autoModeCacheState = 'fallback'
             }
-            $defaults = $previousSnapshot
         }
         $settings = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
         if ($null -eq $settings.PSObject.Properties['autoMode']) {
@@ -2231,6 +2427,18 @@ function Update-AutoModeRules {
             [IO.File]::WriteAllText($snapshotTemp, (($snapshot | ConvertTo-Json -Depth 20) + "`n"), $utf8)
             Move-Item -LiteralPath $snapshotTemp -Destination $snapshotFile -Force
             $snapshotTemp = $null
+            if ($capabilityCacheSecondsNumber -gt 0 -and -not [string]::IsNullOrWhiteSpace($script:claudeCapabilityFingerprint)) {
+                $snapshotMetaTemp = Join-Path $configDir ('.auto-mode-defaults-meta.' + [guid]::NewGuid().ToString('N') + '.tmp')
+                $snapshotMeta = [ordered]@{
+                    schema = 1
+                    capturedAt = $now
+                    fingerprint = $script:claudeCapabilityFingerprint
+                }
+                [IO.File]::WriteAllText($snapshotMetaTemp, (($snapshotMeta | ConvertTo-Json -Depth 5) + "`n"), $utf8)
+                Protect-PrivatePath $snapshotMetaTemp $false
+                Move-Item -LiteralPath $snapshotMetaTemp -Destination $snapshotMetaFile -Force
+                $snapshotMetaTemp = $null
+            }
         }
     } catch {
         if ($_.Exception.Message.StartsWith('Claude Code auto mode defaults are unavailable; custom rules were preserved')) {
@@ -2241,6 +2449,7 @@ function Update-AutoModeRules {
     } finally {
         if ($tempFile) { Remove-Item -LiteralPath $tempFile -Force -ErrorAction SilentlyContinue }
         if ($snapshotTemp) { Remove-Item -LiteralPath $snapshotTemp -Force -ErrorAction SilentlyContinue }
+        if ($snapshotMetaTemp) { Remove-Item -LiteralPath $snapshotMetaTemp -Force -ErrorAction SilentlyContinue }
         Release-OwnedLock $lockDirectory $lockNonce
     }
 }
@@ -2342,12 +2551,20 @@ function Model-Name([string] $Id) {
     }
 }
 
-function Invoke-Doctor {
+function Get-MachineVersion([object] $Value) {
+    $text = [string] $Value
+    if ($text -match '(?<![0-9])v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)') {
+        return [string] $Matches[1]
+    }
+    return $null
+}
+
+function Invoke-Doctor([bool] $Json = $false) {
     $script:doctorExitCode = 0
     Assert-ProxyConfiguration
     Update-ModelCache
-    Load-ClaudeCapabilities
-    Update-AutoModeRules
+    Load-ClaudeCapabilities $true
+    Update-AutoModeRules $true
     try { Ensure-Proxy } catch { Fail $_.Exception.Message }
     $saved = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
     $savedModel = if ($null -ne $saved.PSObject.Properties['model'] -and $saved.model) { [string] $saved.model } else { 'gpt-5.6-sol' }
@@ -2361,13 +2578,73 @@ function Invoke-Doctor {
     $claudeVersion = try {
         (Invoke-WithoutPrivateManagedEnvironment -Action { & claude --version 2>$null } | Select-Object -First 1)
     } catch { 'unavailable' }
-    Write-Output "Claude Code: $claudeVersion"
-    Write-Output "CLIProxyAPI: $proxyVersion"
-    Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
+    if (-not $claudeVersion) { $claudeVersion = 'unavailable' }
+    $authOutput = @(Invoke-WithoutPrivateManagedEnvironment -PreserveNames @(
         'GICC_CONFIG_DIR', 'GICC_CODEX_AUTH_DIR', 'GICC_CODEX_SOURCE_AUTH_FILE'
-    ) -Action { & $codexSessionHelper status }
-    if ($script:lastPrivateBoundaryExitCode -ne 0) {
-        $script:doctorExitCode = $script:lastPrivateBoundaryExitCode
+    ) -Action { & $codexSessionHelper status 2>&1 })
+    $authExitCode = $script:lastPrivateBoundaryExitCode
+    $ids = @($models.data | ForEach-Object { $_.id })
+    $modelStatuses = @(
+        foreach ($id in @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')) {
+            [ordered]@{ id = $id; advertised = $ids -contains $id }
+        }
+    )
+    $missing = @($modelStatuses | Where-Object { -not $_.advertised }).Count -gt 0
+    $jsonSavedModel = if ($savedModel -in @(
+        'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'opusplan', 'solplan', 'opus', 'fable', 'sonnet', 'haiku'
+    )) { $savedModel } else { $null }
+
+    if ($Json) {
+        $result = [ordered]@{
+            schema = 1
+            ok = $authExitCode -eq 0 -and -not $missing
+            components = [ordered]@{
+                claudeCode = [ordered]@{
+                    status = 'ready'
+                    version = Get-MachineVersion $claudeVersion
+                    capabilityCache = $script:claudeCapabilityCacheState
+                    detectedOptions = $script:claudeOptions.Count
+                }
+                proxy = [ordered]@{ status = 'healthy'; version = Get-MachineVersion $proxyVersion }
+                codexAuth = [ordered]@{ status = if ($authExitCode -eq 0) { 'ready' } else { 'unavailable' } }
+            }
+            models = $modelStatuses
+            configuration = [ordered]@{
+                savedModel = $jsonSavedModel
+                permissionMode = $permissionMode
+                autoModeModel = $autoModeModel
+                backgroundModel = $backgroundModel
+                maxRetries = $maxRetriesNumber
+                maxOutputTokens = $maxOutputTokensNumber
+                contextWindow = $contextWindowNumber
+                autoCompactWindow = $compactWindowNumber
+                planModePolicy = $planModePolicy
+                usageSource = $usageSource
+                capabilityCacheSeconds = $capabilityCacheSecondsNumber
+                autoModeDefaultsCache = $script:autoModeCacheState
+                toolScheduling = 'native'
+                agentScheduling = 'model-directed'
+            }
+            capabilities = [ordered]@{
+                dynamicWorkflow = $true
+                ultrareview = $true
+                nestedDelegation = $true
+                agentTeams = $true
+            }
+        }
+        $result | ConvertTo-Json -Depth 8
+        if ($authExitCode -ne 0) { $script:doctorExitCode = $authExitCode }
+        elseif ($missing) { $script:doctorExitCode = 1 }
+        return
+    }
+
+    Write-Output "Claude Code: $claudeVersion"
+    Write-Output "Claude capability cache: $($script:claudeCapabilityCacheState) ($($script:claudeOptions.Count) options)"
+    Write-Output "Auto mode defaults cache: $($script:autoModeCacheState) (${capabilityCacheSecondsNumber}s window)"
+    Write-Output "CLIProxyAPI: $proxyVersion"
+    $authOutput | ForEach-Object { Write-Output $_ }
+    if ($authExitCode -ne 0) {
+        $script:doctorExitCode = $authExitCode
         return
     }
     Write-Output "Proxy: healthy at $proxyUrl"
@@ -2377,9 +2654,9 @@ function Invoke-Doctor {
     Write-Output 'Auto mode provider: Codex/OpenAI through the authenticated loopback bridge'
     Write-Output 'Delegated models: native routing for each agent (Sol is reserved for the leader)'
     Write-Output 'Managed agents: Terra (high), Luna (medium)'
-    Write-Output "Tool concurrency: $toolConcurrencyNumber"
-    Write-Output "Agent concurrency: $agentConcurrencyNumber"
-    Write-Output 'Task lifecycle: owned by Sol with final response reconciliation'
+    Write-Output 'Tool concurrency: native Claude Code scheduling (no GICC limit)'
+    Write-Output 'Agent concurrency: model-directed native scheduling (no GICC limit)'
+    Write-Output 'Task lifecycle: native Claude Code ownership with final reconciliation'
     Write-Output "API retries: $maxRetriesNumber"
     Write-Output "Claude output budget: $maxOutputTokensNumber tokens (reasoning continuation enabled)"
     Write-Output "Context window: $contextWindowNumber tokens"
@@ -2398,17 +2675,17 @@ function Invoke-Doctor {
     Write-Output "Header model name: $(Model-Name $savedModel)"
     Write-Output "Mouse pointer: $mousePointer"
     Write-Output "Isolation: GICC config at $configDir; normal Claude config is untouched"
-    $missing = $false
-    $ids = @($models.data | ForEach-Object { $_.id })
-    foreach ($id in @('gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna')) {
-        if ($ids -contains $id) { Write-Output "${id}: advertised" }
-        else { [Console]::Error.WriteLine("${id}: not advertised by the authenticated Codex account"); $missing = $true }
+    foreach ($modelStatus in $modelStatuses) {
+        if ($modelStatus.advertised) { Write-Output "$($modelStatus.id): advertised" }
+        else { [Console]::Error.WriteLine("$($modelStatus.id): not advertised by the authenticated Codex account") }
     }
     if ($missing) { $script:doctorExitCode = 1 }
 }
 
 if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -eq '--doctor') {
-    Invoke-Doctor
+    if ($ClaudeArguments.Count -eq 1) { Invoke-Doctor $false }
+    elseif ($ClaudeArguments.Count -eq 2 -and $ClaudeArguments[1] -eq '--json') { Invoke-Doctor $true }
+    else { Fail 'Usage: gicc --doctor [--json]' 2 }
     Exit-GICC $script:doctorExitCode
 }
 
@@ -2497,7 +2774,7 @@ $suppressResumeFooter = $false
 $backgroundLaunch = $false
 $requestedResumeSessionId = ''
 $maintenanceGlobalOptions = @('--help', '-h', '--version', '-v')
-$maintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'setup-token', 'skills', 'stop', 'ultrareview', 'update', 'upgrade')
+$maintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup', 'setup-token', 'skills', 'stop', 'support', 'transfer', 'ultrareview', 'update', 'upgrade', 'version')
 $maintenancePositionalSeen = $false
 $maintenanceCommandDetected = $false
 for ($scanIndex = 0; $scanIndex -lt $forwardArguments.Count; $scanIndex++) {
@@ -2844,7 +3121,9 @@ if ($useProxy) {
     $env:CLAUDE_CODE_AUTO_MODE_MODEL = $autoModeModel
     $env:CLAUDE_CODE_BG_CLASSIFIER_MODEL = $backgroundModel
     $env:CLAUDE_CODE_ALWAYS_ENABLE_EFFORT = '1'
-    $env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = [string] $toolConcurrencyNumber
+    # v0.1.3 leaves tool and Agent concurrency to Claude Code's native scheduler
+    # and the model. Clear caps inherited from older GICC launches.
+    Remove-Item Env:CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY -ErrorAction SilentlyContinue
     $env:CLAUDE_CODE_MAX_RETRIES = [string] $maxRetriesNumber
     $env:CLAUDE_CODE_MAX_OUTPUT_TOKENS = [string] $maxOutputTokensNumber
     $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = [string] $contextWindowNumber
@@ -2873,17 +3152,16 @@ if ($noSessionPersistence) { $env:GICC_NO_SESSION_PERSISTENCE = '1' }
 else { Remove-Item Env:GICC_NO_SESSION_PERSISTENCE -ErrorAction SilentlyContinue }
 if ($skillBridgeHasInstructions) { $env:CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = '1' }
 
-$noNestedAgents = "Do not spawn or delegate to additional agents, or send intermediate progress messages to the parent. Unless you are a teammate in a native Agent Team that the user explicitly requested, do not create, claim, or update entries in a shared task list; ordinary Agent task lifecycle belongs to the Sol leader. Complete the assigned task yourself and return one final result through the normal agent result channel. If the provider reports a 429 or model cooldown, do not launch a replacement agent or start a retry loop."
 $agents = [ordered]@{
-    'Terra (high)' = [ordered]@{ description = 'Terra at high reasoning effort for delegated architecture, debugging, implementation, testing, security review, and other substantial engineering work.'; prompt = "You are GPT-5.6 Terra running at high reasoning effort. Investigate thoroughly, make robust focused progress, verify the result, and return concise findings backed by evidence. $noNestedAgents"; model = 'gpt-5.6-terra'; effort = 'high' }
-    'Luna (medium)' = [ordered]@{ description = 'Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.'; prompt = "You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. $noNestedAgents"; model = 'gpt-5.6-luna'; effort = 'medium' }
+    'Terra (high)' = [ordered]@{ description = 'Terra at high reasoning effort for delegated architecture, debugging, implementation, testing, security review, and other substantial engineering work.'; prompt = "You are GPT-5.6 Terra running at high reasoning effort. Investigate thoroughly, make robust focused progress, verify the result, and return concise findings backed by evidence. Native Dynamic Workflow, Agent delegation, and further subagent delegation are available when useful; let task requirements and Claude Code's scheduler determine fan-out."; model = 'gpt-5.6-terra'; effort = 'high' }
+    'Luna (medium)' = [ordered]@{ description = 'Luna at medium reasoning effort for delegated search, triage, inventory, and bounded mechanical tasks.'; prompt = "You are GPT-5.6 Luna running at medium reasoning effort. Complete the scoped task efficiently and report only relevant verified findings. Native Dynamic Workflow, Agent delegation, and further subagent delegation are available when useful; let task requirements and Claude Code's scheduler determine fan-out."; model = 'gpt-5.6-luna'; effort = 'medium' }
 }
 $agentsJson = $agents | ConvertTo-Json -Depth 10 -Compress
-$capacityGuard = "GICC capacity rule: keep at most $agentConcurrencyNumber delegated Agent or Agent Team workers active at once. Native Agent Teams may be created only when the user explicitly requests a team; otherwise use the named Terra (high) or Luna (medium) agents for ordinary delegation. Sol capacity is reserved for the leader. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'. If a model reports a 429 or cooldown, do not launch replacement agents or create a retry storm; continue useful local work and retry at most once after active agents settle."
-$taskGuard = 'GICC task lifecycle rule: for ordinary Agent delegation, the Sol leader owns the shared task list. When the user explicitly requests a native Agent Team, the team lead owns team task lifecycle and teammates may claim only their assigned work. Keep task state compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while the leader or a currently active worker is working on it; queued or blocked work stays pending. After every worker result, immediately reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done.'
+$dynamicWorkflowGuard = "GICC dynamic workflow rule: Dynamic Workflow, Ultrareview, Agent delegation, nested subagent delegation, and native Agent Teams remain available. Do not impose a fixed tool or Agent concurrency limit; choose fan-out from the task and let Claude Code's native scheduler enforce runtime capacity. For every Agent call, make its description '- <concise task>' so the activity list renders labels such as 'Terra (high) - Audit JSON parser bugs'."
+$taskGuard = 'GICC task lifecycle rule: use Claude Code''s native task ownership semantics across the leader, Dynamic Workflow, nested subagents, and Agent Teams. Keep task state compact and create only tasks that represent real remaining deliverables, not duplicate discovery lanes or speculative work. Mark a task in_progress only while a current worker is working on it; queued or blocked work stays pending. After every worker result, reconcile its parent task and mark it completed once its outcome is integrated and verified. Before every final answer, call TaskList and reconcile every entry: completed work must be completed, inactive work must not remain in_progress, and genuinely unfinished pending work must be explicitly reported instead of being hidden behind a completion claim. Never leave stale in_progress tasks after their work is done.'
 $codexGuard = "GICC Codex model rule: operate as a Codex coding agent inside Claude Code's interface. Treat the available Claude Code tools and their schemas as the authoritative execution protocol. Prefer direct implementation and verification for concrete change requests. Ask as few questions as possible: inspect available context first, make safe reasonable assumptions, and continue without confirmation for routine, reversible work inside the requested scope. Never repeat a question the user already answered. Ask only when the missing answer cannot be discovered and would materially change the result, authorize a meaningful scope expansion, or precede an irreversible action. Treat the user's explicit approval as decisive for the specifically named action and target: after a soft auto mode denial, ask for precise consent only when it is missing, then retry once when the user grants it instead of claiming the denial is permanent. Hard deny security boundaries still apply. Do not invent unsupported provider behavior, do not expose raw internal tool protocol, and keep progress updates concise and based on evidence."
 $planGuard = if ($planModePolicy -eq 'conservative') { 'GICC plan mode rule: remain in the current execution mode by default. Do not call EnterPlanMode or switch into plan permission mode merely because work is large, complex, unfamiliar, or benefits from private reasoning. Enter plan mode only when the user explicitly asks for a planning or design only response, when a required user decision would materially change the implementation, or when the requested action is irreversible and needs approval before execution. For ordinary bug fixes and implementation requests, inspect, implement, test, and report directly.' } else { '' }
-$leaderGuard = @($capacityGuard, $taskGuard, $codexGuard, $planGuard) -join ([Environment]::NewLine + [Environment]::NewLine)
+$leaderGuard = @($dynamicWorkflowGuard, $taskGuard, $codexGuard, $planGuard) -join ([Environment]::NewLine + [Environment]::NewLine)
 
 $claudeLaunchArguments = New-Object 'System.Collections.Generic.List[string]'
 foreach ($skillDirectory in $skillBridgeAddDirs) {

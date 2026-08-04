@@ -19,11 +19,11 @@ command -v tar >/dev/null 2>&1 || { printf '%s\n' 'tar is required to verify rel
 files=(
   CHANGELOG.md CODE_OF_CONDUCT.md CONTRIBUTING.md GOVERNANCE.md LICENSE MAINTAINERS.md NOTICE.md README.md ROADMAP.md UPSTREAM.md
   SECURITY.md SUPPORT.md bootstrap.ps1 bootstrap.sh package.json
-  gicc gicc.cmd gicc.ps1 gicc-package.cmd
+  gicc gicc.cmd gicc.ps1 gicc-runtime.mjs gicc-package.cmd claudex claudex.cmd claudex.ps1
   codex-session codex-session.ps1 env.example install.ps1 install.sh install.zsh
   preload.cjs skill-bridge.cjs self-update self-update.ps1 settings.json statusline statusline.ps1 usage-limit usage-limit.ps1
   bin/gicc-package.mjs bin/package-setup-lock.mjs
-  docs/README.md docs/architecture.md docs/claude-code-compatibility.md docs/configuration.md
+  docs/README.md docs/architecture.md docs/claude-code-compatibility.md docs/compatibility-matrix.json docs/configuration.md
   docs/development.md docs/installation.md docs/package-managers.md docs/skills.md
   docs/troubleshooting.md docs/usage.md
   skills/usage-limit/SKILL.md skills/usage-limit/SKILL.windows.md
@@ -64,7 +64,7 @@ unsupported=$(find "$stage" ! -type f ! -type d -print -quit)
 # entry order, gzip framing, and ZIP metadata without host tar/zip differences.
 find "$stage" -type d -exec chmod 755 {} +
 find "$stage" -type f -exec chmod 644 {} +
-chmod +x "$stage/bootstrap.sh" "$stage/gicc" "$stage/codex-session" "$stage/install.sh" "$stage/install.zsh" "$stage/self-update" \
+chmod +x "$stage/bootstrap.sh" "$stage/gicc" "$stage/claudex" "$stage/codex-session" "$stage/install.sh" "$stage/install.zsh" "$stage/self-update" \
   "$stage/statusline" "$stage/usage-limit" "$stage/bin/gicc-package.mjs"
 TZ=UTC find "$stage" -exec touch -t 200001010000 {} +
 
@@ -91,6 +91,10 @@ required_release_files=(
   third_party/CLIPROXYAPI_LICENSE.txt
   bin/gicc-package.mjs
   bin/package-setup-lock.mjs
+  gicc-runtime.mjs
+  claudex
+  claudex.cmd
+  claudex.ps1
   skill-bridge.cjs
   skills/usage-limit/SKILL.md
   skills/usage-limit/SKILL.windows.md
@@ -119,6 +123,7 @@ for required in "${required_release_files[@]}"; do
   }
 done
 node --check "$stage/skill-bridge.cjs"
+node --check "$stage/gicc-runtime.mjs"
 node --check "$stage/bin/gicc-package.mjs"
 node --check "$stage/bin/package-setup-lock.mjs"
 (cd "$dist" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1) || \

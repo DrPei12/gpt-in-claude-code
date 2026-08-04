@@ -18,10 +18,11 @@ problem returns on the latest release.
   for scoped enhancements.
 - Use the private process in [SECURITY.md](SECURITY.md) for vulnerabilities.
 
-Before asking for help, update GICC, run `gicc --doctor`, and check
-[docs/troubleshooting.md](docs/troubleshooting.md). Remove all credentials,
-account details, prompts, local paths, and session identifiers from shared
-output.
+Before asking for help, update GICC, run `gicc --doctor`, create a sanitized
+bundle with `gicc support bundle`, and check
+[docs/troubleshooting.md](docs/troubleshooting.md). Review the generated JSON
+before sharing it. Do not attach credentials, prompts, raw logs, or session
+history.
 
 Questions about Claude Code, Codex, provider accounts, billing, model access,
 or subscription enforcement may need to be directed to the relevant upstream

@@ -46,8 +46,9 @@ Run `gicc --doctor`. The signed in account must advertise Sol, Terra, and
 Luna. Sign into the intended Codex account, update Codex and GICC, and try
 again. GICC will not silently map an unavailable model to a different one.
 
-Temporary provider outages and cooldowns are upstream conditions. GICC
-bounds retries and agent concurrency to avoid turning them into retry storms.
+Temporary provider outages and cooldowns are upstream conditions. GICC bounds
+bridge request retries, while Claude Code's native scheduler and the model own
+tool and Agent concurrency without a GICC fixed limit.
 The managed bridge retries transient upstream 500/502/503/504 responses before
 Claude Code sees them, including failures before the first stream byte. A red
 API error that remains after those bounded retries is a persistent failure and
@@ -114,6 +115,32 @@ A brand new session intentionally omits a zero value until Claude Code reports
 real usage. During compaction, GICC retains the last trustworthy value for
 that session. It should never flash a misleading `0%` and then jump back.
 
+## A session or context checkpoint looks stale
+
+Start with read only inspection in the affected project directory:
+
+```text
+gicc session list
+gicc session status
+gicc session doctor
+gicc context status
+```
+
+Use the explicit session ID if several sessions exist. `session doctor` reads
+the full native JSONL transcript but reports only structure and health counts;
+it does not print messages. If it reports a recoverable invalid checkpoint,
+close the affected Claude Code session and run:
+
+```text
+gicc context repair --session SESSION-ID
+```
+
+Repair preserves the invalid file with a `corrupt` timestamp suffix and
+restores a valid `.previous` checkpoint. It never rewrites Claude history. An
+unrecoverable checkpoint can be regenerated from the unchanged transcript by
+the managed bridge on a later request; keep the quarantined file when gathering
+a support bundle.
+
 ## Usage limits are missing or stale
 
 Run:
@@ -170,4 +197,13 @@ boundary. Rerun the documented GICC installer so it repairs the official
 ## Still stuck
 
 Read [SUPPORT.md](../SUPPORT.md) and open the appropriate discussion or issue.
-Include a minimal reproduction and sanitized `gicc --doctor` output.
+Include a minimal reproduction and the result of:
+
+```text
+gicc support bundle
+```
+
+The bundle omits credential content, account details, prompts, responses, raw
+logs, local paths, and session IDs by design. Review the generated JSON before
+sharing it. If live state matters, also include `gicc --doctor --json`; unlike
+the support bundle, this command starts and checks the local proxy.

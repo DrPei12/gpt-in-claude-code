@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# GICC compatibility shim for gpt-in-claude-code. The canonical command is gicc.
+set -euo pipefail
+
+readonly launcher_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+exec "$launcher_dir/gicc" "$@"
