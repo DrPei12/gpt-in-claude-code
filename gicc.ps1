@@ -2050,7 +2050,7 @@ function Get-ManagedBackgroundRegistryState {
     }
     try {
         $claude = Resolve-HarnessCommand 'claude'
-        if (-not $claude -or -not $claude.Source) { return 'unknown' }
+        if (-not $claude -or -not $claude.Source) { return 'unavailable' }
         $global:LASTEXITCODE = $null
         $raw = (& $claude.Source agents --json 2>$null | Out-String)
         if (($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) -or -not $raw.TrimStart().StartsWith('[')) { return 'unknown' }
@@ -2073,15 +2073,22 @@ function Invoke-ProxyWatchLoop([int] $ParentProcessId, [string] $ParentIdentity,
     Write-ProxyWatcherTestTrace "watcher entered for parent $ParentProcessId"
     $consecutiveFailures = 0
     $emptyPolls = 0
+    $unknownSince = $null
     while ($true) {
-        if (Test-WatchParentCurrent $ParentProcessId $ParentIdentity) { $emptyPolls = 0 }
+        if (Test-WatchParentCurrent $ParentProcessId $ParentIdentity) { $emptyPolls = 0; $unknownSince = $null }
         elseif ($BackgroundWatch) {
             $registryState = Get-ManagedBackgroundRegistryState
-            if ($registryState -eq 'active') { $emptyPolls = 0 }
+            if ($registryState -eq 'active') { $emptyPolls = 0; $unknownSince = $null }
             elseif ($registryState -eq 'empty') {
+                $unknownSince = $null
                 $emptyPolls++
                 if ($emptyPolls -ge 3) { break }
-            } else { $emptyPolls = 0 }
+            } elseif ($registryState -eq 'unavailable') { break }
+            else {
+                $emptyPolls = 0
+                if ($null -eq $unknownSince) { $unknownSince = [DateTime]::UtcNow }
+                elseif (([DateTime]::UtcNow - $unknownSince).TotalSeconds -ge 300) { break }
+            }
         } else { break }
         Start-Sleep -Seconds 1
         if (Test-ProxyReachable) {

@@ -34,6 +34,7 @@ for (const [source, label] of [[launcher, 'proxy'], [auth, 'auth']]) {
   assert.doesNotMatch(registry, /\.kind|\['kind'\]/, `${label} registry must not require an undocumented kind field`);
   assert.match(registry, /Count -eq 0/, `${label} registry recognizes an empty array across PowerShell JSON versions`);
   assert.match(registry, /return 'active'/, `${label} registry treats a valid nonempty session array as active`);
+  assert.match(registry, /return 'unavailable'/, `${label} registry distinguishes a missing Claude Code command`);
   for (const family of [
     'GICC_PROXY_TOKEN', 'GICC_PROXY_URL', 'GICC_PROXY_CONFIG', 'GICC_PROXY_BIN',
     'ANTHROPIC_BEDROCK_MANTLE_BASE_URL', 'ANTHROPIC_VERTEX_PROJECT_ID',
@@ -50,6 +51,8 @@ assert.match(suite, /Windows detached proxy watcher survives launcher exit/, 'Wi
 assert.match(suite, /Windows detached watchers exit after registry is stably empty/, 'Windows suite exercises registry completion');
 assert.match(suite, /\[\{\"id\":\"managed-bg-test\",\"state\":\"working\"\}\]/, 'Windows fixture uses the documented id and state schema without kind');
 assert.match(suite, /Windows invalid registry root is not treated as empty/, 'Windows suite keeps watchers alive on an invalid registry root');
+assert.match(suite, /Windows detached watchers treat an unavailable Claude Code registry as terminal/,
+  'Windows suite rejects leaked watchers when Claude Code disappears after parent exit');
 assert.match(suite, /direct watcher registry query also scrubs inherited private families/, 'Windows suite injects and rejects private watcher environment');
 assert.match(suite, /testSuiteTimeoutSeconds = 1200/, 'Windows Harness stage has a bounded internal watchdog');
 assert.match(suite, /test\.ps1 watchdog timed out after/, 'Windows CI watchdog reports the active test stage');
@@ -59,6 +62,8 @@ assert.match(suite, /'Harness' \{ 1500 \}/, 'Windows outer Harness stage has a b
 assert.match(suite, /gracefulExitDeadline = \[DateTime\]::UtcNow\.AddSeconds\(20\)/, 'Windows stages allow bounded watcher shutdown before declaring an orphan');
 assert.match(suite, /'SelfUpdateLocks' \{ 300 \}/, 'Windows self-update stage has a bounded timeout');
 assert.match(suite, /'Node' \{ 300 \}/, 'Windows Node stage has a bounded timeout');
+assert.match(suite, /Windows future-format owner creator withdraws' 60000/,
+  'Windows future-format lock race uses the common bounded host allowance');
 assert.match(suite, /Get-CimInstance Win32_Process -OperationTimeoutSec 2 -ErrorAction Stop/,
   'Windows stage process inventory cannot block its deadline indefinitely');
 assert.match(suite, /nextRegistryRefresh = \$now\.AddSeconds\(5\)/,

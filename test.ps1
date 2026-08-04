@@ -2383,7 +2383,7 @@ process.stdout.write(JSON.stringify({
         [IO.Directory]::CreateDirectory($modelLock) | Out-Null
         [IO.File]::WriteAllText((Join-Path $modelLock 'owner.json'), "future-owner`n", $utf8)
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-unknown-owner-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $unknownOwner 'Windows future-format owner creator withdraws'
+        Wait-ForTestProcess $unknownOwner 'Windows future-format owner creator withdraws' 60000
         Assert-True (([IO.File]::ReadAllText((Join-Path $modelLock 'owner.json')).Trim() -eq 'future-owner') -and
             -not (Test-Path -LiteralPath (Join-Path $modelLock 'owner')) -and
             -not (Test-Path -LiteralPath (Join-Path $modelLock 'generation'))) 'Windows future-format owner survives structured publication'
@@ -2580,6 +2580,8 @@ process.stdout.write(JSON.stringify({
         $backgroundProxyPid = 0
         $reusedAuthWatcher = $null
         $reusedProxyWatcher = $null
+        $unavailableAuthWatcher = $null
+        $unavailableProxyWatcher = $null
         $registryPrivateEnvironment = @{}
         $registryPrivateNames = @(
             'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'GICC_PROXY_TOKEN', 'GICC_PROXY_URL',
@@ -2682,8 +2684,29 @@ process.stdout.write(JSON.stringify({
             foreach ($line in @([IO.File]::ReadAllLines($backgroundRegistryLog))) {
                 Assert-True ($line -eq 'BASE= AUTH= PROXY= URL= CONFIG= BIN= BEDROCK= MANTLE= VERTEX= FOUNDRY= CUSTOM= MODEL= DEFAULT= SUBAGENT= CODEX=') 'Windows direct watcher registry query also scrubs inherited private families'
             }
+
+            Remove-Item -LiteralPath $backgroundAuthExit, $backgroundProxyExit -Force -ErrorAction SilentlyContinue
+            $savedWatcherPath = $env:PATH
+            try {
+                $env:PATH = Split-Path $shellPath -Parent
+                $unavailableAuthWatcher = Start-Process -FilePath $shellPath -ArgumentList @(
+                    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    ('"' + (Join-Path $root 'codex-session.ps1') + '"'), 'watch',
+                    '-ParentProcessId', [string] $PID, '-ParentProcessIdentity', '0', '-BackgroundWatch'
+                ) -PassThru
+                $unavailableProxyWatcher = Start-Process -FilePath $shellPath -ArgumentList @(
+                    '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                    ('"' + (Join-Path $root 'gicc.ps1') + '"'),
+                    '-GICCInternalProxyWatchParentProcessId', [string] $PID, '0', '1'
+                ) -PassThru
+            } finally { $env:PATH = $savedWatcherPath }
+            Wait-ForTestProcess $unavailableAuthWatcher 'Windows auth watcher exits when Claude Code is unavailable' 15000
+            Wait-ForTestProcess $unavailableProxyWatcher 'Windows proxy watcher exits when Claude Code is unavailable' 15000
+            Assert-True ($unavailableAuthWatcher.ExitCode -eq 0 -and $unavailableProxyWatcher.ExitCode -eq 0) 'Windows detached watchers treat an unavailable Claude Code registry as terminal'
+            Assert-True ((Test-Path -LiteralPath $backgroundAuthExit -PathType Leaf) -and
+                (Test-Path -LiteralPath $backgroundProxyExit -PathType Leaf)) 'Windows unavailable-registry watcher exits are observable'
         } finally {
-            foreach ($watcherToStop in @($reusedAuthWatcher, $reusedProxyWatcher)) {
+            foreach ($watcherToStop in @($reusedAuthWatcher, $reusedProxyWatcher, $unavailableAuthWatcher, $unavailableProxyWatcher)) {
                 if ($watcherToStop -and -not $watcherToStop.HasExited) { $watcherToStop.Kill() }
             }
             foreach ($pidToStop in @($backgroundAuthPid, $backgroundProxyPid)) {
