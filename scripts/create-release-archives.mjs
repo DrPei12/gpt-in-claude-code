@@ -18,6 +18,7 @@ const maximumArchiveBytes = 1024 * 1024 * 1024;
 const executablePaths = new Set([
   'bootstrap.sh',
   'gicc',
+  'claudex',
   'codex-session',
   'install.sh',
   'install.zsh',

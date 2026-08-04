@@ -54,7 +54,7 @@ the plan file and workspace after completion or interruption.
 
 | Component | Unix | Windows | Responsibility |
 | --- | --- | --- | --- |
-| Launcher | `gicc` | `gicc.ps1`, `gicc.cmd` | Parse GICC flags, negotiate Claude capabilities, configure the session, and launch Claude Code |
+| Launcher | `gicc`, optional `claudex` alias | `gicc.ps1`, `gicc.cmd`, optional `claudex` alias | Parse GICC flags, negotiate Claude capabilities, configure the session, and launch Claude Code; the alias only forwards to the canonical launcher |
 | Installer | `install.sh` | `install.ps1` | Install dependencies, private config, launchers, and verified compatibility binary |
 | Auth bridge | `codex-session` | `codex-session.ps1` | Validate Codex login and atomically synchronize the minimum credential fields |
 | Usage helper | `usage-limit` | `usage-limit.ps1` | Fetch, sanitize, cache, and display usage limits |

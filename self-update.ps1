@@ -992,6 +992,11 @@ function Invoke-ArchiveUpdate($Receipt, $Release) {
         $stagedRoot = Join-Path $stage $rootName
         $installer = Join-Path $stagedRoot 'install.ps1'
         if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) { throw 'verified release archive does not contain install.ps1' }
+        foreach ($shimFile in @('claudex.ps1', 'claudex.cmd')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $stagedRoot $shimFile) -PathType Leaf)) {
+                throw "verified release archive does not contain $shimFile"
+            }
+        }
         if (-not (Test-Path -LiteralPath (Join-Path $stagedRoot 'skill-bridge.cjs') -PathType Leaf)) {
             throw 'verified release archive does not contain skill-bridge.cjs'
         }
@@ -1034,6 +1039,18 @@ function Invoke-ArchiveUpdate($Receipt, $Release) {
             (Join-Path $script:ConfigDir 'skills\usage-limit\SKILL.md'),
             $script:ReceiptPath
         )
+        $managedShim = (Get-PropertyValue $Receipt @('claudexShim')) -eq $true
+        foreach ($shimPath in @((Join-Path $binDir 'claudex.ps1'), (Join-Path $binDir 'claudex.cmd'))) {
+            $markedShim = $false
+            if (Test-Path -LiteralPath $shimPath -PathType Leaf) {
+                try {
+                    $shimItem = Get-Item -LiteralPath $shimPath -Force
+                    $markedShim = (($shimItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) -and
+                        [IO.File]::ReadAllText($shimPath).Contains('GICC compatibility shim for gpt-in-claude-code')
+                } catch { $markedShim = $false }
+            }
+            if ($managedShim -or $markedShim -or -not (Test-Path -LiteralPath $shimPath)) { $managedPaths += $shimPath }
+        }
         $rollbackRoot = Join-Path $temporary 'rollback'
         [IO.Directory]::CreateDirectory($rollbackRoot) | Out-Null
         $rollbackEntries = @()

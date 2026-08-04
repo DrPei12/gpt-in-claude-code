@@ -43,6 +43,8 @@ $runDir = Join-Path $configDir 'run'
 $usageCacheDir = Join-Path $configDir 'usage-cache'
 $launcherTarget = Join-Path $binDir 'gicc.ps1'
 $cmdTarget = Join-Path $binDir 'gicc.cmd'
+$claudexPsTarget = Join-Path $binDir 'claudex.ps1'
+$claudexCmdTarget = Join-Path $binDir 'claudex.cmd'
 $proxyPortText = if ($env:GICC_PROXY_PORT) { $env:GICC_PROXY_PORT } else { '8318' }
 $skipDependencies = $env:GICC_SKIP_DEPENDENCY_INSTALL -eq '1'
 $allowNodeMigration = -not $skipDependencies -or $env:GICC_ALLOW_NODE_INSTALL -eq '1'
@@ -403,17 +405,54 @@ function Start-InstallTransaction([string[]] $ManagedPaths) {
     $script:installTransaction = [pscustomobject]@{ Root = $rootPath; Entries = $entries; HasFiles = $hasFiles }
 }
 
-function Restore-InstallTransactionEntries([string] $RootPath, $Entries, [string[]] $ManagedPaths) {
+function Restore-InstallTransactionEntries([string] $RootPath, $Entries, [string[]] $ManagedPaths, [switch] $AllowCompatibleOptionalTargets) {
     $restoreErrors = @()
-    if (@($Entries).Count -ne $ManagedPaths.Count) { return @('transaction manifest target count is invalid') }
-    for ($index = 0; $index -lt $ManagedPaths.Count; $index++) {
-        $entry = @($Entries)[$index]
-        $expectedPath = [IO.Path]::GetFullPath($ManagedPaths[$index])
-        $recordedPath = [IO.Path]::GetFullPath([string] $entry.Path)
-        if (-not $recordedPath.Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase)) {
-            $restoreErrors += "transaction manifest contains an unexpected target: $recordedPath"
-            continue
+    $entryList = @($Entries)
+    if ($AllowCompatibleOptionalTargets) {
+        $optionalPaths = @($claudexPsTarget, $claudexCmdTarget)
+        $basePaths = @($ManagedPaths | Where-Object {
+            $candidate = [IO.Path]::GetFullPath($_)
+            -not ($optionalPaths | Where-Object { [IO.Path]::GetFullPath($_).Equals($candidate, [StringComparison]::OrdinalIgnoreCase) })
+        })
+        if ($entryList.Count -lt $basePaths.Count -or $entryList.Count -gt ($basePaths.Count + $optionalPaths.Count)) {
+            return @('transaction manifest target count is invalid')
         }
+        for ($index = 0; $index -lt $basePaths.Count; $index++) {
+            $expectedPath = [IO.Path]::GetFullPath($basePaths[$index])
+            $recordedPath = [IO.Path]::GetFullPath([string] $entryList[$index].Path)
+            if (-not $recordedPath.Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase)) {
+                return @("transaction manifest contains an unexpected target: $recordedPath")
+            }
+        }
+        $lastOptionalIndex = -1
+        for ($index = $basePaths.Count; $index -lt $entryList.Count; $index++) {
+            $recordedPath = [IO.Path]::GetFullPath([string] $entryList[$index].Path)
+            $matchedOptionalIndex = -1
+            for ($optionalIndex = $lastOptionalIndex + 1; $optionalIndex -lt $optionalPaths.Count; $optionalIndex++) {
+                if ($recordedPath.Equals([IO.Path]::GetFullPath($optionalPaths[$optionalIndex]), [StringComparison]::OrdinalIgnoreCase)) {
+                    $matchedOptionalIndex = $optionalIndex
+                    break
+                }
+            }
+            if ($matchedOptionalIndex -lt 0) { return @("transaction manifest contains an unexpected optional target: $recordedPath") }
+            $lastOptionalIndex = $matchedOptionalIndex
+        }
+    } else {
+        if ($entryList.Count -ne $ManagedPaths.Count) { return @('transaction manifest target count is invalid') }
+        for ($index = 0; $index -lt $ManagedPaths.Count; $index++) {
+            $expectedPath = [IO.Path]::GetFullPath($ManagedPaths[$index])
+            $recordedPath = [IO.Path]::GetFullPath([string] $entryList[$index].Path)
+            if (-not $recordedPath.Equals($expectedPath, [StringComparison]::OrdinalIgnoreCase)) {
+                return @("transaction manifest contains an unexpected target: $recordedPath")
+            }
+        }
+    }
+    foreach ($entry in $entryList) {
+        if ($entry.Existed -and -not (Test-Path -LiteralPath $entry.Backup -PathType Leaf)) {
+            return @("transaction backup is missing: $($entry.Backup)")
+        }
+    }
+    foreach ($entry in $entryList) {
         try {
             if ($entry.Existed) {
                 $bytes = [IO.File]::ReadAllBytes($entry.Backup)
@@ -473,7 +512,7 @@ function Recover-IncompleteInstallTransactions([string[]] $ManagedPaths) {
             foreach ($entry in $parsedEntries) { $entries += $entry }
         }
         catch { Fail "invalid interrupted installer transaction manifest: $manifestPath" }
-        $restoreErrors = @(Restore-InstallTransactionEntries $directory.FullName $entries $ManagedPaths)
+        $restoreErrors = @(Restore-InstallTransactionEntries $directory.FullName $entries $ManagedPaths -AllowCompatibleOptionalTargets)
         if ($restoreErrors.Count -gt 0) { Fail "could not recover interrupted installer transaction: $($restoreErrors -join '; ')" }
         $recovered = $true
     }
@@ -505,8 +544,72 @@ if (-not [int]::TryParse($proxyPortText, [ref] $proxyPort) -or $proxyPort -lt 1 
     Fail 'GICC_PROXY_PORT must be an integer from 1 to 65535'
 }
 
-foreach ($sourceFile in @('gicc.ps1', 'gicc.cmd', 'codex-session.ps1', 'statusline.ps1', 'usage-limit.ps1', 'preload.cjs', 'skill-bridge.cjs', 'gicc-runtime.mjs', 'self-update.ps1', 'package.json', 'settings.json', 'skills\usage-limit\SKILL.md', 'skills\usage-limit\SKILL.windows.md')) {
+foreach ($sourceFile in @('gicc.ps1', 'gicc.cmd', 'claudex.ps1', 'claudex.cmd', 'codex-session.ps1', 'statusline.ps1', 'usage-limit.ps1', 'preload.cjs', 'skill-bridge.cjs', 'gicc-runtime.mjs', 'self-update.ps1', 'package.json', 'settings.json', 'skills\usage-limit\SKILL.md', 'skills\usage-limit\SKILL.windows.md')) {
     if (-not (Test-Path -LiteralPath (Join-Path $root $sourceFile) -PathType Leaf)) { Fail "missing repository file: $sourceFile" }
+}
+
+$claudexShimMode = if ($env:GICC_CLAUDEX_SHIM) { [string]$env:GICC_CLAUDEX_SHIM } else { 'auto' }
+if ($claudexShimMode -notin @('auto', 'off', 'force')) { Fail 'GICC_CLAUDEX_SHIM must be auto, off, or force' }
+function Get-ClaudexShimDecision {
+    $installShim = $claudexShimMode -eq 'force'
+    $removePaths = @()
+    if ($installShim) {
+        foreach ($target in @($claudexPsTarget, $claudexCmdTarget)) {
+            if (-not (Test-Path -LiteralPath $target)) { continue }
+            try {
+                if (((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    Fail "refusing to replace a reparse point with the claudex compatibility shim: $target"
+                }
+            } catch { Fail "could not safely inspect the claudex compatibility target ${target}: $($_.Exception.Message)" }
+        }
+    }
+    if ($claudexShimMode -eq 'off') {
+        foreach ($target in @($claudexPsTarget, $claudexCmdTarget)) {
+            if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
+            try {
+                if (((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+                if ([IO.File]::ReadAllText($target).Contains('GICC compatibility shim for gpt-in-claude-code')) {
+                    $removePaths += $target
+                }
+            } catch { }
+        }
+    }
+    if ($claudexShimMode -eq 'auto') {
+        $shimCollision = $false
+        $shimTargetOwned = $false
+        foreach ($target in @($claudexPsTarget, $claudexCmdTarget)) {
+            if (-not (Test-Path -LiteralPath $target)) { continue }
+            if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { $shimCollision = $true; continue }
+            try {
+                if (((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { $shimCollision = $true; continue }
+                if ([IO.File]::ReadAllText($target).Contains('GICC compatibility shim for gpt-in-claude-code')) { $shimTargetOwned = $true }
+                else { $shimCollision = $true }
+            } catch { $shimCollision = $true }
+        }
+        if (-not $packageManagedInstall) {
+            $targetPaths = @(
+                [IO.Path]::GetFullPath($claudexPsTarget)
+                [IO.Path]::GetFullPath($claudexCmdTarget)
+            )
+            foreach ($command in @(Get-Command claudex -All -ErrorAction SilentlyContinue)) {
+                $commandPath = if ($command.PSObject.Properties['Source']) { [string]$command.Source } else { '' }
+                if (-not $commandPath) {
+                    if (-not $shimTargetOwned) { $shimCollision = $true }
+                    continue
+                }
+                try { $commandPath = [IO.Path]::GetFullPath($commandPath) }
+                catch {
+                    if (-not $shimTargetOwned) { $shimCollision = $true }
+                    continue
+                }
+                if (-not ($targetPaths | Where-Object { $_.Equals($commandPath, [StringComparison]::OrdinalIgnoreCase) }) -and -not $shimTargetOwned) { $shimCollision = $true }
+            }
+        }
+        if ($shimCollision) {
+            [Console]::Error.WriteLine('install.ps1: existing non-GICC claudex command detected; leaving it unchanged. Use gicc, or set GICC_CLAUDEX_SHIM=force only after reviewing that command.')
+        } elseif (-not $packageManagedInstall -or $shimTargetOwned) { $installShim = $true }
+    }
+    return [pscustomobject]@{ Install = $installShim; RemovePaths = @($removePaths) }
 }
 
 function Get-ProxyVersion([string] $Path) {
@@ -607,6 +710,14 @@ foreach ($existingPrivateManagedPath in $installManagedPaths) {
 Acquire-InstallLock
 try {
 Recover-IncompleteInstallTransactions $installManagedPaths
+$claudexShimDecision = Get-ClaudexShimDecision
+$installClaudexShim = [bool] $claudexShimDecision.Install
+$removeClaudexShimPaths = @($claudexShimDecision.RemovePaths)
+if ($installClaudexShim) { $installManagedPaths += @($claudexPsTarget, $claudexCmdTarget) }
+if ($removeClaudexShimPaths.Count -gt 0) { $installManagedPaths += $removeClaudexShimPaths }
+foreach ($existingShimPath in @($installManagedPaths | Where-Object { $_ -in @($claudexPsTarget, $claudexCmdTarget) })) {
+    if (Test-Path -LiteralPath $existingShimPath -PathType Leaf) { Protect-PrivatePath $existingShimPath $false }
+}
 Start-InstallTransaction $installManagedPaths
 
 if (-not $skipDependencies) {
@@ -762,6 +873,13 @@ Write-TextAtomic $envFile $environmentText
 
 Copy-Item -LiteralPath (Join-Path $root 'gicc.ps1') -Destination $launcherTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'gicc.cmd') -Destination $cmdTarget -Force
+if ($installClaudexShim) {
+    Copy-Item -LiteralPath (Join-Path $root 'claudex.ps1') -Destination $claudexPsTarget -Force
+    Copy-Item -LiteralPath (Join-Path $root 'claudex.cmd') -Destination $claudexCmdTarget -Force
+}
+foreach ($removeClaudexShimPath in $removeClaudexShimPaths) {
+    Remove-Item -LiteralPath $removeClaudexShimPath -Force -ErrorAction Stop
+}
 Copy-Item -LiteralPath (Join-Path $root 'statusline.ps1') -Destination $statuslineTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'usage-limit.ps1') -Destination $usageLimitTarget -Force
 Copy-Item -LiteralPath (Join-Path $root 'codex-session.ps1') -Destination $codexSessionTarget -Force
@@ -772,7 +890,7 @@ Copy-Item -LiteralPath (Join-Path $root 'self-update.ps1') -Destination $selfUpd
 Ensure-PrivateDirectory (Split-Path $usageSkillTarget -Parent)
 Copy-Item -LiteralPath (Join-Path $root 'skills\usage-limit\SKILL.windows.md') -Destination $usageSkillTarget -Force
 
-foreach ($privateInstalledFile in @(
+$privateInstalledFiles = @(
     $launcherTarget,
     $cmdTarget,
     $statuslineTarget,
@@ -783,7 +901,9 @@ foreach ($privateInstalledFile in @(
     $runtimeTarget,
     $selfUpdateTarget,
     $usageSkillTarget
-)) {
+)
+if ($installClaudexShim) { $privateInstalledFiles += @($claudexPsTarget, $claudexCmdTarget) }
+foreach ($privateInstalledFile in $privateInstalledFiles) {
     Protect-PrivatePath $privateInstalledFile $false
 }
 
@@ -796,7 +916,7 @@ $installVersion = [string] $packageManifest.version
 if ($installVersion -notmatch '^\d+\.\d+\.\d+$') { Fail 'package.json contains an invalid GICC version' }
 $installMethod = if ($env:GICC_INSTALL_METHOD) { $env:GICC_INSTALL_METHOD } elseif (Test-Path -LiteralPath (Join-Path $root '.git')) { 'git' } else { 'archive' }
 if ($installMethod -notin @('homebrew', 'scoop', 'winget', 'archive', 'git')) { Fail "unsupported GICC_INSTALL_METHOD: $installMethod" }
-$receipt = [ordered]@{ schema = 1; version = $installVersion; method = $installMethod; binDir = $binDir; repository = 'DrPei12/gpt-in-claude-code' }
+$receipt = [ordered]@{ schema = 1; version = $installVersion; method = $installMethod; binDir = $binDir; repository = 'DrPei12/gpt-in-claude-code'; claudexShim = $installClaudexShim }
 Write-TextAtomic $installReceiptTarget (($receipt | ConvertTo-Json -Compress) + "`n")
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -816,6 +936,8 @@ foreach ($pathToAdd in @(
 [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
 
 [Console]::WriteLine("Installed GICC launcher: $cmdTarget")
+if ($installClaudexShim) { [Console]::WriteLine("Installed compatibility command: $claudexCmdTarget") }
+if ($removeClaudexShimPaths.Count -gt 0) { [Console]::WriteLine("Removed GICC compatibility command from $binDir") }
 [Console]::WriteLine("Installed isolated config: $configDir")
 
 $authReady = $false

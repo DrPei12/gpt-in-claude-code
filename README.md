@@ -155,6 +155,12 @@ gicc ultrareview ...       Use Claude Ultrareview with the direct Anthropic prof
 gicc --claude-chrome    Use the direct Claude profile with Chrome support
 ```
 
+Direct and archive installs also provide `claudex` when that command name is
+free. It is only a compatibility alias for `gicc`: both commands use the same
+configuration, sessions, arguments, and update channel. `gicc` remains the
+canonical command. The installer never replaces an unrelated existing
+`claudex` command automatically.
+
 Inside GICC, `/model solplan` selects Solplan and `/usage-limit` prints the detailed quota report. Existing Claude and Codex skills can be referenced with `/skill-name` or `$skill-name`; see the [skills guide](docs/skills.md) for discovery and collision behavior. Unknown options and supported Claude Code subcommands are passed through unchanged. See the [usage guide](docs/usage.md) for the complete command reference.
 
 The GPT model picker belongs to a managed Codex backed process. Native Claude

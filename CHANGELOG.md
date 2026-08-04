@@ -11,6 +11,9 @@ All notable changes to this independent distribution are documented here.
 - `gicc context status` reports checkpoint health, while scoped
   `gicc context repair` quarantines invalid active state and restores a valid
   previous checkpoint without editing raw history.
+- Direct and archive installers can add a collision safe `claudex`
+  compatibility alias that forwards to the canonical `gicc` launcher without
+  creating separate configuration or session state.
 
 ### Changed
 
@@ -18,6 +21,8 @@ All notable changes to this independent distribution are documented here.
   and native Agent Teams now use Claude Code's native scheduling, directed by
   the model.
   GICC no longer sets fixed Tool or Agent concurrency limits.
+- Install receipts record optional alias ownership so reinstall and archive
+  rollback touch only GICC managed command files.
 
 ### Security
 

@@ -73,7 +73,7 @@ sessions, and billing contexts never cross that boundary.
 
 | Component | Unix | Windows | Responsibility |
 | --- | --- | --- | --- |
-| Launcher | `gicc` | `gicc.ps1`, `gicc.cmd` | Parse GICC flags, negotiate Claude Code capabilities, configure the session, launch Claude Code |
+| Launcher | `gicc`, optional `claudex` alias | `gicc.ps1`, `gicc.cmd`, optional `claudex` alias | Parse GICC flags, negotiate Claude Code capabilities, configure the session, launch Claude Code; the alias only forwards to the canonical launcher |
 | Installer | `install.sh` | `install.ps1` | Install dependencies, private config, launchers, verified compatibility binary |
 | Auth bridge | `codex-session` | `codex-session.ps1` | Validate Codex login, atomically sync the minimum credential fields |
 | Usage helper | `usage-limit` | `usage-limit.ps1` | Fetch, sanitize, cache, and display Codex usage limits |
@@ -129,7 +129,7 @@ Updating the CLIProxyAPI pin is security sensitive: collect every macOS/Linux/Wi
 
 | Path | Purpose |
 | --- | --- |
-| `gicc`, `gicc.ps1`, `gicc.cmd` | Cross platform launchers |
+| `gicc`, `gicc.ps1`, `gicc.cmd`, `claudex*` | Cross platform launcher and optional compatibility alias |
 | `install.sh`, `install.ps1`, `install.zsh` | Install and compatibility entry points |
 | `codex-session*` | Authentication bridge |
 | `usage-limit*` | Detailed and cached quota reporting |

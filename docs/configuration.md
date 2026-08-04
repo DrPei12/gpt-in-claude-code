@@ -151,6 +151,7 @@ These are primarily for packaging, CI, and advanced installations:
 | --- | --- |
 | `GICC_BIN_DIR` | Alternate launcher installation directory |
 | `GICC_PROXY_PORT` | Alternate generated loopback port |
+| `GICC_CLAUDEX_SHIM` | `auto` installs the optional alias only when safe; `off` disables it; `force` explicitly replaces the target |
 | `GICC_SKIP_DEPENDENCY_INSTALL=1` | Skip dependency download and installation |
 | `GICC_SKIP_SERVICE_START=1` | Install files without starting or verifying the service |
 
@@ -168,6 +169,7 @@ details and are not a stable public interface.
 | --- | --- |
 | `~/.local/bin/gicc` | Unix launcher |
 | `~/.local/bin/gicc.ps1` and `gicc.cmd` | Windows launchers |
+| `~/.local/bin/claudex` or `claudex.ps1` and `claudex.cmd` | Optional forwarding alias installed only when enabled and collision free |
 | `~/.config/gpt-in-claude-code/env` | Private environment config and generated key |
 | `~/.config/gpt-in-claude-code/settings.json` | Isolated Claude Code settings |
 | `~/.config/gpt-in-claude-code/skill-bridge.cjs` | Cross platform skill discovery and compatibility helper |

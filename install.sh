@@ -55,6 +55,7 @@ readonly self_update_target="$config_dir/self-update"
 readonly install_receipt_target="$config_dir/install.json"
 readonly proxy_config_target="$config_dir/cliproxyapi.yaml"
 readonly launcher_target="$bin_dir/gicc"
+readonly claudex_target="$bin_dir/claudex"
 readonly proxy_version="7.2.91-gicc.2"
 readonly proxy_release="v0.1.2"
 readonly proxy_port="${GICC_PROXY_PORT:-8318}"
@@ -104,6 +105,10 @@ transaction_targets=(
   "$usage_skill_target"
   "$install_receipt_target"
 )
+readonly transaction_base_target_count=${#transaction_targets[@]}
+
+install_claudex_shim=0
+remove_claudex_shim=0
 
 usage() {
   printf '%s\n' 'Usage: ./install.sh [--login]'
@@ -141,9 +146,44 @@ done
 [[ "$proxy_port" =~ ^[0-9]+$ ]] && (( proxy_port >= 1 && proxy_port <= 65535 )) || \
   fail 'GICC_PROXY_PORT must be an integer from 1 to 65535'
 
-for source_file in gicc codex-session statusline usage-limit preload.cjs skill-bridge.cjs gicc-runtime.mjs self-update package.json settings.json skills/usage-limit/SKILL.md; do
+for source_file in gicc claudex codex-session statusline usage-limit preload.cjs skill-bridge.cjs gicc-runtime.mjs self-update package.json settings.json skills/usage-limit/SKILL.md; do
   [[ -r "$root/$source_file" ]] || fail "missing repository file: $source_file"
 done
+
+configure_claudex_shim() {
+  local mode="${GICC_CLAUDEX_SHIM:-auto}" resolved="" collision=0 target_owned=0
+  case "$mode" in auto|off|force) ;; *) fail 'GICC_CLAUDEX_SHIM must be auto, off, or force' ;; esac
+  if [[ "$mode" == off ]]; then
+    if [[ -f "$claudex_target" && ! -L "$claudex_target" ]] &&
+        grep -F 'GICC compatibility shim for gpt-in-claude-code' "$claudex_target" >/dev/null 2>&1; then
+      remove_claudex_shim=1
+      transaction_targets+=("$claudex_target")
+    fi
+    return 0
+  fi
+  if [[ "$mode" == auto ]]; then
+    if [[ -e "$claudex_target" ]]; then
+      if [[ ! -f "$claudex_target" || -L "$claudex_target" ]] ||
+          ! grep -F 'GICC compatibility shim for gpt-in-claude-code' "$claudex_target" >/dev/null 2>&1; then
+        collision=1
+      else
+        target_owned=1
+      fi
+    fi
+    if (( ! package_managed_install )); then
+      resolved=$(command -v claudex 2>/dev/null || true)
+      if [[ -n "$resolved" && "$resolved" != "$claudex_target" ]] && (( ! target_owned )); then collision=1; fi
+    elif (( ! target_owned )); then
+      return 0
+    fi
+  fi
+  if (( collision )); then
+    printf '%s\n' 'install.sh: existing non-GICC claudex command detected; leaving it unchanged. Use gicc, or set GICC_CLAUDEX_SHIM=force only after reviewing that command.' >&2
+    return 0
+  fi
+  install_claudex_shim=1
+  transaction_targets+=("$claudex_target")
+}
 
 run_as_root() {
   if [[ "$(id -u)" == 0 ]]; then "$@"
@@ -307,32 +347,36 @@ begin_install_transaction() {
   transaction_active=1
 }
 
-transaction_target_is_allowed() {
-  local candidate="$1" target
-  for target in "${transaction_targets[@]}"; do [[ "$candidate" != "$target" ]] || return 0; done
-  return 1
+transaction_target_matches_index() {
+  local candidate="$1" index="$2"
+  if (( index < transaction_base_target_count )); then
+    [[ "$candidate" == "${transaction_targets[$index]}" ]]
+  else
+    (( index == transaction_base_target_count )) && [[ "$candidate" == "$claudex_target" ]]
+  fi
 }
 
 restore_install_transaction_dir() {
-  local source="$1" index=0 existed target normalized_target extra="" restore_failed=0 line_count=0
+  local source="$1" index=0 existed target normalized_target restore_failed=0 line_count=0 recorded_count=0
   local -a recorded_existence=() recorded_targets=()
   [[ -r "$source/manifest" ]] || return 1
   if [[ -r "$source/manifest-format" ]]; then
     [[ "$(<"$source/manifest-format")" == nul-v1 ]] || return 1
     exec 3< "$source/manifest"
-    for index in "${!transaction_targets[@]}"; do
+    while :; do
       existed=""; target=""
-      IFS= read -r -d '' existed <&3 || { exec 3<&-; return 1; }
+      if ! IFS= read -r -d '' existed <&3; then
+        [[ -z "$existed" ]] || { exec 3<&-; return 1; }
+        break
+      fi
       IFS= read -r -d '' target <&3 || { exec 3<&-; return 1; }
       [[ "$existed" == 0 || "$existed" == 1 ]] || { exec 3<&-; return 1; }
-      transaction_target_is_allowed "$target" || { exec 3<&-; return 1; }
-      [[ "$target" == "${transaction_targets[$index]}" ]] || { exec 3<&-; return 1; }
+      transaction_target_matches_index "$target" "$index" || { exec 3<&-; return 1; }
       recorded_existence+=("$existed")
       recorded_targets+=("$target")
+      index=$(( index + 1 ))
+      (( index <= transaction_base_target_count + 1 )) || { exec 3<&-; return 1; }
     done
-    # A complete manifest ends immediately after the final NUL. Reject both a
-    # further record and an unterminated trailing fragment before restoring.
-    if IFS= read -r -d '' extra <&3 || [[ -n "$extra" ]]; then exec 3<&-; return 1; fi
     exec 3<&-
   else
     # Releases before the NUL journal used one tab-delimited record per line.
@@ -342,18 +386,19 @@ restore_install_transaction_dir() {
       [[ "$existed" == 0 || "$existed" == 1 ]] || return 1
       normalized_target=""
       absolute_install_directory "$target" normalized_target
-      transaction_target_is_allowed "$normalized_target" || return 1
-      [[ "$normalized_target" == "${transaction_targets[$index]:-}" ]] || return 1
+      transaction_target_matches_index "$normalized_target" "$index" || return 1
       recorded_existence+=("$existed")
       recorded_targets+=("$normalized_target")
       index=$(( index + 1 ))
+      (( index <= transaction_base_target_count + 1 )) || return 1
     done < "$source/manifest"
-    (( index == ${#transaction_targets[@]} )) || return 1
   fi
-  for index in "${!transaction_targets[@]}"; do
+  recorded_count=${#recorded_targets[@]}
+  (( recorded_count == transaction_base_target_count || recorded_count == transaction_base_target_count + 1 )) || return 1
+  for index in "${!recorded_targets[@]}"; do
     [[ "${recorded_existence[$index]}" != 1 || -f "$source/backup/$index" ]] || return 1
   done
-  for index in "${!transaction_targets[@]}"; do
+  for index in "${!recorded_targets[@]}"; do
     existed=${recorded_existence[$index]}
     target=${recorded_targets[$index]}
     if [[ "$existed" == 1 ]]; then
@@ -364,7 +409,7 @@ restore_install_transaction_dir() {
     fi
     line_count=$(( line_count + 1 ))
   done
-  (( line_count == ${#transaction_targets[@]} )) || return 1
+  (( line_count == recorded_count )) || return 1
   (( restore_failed == 0 )) || return 1
   rm -rf "$source"
 }
@@ -516,6 +561,7 @@ chmod 700 "$config_dir" "$managed_bin_dir" "$auth_dir" "$context_dir"
 acquire_install_lock
 trap cleanup EXIT
 recover_incomplete_install_transactions
+configure_claudex_shim
 begin_install_transaction
 
 if [[ "$skip_deps" != 1 ]]; then
@@ -632,6 +678,8 @@ env_tmp=""
 chmod 600 "$env_file"
 
 install -m 755 "$root/gicc" "$launcher_target"
+if (( install_claudex_shim )); then install -m 755 "$root/claudex" "$claudex_target"; fi
+if (( remove_claudex_shim )); then rm -f "$claudex_target"; fi
 install -m 755 "$root/statusline" "$statusline_target"
 install -m 755 "$root/usage-limit" "$usage_limit_target"
 install -m 755 "$root/codex-session" "$codex_session_target"
@@ -659,12 +707,15 @@ install_version=$(jq -r '.version' "$root/package.json")
 [[ "$install_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'package.json contains an invalid GICC version'
 receipt_tmp=$(mktemp "$config_dir/install.json.tmp.XXXXXX")
 jq -n --arg version "$install_version" --arg method "$install_method" --arg binDir "$bin_dir" \
-  '{schema: 1, version: $version, method: $method, binDir: $binDir, repository: "DrPei12/gpt-in-claude-code"}' > "$receipt_tmp"
+  --argjson claudexShim "$install_claudex_shim" \
+  '{schema: 1, version: $version, method: $method, binDir: $binDir, repository: "DrPei12/gpt-in-claude-code", claudexShim: ($claudexShim == 1)}' > "$receipt_tmp"
 chmod 600 "$receipt_tmp"
 mv -f "$receipt_tmp" "$install_receipt_target"
 receipt_tmp=""
 
 printf 'Installed GICC launcher: %s\n' "$launcher_target"
+if (( install_claudex_shim )); then printf 'Installed compatibility command: %s\n' "$claudex_target"; fi
+if (( remove_claudex_shim )); then printf 'Removed GICC compatibility command: %s\n' "$claudex_target"; fi
 printf 'Installed isolated config: %s\n' "$config_dir"
 if [[ -z "${GICC_PACKAGE_ROOT:-}" && ! "${GICC_INSTALL_METHOD:-}" =~ ^(homebrew|scoop|winget)$ && ":$PATH:" != *":$bin_dir:"* ]]; then
   printf 'Add this directory to PATH: %s\n' "$bin_dir"

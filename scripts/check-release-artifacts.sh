@@ -90,6 +90,7 @@ extracted="$archive_smoke/gicc-$version"
 if ! HOME="$archive_home" PATH="$archive_bin:$PATH" \
     GICC_BIN_DIR="$archive_install_bin" GICC_CONFIG_DIR="$archive_config" \
     GICC_PROXY_TOKEN=artifact-test-token GICC_INSTALL_METHOD=archive \
+    GICC_CLAUDEX_SHIM=force \
     GICC_SKIP_DEPENDENCY_INSTALL=1 GICC_SKIP_SERVICE_START=1 \
     "$extracted/install.sh" >"$temporary/archive-install.stdout" 2>"$temporary/archive-install.stderr"; then
   printf '%s\n' 'extracted release installer failed; captured output follows' >&2
@@ -111,6 +112,9 @@ test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive
 test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive_config" \
   "$archive_install_bin/gicc" claude --version 'argument with spaces')" = \
   'artifact-claude|--version|argument with spaces'
+test "$(HOME="$archive_home" PATH="$archive_bin:$PATH" GICC_CONFIG_DIR="$archive_config" \
+  "$archive_install_bin/claudex" codex --version 'argument with spaces')" = \
+  'artifact-codex|--version|argument with spaces'
 
 make_fixture() {
   fixture_root=$1
@@ -174,7 +178,7 @@ const text = fs.readFileSync(file, 'utf8');
 if (/\r/.test(text)) throw new Error(`${file} contains a non-LF newline`);
 NODE
 done
-for command_file in gicc.cmd gicc-package.cmd; do
+for command_file in gicc.cmd gicc-package.cmd claudex.cmd; do
   node - "$eol_fixture/dist/gicc-$version/$command_file" <<'NODE'
 const fs = require('fs');
 const file = process.argv[2];
@@ -239,7 +243,7 @@ node "$canonical_fixture/scripts/create-release-archives.mjs" "$mode_stage" \
 cmp "$root/dist/gicc-$version.tar.gz" "$temporary/mode-normalized.tar.gz"
 cmp "$root/dist/gicc-$version-windows.zip" "$temporary/mode-normalized-windows.zip"
 executable_release_files=(
-  bootstrap.sh gicc codex-session install.sh install.zsh self-update statusline usage-limit bin/gicc-package.mjs
+  bootstrap.sh gicc claudex codex-session install.sh install.zsh self-update statusline usage-limit bin/gicc-package.mjs
 )
 for executable in "${executable_release_files[@]}"; do
   tar_mode=$(tar -tvzf "$temporary/mode-normalized.tar.gz" "gicc-$version/$executable" | awk '{print $1}')

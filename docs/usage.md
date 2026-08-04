@@ -13,6 +13,7 @@ gicc --terra --print "Explain this repository"
 | Command | Behavior |
 | --- | --- |
 | `gicc` | Start the Sol leader with auto permissions |
+| `claudex` | Forward every argument to the sibling `gicc` launcher when the optional compatibility alias is installed |
 | `gicc --sol` | Explicitly start with GPT-5.6 Sol |
 | `gicc --terra` | Start with GPT-5.6 Terra |
 | `gicc --luna` | Start with GPT-5.6 Luna |
@@ -33,6 +34,11 @@ gicc --terra --print "Explain this repository"
 | `gicc ultrareview [ARGS]` | Run Claude Ultrareview through the clean first party profile |
 | `gicc codex [ARGS]` | Run the native Codex CLI without GICC provider, prompt, session, or policy translation |
 | `gicc claude [ARGS]` | Run native Claude Code with caller owned provider/profile configuration and without GICC provider/model injection |
+
+`claudex` is not a second runtime. It shares the same GICC configuration,
+session history, context checkpoints, models, and command behavior. Use `gicc`
+in scripts because it is always installed; the alias may be omitted when its
+name belongs to another local tool.
 
 `--max-effort` and `--ultracode` are mutually exclusive. Explicit `--effort`
 or `--settings` arguments cannot be combined with either shortcut because they

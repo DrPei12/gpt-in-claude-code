@@ -148,7 +148,7 @@ if (-not $GICCInternalStage) {
     } else { $selectedStages = @($Stage | Select-Object -Unique) }
     foreach ($selectedStage in $selectedStages) {
         $defaultTimeout = switch ($selectedStage) {
-            'Harness' { 900 }
+            'Harness' { 1200 }
             'SelfUpdateLocks' { 300 }
             'Node' { 300 }
         }
@@ -247,7 +247,7 @@ try {
     [IO.Directory]::CreateDirectory($testConfig) | Out-Null
     [IO.Directory]::CreateDirectory($fakeBin) | Out-Null
     if ($isWindowsPlatform -and $env:CI) {
-        $testSuiteTimeoutSeconds = 600
+        $testSuiteTimeoutSeconds = 900
         if ($env:GICC_TEST_SUITE_TIMEOUT_SECONDS) {
             $configuredTimeout = 0
             Assert-True ([int]::TryParse($env:GICC_TEST_SUITE_TIMEOUT_SECONDS, [ref] $configuredTimeout) -and
@@ -2162,10 +2162,10 @@ process.stdout.write(JSON.stringify({
         Wait-ForTestPath (Join-Path $temporary 'windows-aba-b-publish') 'Windows publication ABA replacement publishes before nonce capture'
         $abaBNonce = ([IO.File]::ReadAllLines((Join-Path $modelLock 'owner')) | Where-Object { $_.StartsWith('nonce=') })[0]
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-a-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $abaA 'Windows publication ABA creator exits'
+        Wait-ForTestProcess $abaA 'Windows publication ABA creator exits' 60000
         Assert-True (([IO.File]::ReadAllText((Join-Path $modelLock 'owner'))).Contains($abaBNonce)) 'Windows paused creator cannot overwrite B generation'
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-b-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $abaB 'Windows publication ABA owner exits'
+        Wait-ForTestProcess $abaB 'Windows publication ABA owner exits' 60000
         Write-TestStage 'model lock publication ABA regression passed'
 
         Remove-Item -LiteralPath $modelLock -Recurse -Force -ErrorAction SilentlyContinue
@@ -2192,9 +2192,9 @@ process.stdout.write(JSON.stringify({
         Wait-ForTestProcess $abaZ 'Windows Z contender finishes behind quarantine barrier' 60000
         Assert-True (([IO.File]::ReadAllText((Join-Path $modelLock 'owner'))).Contains($abaYNonce)) 'Windows rename ABA restores Y and excludes Z'
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-x-after-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $abaX 'Windows stale remover exits'
+        Wait-ForTestProcess $abaX 'Windows stale remover exits' 60000
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-aba-y-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $abaY 'Windows Y owner exits'
+        Wait-ForTestProcess $abaY 'Windows Y owner exits' 60000
         Write-TestStage 'model lock rename ABA regression passed'
 
         Remove-Item -LiteralPath $modelLock -Recurse -Force -ErrorAction SilentlyContinue
@@ -2220,9 +2220,9 @@ process.stdout.write(JSON.stringify({
         Wait-ForTestPath (Join-Path $temporary 'windows-self-x-after') 'Windows self recovery stale owner pauses after rename'
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-self-y-continue'), "continue`n", $utf8)
         Wait-ForTestPath (Join-Path $temporary 'windows-self-y-recovered') 'Windows owner restores its own moved generation'
-        Wait-ForTestProcess $selfY 'Windows recovered owner exits without lock timeout'
+        Wait-ForTestProcess $selfY 'Windows recovered owner exits without lock timeout' 60000
         [IO.File]::WriteAllText((Join-Path $temporary 'windows-self-x-after-continue'), "continue`n", $utf8)
-        Wait-ForTestProcess $selfX 'Windows paused remover exits after owner recovery'
+        Wait-ForTestProcess $selfX 'Windows paused remover exits after owner recovery' 60000
         Assert-True (-not (Test-Path -LiteralPath $modelLock) -and @(Get-ChildItem -LiteralPath $runDirectory -Directory -Filter 'model-display.lock.quarantine.*' -ErrorAction SilentlyContinue).Count -eq 0) 'Windows self recovery leaves no lock generation'
         Write-TestStage 'model lock self recovery regression passed'
 
@@ -3317,11 +3317,16 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     $env:GICC_CONFIG_DIR = Join-Path $installHome '.config\gpt-in-claude-code'
     $env:GICC_BIN_DIR = Join-Path $installHome '.local\bin'
     $env:GICC_PROXY_TOKEN = 'installer-test-token'
+    $env:GICC_CLAUDEX_SHIM = 'force'
     $env:GICC_SKIP_DEPENDENCY_INSTALL = '1'
     $env:GICC_SKIP_SERVICE_START = '1'
     & (Join-Path $root 'install.ps1') | Out-Null
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'gicc.cmd') -PathType Leaf) 'cmd launcher installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'gicc.ps1') -PathType Leaf) 'PowerShell launcher installed'
+    Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd') -PathType Leaf) 'claudex CMD compatibility shim installed'
+    Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -PathType Leaf) 'claudex PowerShell compatibility shim installed'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw).Contains('GICC compatibility shim for gpt-in-claude-code')) 'installed claudex shim carries the managed marker'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $true) 'install receipt records the managed claudex shim'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'statusline.ps1') -PathType Leaf) 'statusline installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'usage-limit.ps1') -PathType Leaf) 'usage helper installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'codex-session.ps1') -PathType Leaf) 'Codex session helper installed'
@@ -3331,6 +3336,49 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md') -PathType Leaf) 'usage skill installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -PathType Leaf) 'skill bridge installed'
     Assert-True (Test-Path -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -PathType Leaf) 'session runtime installed'
+
+    $pathClaudex = Join-Path $fakeBin 'claudex.cmd'
+    $pathClaudexText = "@echo off`r`necho external-path-claudex`r`n"
+    [IO.File]::WriteAllText($pathClaudex, $pathClaudexText, $utf8)
+    $env:GICC_CLAUDEX_SHIM = 'auto'
+    & (Join-Path $root 'install.ps1') | Out-Null
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw).Contains('GICC compatibility shim for gpt-in-claude-code')) 'auto reinstall retains ownership of its marked shim when another claudex is on PATH'
+    Assert-True ((Get-Content -LiteralPath $pathClaudex -Raw) -ceq $pathClaudexText) 'auto reinstall does not replace another claudex found on PATH'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $true) 'auto reinstall preserves managed shim ownership in the receipt'
+    Remove-Item -LiteralPath $pathClaudex -Force
+
+    $externalClaudexPs = "# caller owned claudex`n[Console]::Write('external-claudex')`n"
+    $externalClaudexCmd = "@echo off`r`necho external-claudex`r`n"
+    [IO.File]::WriteAllText((Join-Path $env:GICC_BIN_DIR 'claudex.ps1'), $externalClaudexPs, $utf8)
+    [IO.File]::WriteAllText((Join-Path $env:GICC_BIN_DIR 'claudex.cmd'), $externalClaudexCmd, $utf8)
+    $env:GICC_CLAUDEX_SHIM = 'auto'
+    $previousConsoleError = [Console]::Error
+    $collisionConsoleError = New-Object IO.StringWriter
+    [Console]::SetError($collisionConsoleError)
+    try { & (Join-Path $root 'install.ps1') | Out-Null }
+    finally {
+        [Console]::SetError($previousConsoleError)
+        $collisionOutput = $collisionConsoleError.ToString()
+        $collisionConsoleError.Dispose()
+    }
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw) -ceq $externalClaudexPs) 'auto shim mode preserves a caller owned PowerShell command'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd') -Raw) -ceq $externalClaudexCmd) 'auto shim mode preserves a caller owned CMD command'
+    Assert-True ($collisionOutput.Contains('existing non-GICC claudex command detected')) 'shim collision reports a safe fallback'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $false) 'collision receipt does not claim ownership of caller files'
+    $env:GICC_CLAUDEX_SHIM = 'off'
+    & (Join-Path $root 'install.ps1') | Out-Null
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw) -ceq $externalClaudexPs) 'off mode preserves a caller owned claudex command'
+    $env:GICC_CLAUDEX_SHIM = 'force'
+    & (Join-Path $root 'install.ps1') | Out-Null
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw).Contains('GICC compatibility shim for gpt-in-claude-code')) 'force mode installs the reviewed compatibility shim'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $true) 'force mode restores managed shim ownership'
+    $env:GICC_CLAUDEX_SHIM = 'off'
+    & (Join-Path $root 'install.ps1') | Out-Null
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1'))) 'off mode removes the managed PowerShell shim'
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd'))) 'off mode removes the managed CMD shim'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $false) 'off mode clears managed shim ownership in the receipt'
+    $env:GICC_CLAUDEX_SHIM = 'force'
+    & (Join-Path $root 'install.ps1') | Out-Null
     $installedUsageSkill = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md') -Raw
     Assert-True ($installedUsageSkill.Contains('shell: powershell')) 'Windows usage skill selects PowerShell'
     Assert-True ($installedUsageSkill.Contains('allowed-tools: PowerShell(')) 'Windows usage skill grants only PowerShell helper invocation'
@@ -3434,7 +3482,9 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
         (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs'),
         (Join-Path $env:GICC_CONFIG_DIR 'self-update.ps1'),
         (Join-Path $env:GICC_CONFIG_DIR 'skills\usage-limit\SKILL.md'),
-        (Join-Path $env:GICC_CONFIG_DIR 'install.json')
+        (Join-Path $env:GICC_CONFIG_DIR 'install.json'),
+        (Join-Path $env:GICC_BIN_DIR 'claudex.ps1'),
+        (Join-Path $env:GICC_BIN_DIR 'claudex.cmd')
     )
     $crashEntries = @()
     for ($crashIndex = 0; $crashIndex -lt $crashTargets.Count; $crashIndex++) {
@@ -3447,7 +3497,10 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     [IO.File]::WriteAllText((Join-Path $crashTransaction 'manifest.json'), (($crashEntries | ConvertTo-Json -Depth 5) + "`n"), $utf8)
     [IO.File]::WriteAllText((Join-Path $crashTransaction 'state'), "committing`n", $utf8)
     [IO.File]::WriteAllText((Join-Path $env:GICC_CONFIG_DIR 'env'), "GICC_PROXY_TOKEN=corrupted-crash-token`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $env:GICC_BIN_DIR 'claudex.ps1'), "# interrupted caller file`n", $utf8)
+    [IO.File]::WriteAllText((Join-Path $env:GICC_BIN_DIR 'claudex.cmd'), "@rem interrupted caller file`r`n", $utf8)
     Remove-Item Env:GICC_PROXY_TOKEN
+    $env:GICC_CLAUDEX_SHIM = 'auto'
     $previousConsoleOut = [Console]::Out
     $recoveryConsoleOut = New-Object IO.StringWriter
     [Console]::SetOut($recoveryConsoleOut)
@@ -3461,9 +3514,12 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
     Assert-True ($recoveryOutput.Contains('Recovered the previous interrupted GICC installation')) 'Windows installer recovers a durable interrupted transaction'
     $recoveredTokenLine = [IO.File]::ReadAllLines((Join-Path $env:GICC_CONFIG_DIR 'env')) | Where-Object { $_.StartsWith('GICC_PROXY_TOKEN=') } | Select-Object -First 1
     Assert-True ($recoveredTokenLine.Substring('GICC_PROXY_TOKEN='.Length) -ceq $specialInstallerToken) 'Windows interrupted-transaction recovery restores env before reinstall'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw).Contains('GICC compatibility shim for gpt-in-claude-code')) 'Windows interrupted recovery restores shim ownership before auto mode decides'
+    Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json).claudexShim -eq $true) 'Windows interrupted recovery keeps the restored shim managed'
     Assert-True (-not (Test-Path -LiteralPath $crashTransaction)) 'Windows interrupted transaction is removed after recovery'
     }
     $env:GICC_PROXY_TOKEN = $specialInstallerToken
+    $env:GICC_CLAUDEX_SHIM = 'force'
     $selfUpdateStatus = (& (Join-Path $root 'gicc.ps1') self-update --status | Out-String)
     Assert-True ($selfUpdateStatus.Contains("Installed version: $($packageManifest.version)")) 'self-update status dispatch'
     Assert-True ($selfUpdateStatus.Contains('Install method: git')) 'self-update preserves git source provenance'
@@ -3476,6 +3532,8 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
             $releaseRoot = Join-Path $source "gicc-$Version"
             [IO.Directory]::CreateDirectory($releaseRoot) | Out-Null
             [IO.File]::WriteAllText((Join-Path $releaseRoot 'package.json'), "{`"version`":`"$Version`"}`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $releaseRoot 'claudex.ps1'), "# GICC compatibility shim for gpt-in-claude-code`n", $utf8)
+            [IO.File]::WriteAllText((Join-Path $releaseRoot 'claudex.cmd'), "@rem GICC compatibility shim for gpt-in-claude-code`r`n", $utf8)
             if ($Mode -ne 'missing-bridge') {
                 [IO.File]::WriteAllText((Join-Path $releaseRoot 'skill-bridge.cjs'), "'use strict';`n", $utf8)
             }
@@ -3489,9 +3547,13 @@ param([switch] $RefreshCache, [switch] $LockHeld, [string] $LockToken)
 [IO.Directory]::CreateDirectory(`$config) | Out-Null
 [IO.File]::WriteAllText((Join-Path `$config 'skill-bridge.cjs'), 'fixture bridge $Version')
 [IO.File]::WriteAllText((Join-Path `$config 'gicc-runtime.mjs'), 'fixture runtime $Version')
-if ('$installerMode' -eq 'rollback') { exit 23 }
+if ('$installerMode' -eq 'rollback') {
+    [IO.File]::WriteAllText((Join-Path `$env:GICC_BIN_DIR 'claudex.ps1'), 'partial fixture claudex')
+    [IO.File]::WriteAllText((Join-Path `$env:GICC_BIN_DIR 'claudex.cmd'), 'partial fixture claudex')
+    exit 23
+}
 [IO.File]::WriteAllText((Join-Path `$config 'node-migration.txt'), "`$(`$env:GICC_SKIP_DEPENDENCY_INSTALL):`$(`$env:GICC_ALLOW_NODE_INSTALL)")
-`$receipt = [ordered]@{ schema = 1; version = '$Version'; method = 'archive'; binDir = `$env:GICC_BIN_DIR; repository = 'DrPei12/gpt-in-claude-code' }
+`$receipt = [ordered]@{ schema = 1; version = '$Version'; method = 'archive'; binDir = `$env:GICC_BIN_DIR; repository = 'DrPei12/gpt-in-claude-code'; claudexShim = `$true }
 [IO.File]::WriteAllText((Join-Path `$config 'install.json'), ((`$receipt | ConvertTo-Json -Compress) + "`n"))
 "@
             [IO.File]::WriteAllText((Join-Path $releaseRoot 'install.ps1'), $installer, $utf8)
@@ -3532,6 +3594,8 @@ if ('$installerMode' -eq 'rollback') { exit 23 }
         try {
             $originalBridge = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -Raw
             $originalRuntime = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -Raw
+            $originalClaudexPs = Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw
+            $originalClaudexCmd = Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd') -Raw
 
             New-ArchiveUpdateFixture $fixture '9.9.6' 'success' $true
             $badChecksum = Invoke-ArchiveUpdateFixture $fixture
@@ -3547,10 +3611,15 @@ if ('$installerMode' -eq 'rollback') { exit 23 }
             Assert-True ($missingRuntime.ExitCode -eq 1 -and $missingRuntime.Output.Contains('does not contain gicc-runtime.mjs')) 'Windows archive updater rejects a missing session runtime'
 
             New-ArchiveUpdateFixture $fixture '9.9.8' 'rollback'
+            $markerOwnedReceipt = Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'install.json') -Raw | ConvertFrom-Json
+            $markerOwnedReceipt | Add-Member -NotePropertyName claudexShim -NotePropertyValue $false -Force
+            [IO.File]::WriteAllText((Join-Path $env:GICC_CONFIG_DIR 'install.json'), (($markerOwnedReceipt | ConvertTo-Json -Compress) + "`n"), $utf8)
             $rollback = Invoke-ArchiveUpdateFixture $fixture
             Assert-True ($rollback.ExitCode -eq 1 -and $rollback.Output.Contains('restored the previous managed installation')) 'Windows archive updater reports rollback'
             Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'skill-bridge.cjs') -Raw) -eq $originalBridge) 'Windows rollback restores the prior bridge'
             Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_CONFIG_DIR 'gicc-runtime.mjs') -Raw) -eq $originalRuntime) 'Windows rollback restores the prior session runtime'
+            Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.ps1') -Raw) -ceq $originalClaudexPs) 'Windows rollback restores a marked shim even when a legacy receipt lost ownership'
+            Assert-True ((Get-Content -LiteralPath (Join-Path $env:GICC_BIN_DIR 'claudex.cmd') -Raw) -ceq $originalClaudexCmd) 'Windows rollback restores both files in a marked shim pair'
 
             New-ArchiveUpdateFixture $fixture '9.9.9' 'success'
             $success = Invoke-ArchiveUpdateFixture $fixture

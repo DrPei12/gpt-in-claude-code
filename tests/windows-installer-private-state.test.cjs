@@ -83,7 +83,7 @@ for (const publication of [
   includes(publication, `private publication does not use the protected atomic writer: ${publication}`);
 }
 
-const installedFiles = section('foreach ($privateInstalledFile in @(', '$settings = Get-Content');
+const installedFiles = section('$privateInstalledFiles = @(', '$settings = Get-Content');
 for (const target of [
   '$launcherTarget',
   '$cmdTarget',
@@ -100,6 +100,10 @@ for (const target of [
 }
 assert(installedFiles.includes('Protect-PrivatePath $privateInstalledFile $false'),
   'installed files are listed without applying the private ACL');
+assert(installedFiles.includes('$installClaudexShim') &&
+  installedFiles.includes('$claudexPsTarget') &&
+  installedFiles.includes('$claudexCmdTarget'),
+  'installed compatibility shims are not conditionally protected');
 
 includes('Protect-PrivatePath $managedProxy $false',
   'managed proxy executable is not protected');
