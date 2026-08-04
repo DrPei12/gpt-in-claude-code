@@ -46,7 +46,7 @@ function successfulJson(args, environment = {}) {
 function installFakeCodex() {
   writeFileSync(fakeCodex, `
 import { createHash } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -64,10 +64,11 @@ for await (const line of reader) {
       continue;
     }
     const session = request.params.migrationItems[0].details.sessions[0];
-    const hash = createHash('sha256').update(readFileSync(session.path)).digest('hex');
+    const canonicalSource = realpathSync(session.path);
+    const hash = createHash('sha256').update(readFileSync(canonicalSource)).digest('hex');
     mkdirSync(process.env.CODEX_HOME, { recursive: true });
     writeFileSync(join(process.env.CODEX_HOME, 'external_agent_session_imports.json'), JSON.stringify({ records: [{
-      source_path: session.path,
+      source_path: canonicalSource,
       content_sha256: hash,
       imported_thread_id: process.env.FAKE_CODEX_THREAD_ID,
     }] }));
