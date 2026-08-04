@@ -196,6 +196,7 @@ the commands below therefore refer to the same isolated Claude Code profile.
 | `gicc session status [SESSION_ID]` | Inspect transcript identity and matching context checkpoints |
 | `gicc session doctor [SESSION_ID]` | Validate every JSONL record and report unrecoverable context state |
 | `gicc session resume SESSION_ID` | Validate the session, then pass its ID to native Claude Code resume |
+| `gicc transfer [SESSION_ID]` | Import the selected native transcript into a new persistent Codex thread without invoking a model |
 | `gicc context status [--session SESSION_ID]` | Inspect active, previous, invalid, and quarantined checkpoints |
 | `gicc context repair [--session SESSION_ID]` | Quarantine invalid active files and restore a valid previous checkpoint |
 
@@ -215,6 +216,22 @@ untouched. Raw Claude history is not edited, compacted, converted, or deleted.
 Use `gicc --resume SESSION_ID` when scripting against Claude Code's native
 interface; `gicc session resume SESSION_ID` adds an explicit local validation
 step first.
+
+`gicc transfer` selects the latest healthy root session for the current
+directory. Supply a session ID, `--cwd PATH`, or `--source FILE` to select it
+explicitly; add `--json` for machine output. An explicit source must resolve to
+a regular UUID named JSONL transcript inside GICC's isolated `projects`
+directory. The command validates the complete transcript, calls Codex
+app server's native external agent importer, waits for its completion event,
+then prints the resulting `codex resume THREAD-ID` command. It does not send a
+prompt, start a model turn, edit the Claude transcript, or copy credentials.
+
+Transfer is deliberately one way and point in time. It creates a new Codex
+thread containing the visible imported conversation; it does not make Claude
+and Codex session IDs, checkpoints, tools, subagents, permissions, or later
+messages interchangeable or continuously synchronized. A Codex CLI version
+without the importer fails with an update instruction instead of falling back
+to prompt reconstruction.
 
 ## Skills
 

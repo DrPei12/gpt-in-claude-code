@@ -3780,6 +3780,9 @@ exit /b %ERRORLEVEL%
         }
     }
 
+    & node (Join-Path $root 'tests\runtime-transfer.test.mjs')
+    Assert-True ($LASTEXITCODE -eq 0) 'native session transfer checks'
+
     & node (Join-Path $root 'scripts\check-docs.mjs')
     Assert-True ($LASTEXITCODE -eq 0) 'community and documentation checks'
 

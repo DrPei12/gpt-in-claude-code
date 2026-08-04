@@ -58,8 +58,9 @@
     "check:shim": "node tests/claudex-shim.test.mjs",
     "check:diagnostics": "node tests/runtime-diagnostics.test.mjs",
     "check:runtime": "node tests/runtime-session-context.test.mjs",
+    "check:transfer": "node tests/runtime-transfer.test.mjs",
     "check:public-tree": "node tests/public-tree-policy.test.mjs && node scripts/check-public-tree.mjs",
-    "test": "npm run check:docs && npm run check:preload && npm run check:skills && npm run check:package-bootstrap && npm run check:package-setup-lock && npm run check:compatibility && npm run check:dynamic-workflow && npm run check:shim && npm run check:diagnostics && npm run check:runtime && npm run check:public-tree",
+    "test": "npm run check:docs && npm run check:preload && npm run check:skills && npm run check:package-bootstrap && npm run check:package-setup-lock && npm run check:compatibility && npm run check:dynamic-workflow && npm run check:shim && npm run check:diagnostics && npm run check:runtime && npm run check:transfer && npm run check:public-tree",
     "test:all": "bash ./test.sh",
     "build:release": "bash ./scripts/build-release.sh"
   },

@@ -40,7 +40,7 @@ interchangeable.
 | Hooks | Claude hooks remain part of the Claude runtime; GICC generates one bounded `UserPromptSubmit` adapter for Codex style `$skill` references | Codex hook layers and plugin hooks are not imported into the default mode | **Native** plus a narrow **translated** adapter; other hooks stay **native** to their explicit harness route |
 | Agents and tasks | Claude custom agents, task tools, Dynamic Workflow, Ultrareview, nested delegation, and Agent Teams remain authoritative; GICC adds Terra and Luna agent profiles unless the caller supplies `--agents` | Codex custom agent files, thread controls, and native collaboration protocol are not imported into Claude Code | **Translated** managed agents in the default mode and **Native** Claude scheduling; the model decides delegation without a fixed GICC Tool or Agent cap |
 | Permissions and sandboxing | Claude permission modes and the sandbox available on the host platform remain authoritative | Codex approval policy, rules, managed requirements, and sandbox configuration are not enforcement inputs to Claude Code | **Native** controls on each explicit harness route; policy semantics are **not portable** between them |
-| Sessions, resume, and worktrees | Claude session IDs, resume, fork, PR, worktree, IDE, and tmux arguments are preserved | Codex thread IDs and resume, fork, archive, cloud, and app server state remain separate | **Pass through** for Claude sessions and **native** on each explicit route; session stores are **not portable** |
+| Sessions, resume, and worktrees | Claude session IDs, resume, fork, PR, worktree, IDE, and tmux arguments are preserved | `gicc transfer` can ask Codex's native importer to create one new persistent thread from one validated GICC transcript | **Pass through** for Claude sessions and **native** on each explicit route; IDs, checkpoints, live state, and reverse synchronization remain **not portable** |
 | Structured and streaming output | Claude Code emits text, JSON, stream JSON, and schema constrained output | Codex JSONL and app server thread/turn/item events are not exposed by the default Claude harness | **Native** output on each explicit route; event protocols are **not portable** |
 | Usage limits | A bundled skill and status helper render sanitized Codex account limits | Data comes from the authenticated Codex usage endpoint or bounded app server fallback | **Translated** |
 | Browser, web search, and apps | `--claude-chrome` uses a normal Claude profile; other Claude flags remain upstream controlled | Codex web search modes, browser behavior, apps, and connectors are not recreated in Claude Code | Claude in Chrome is **first party only**; each native route preserves its own browser, search, and app surfaces, which are **not portable** |
@@ -48,7 +48,7 @@ interchangeable.
 
 ## Harness routes
 
-The route is an execution boundary, not a session converter. Complete
+The route is an execution boundary, not a general session converter. Complete
 harness specific access means executing the feature in its installed native
 harness: `gicc codex ...` for Codex and `gicc claude ...` for the native
 Claude harness. It does not mean that configuration, sessions,
@@ -59,13 +59,15 @@ plugins, policy, tools, or event protocols become portable between products.
 | `gicc [GICC-OPTIONS] [CLAUDE-ARGS]` | Default portable mode: Claude Code UI and tools backed by the Codex model bridge, with the translations documented above. |
 | `gicc codex [CODEX-ARGS]` | Native Codex route: hand off to the installed Codex CLI so Codex configuration, instructions, policy, sandbox, MCP, hooks, plugins, apps, sessions, and output protocols retain their native semantics. |
 | `gicc claude [CLAUDE-ARGS]` | Native Claude route: hand off without Codex provider or GICC session injection. Caller owned Claude provider and profile configuration remain authoritative; managed GICC state is scrubbed when crossing out of a managed session. |
+| `gicc transfer [SESSION_ID]` | Model free one way import: validate one GICC Claude transcript and ask Codex's native external agent importer to create a persistent Codex thread. This does not translate tools, policy, checkpoints, subagent state, or future messages. |
 | `gicc --fable`, `--opus`, `--sonnet`, or `--haiku` | Native Claude model convenience routes: pass the selected alias through `--model` without loading managed GPT state. |
 | `gicc --claude-model MODEL` | Native Claude model route for any alias or full model ID accepted by the installed CLI and account. |
 | `gicc --fableplan "TASK"` | Coordinated route: run a native Fable read only planner, validate its bounded plan text, then start an isolated managed Terra implementer with private read access to that plan. |
 | `gicc --claude-chrome [CLAUDE-ARGS]` | First party Claude convenience route that also requests Claude in Chrome. |
 
-Claude and Codex session identifiers, configuration files, policy decisions,
-plugin runtime state, and event streams are not converted between routes. A
+Apart from the explicit one way transcript import above, Claude and Codex
+session identifiers, configuration files, policy decisions, plugin runtime
+state, and event streams are not converted between routes. A
 feature that is marked not portable remains fully available through its native
 route when the installed CLI, account, platform, and external services support
 it.

@@ -1010,7 +1010,7 @@ if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('--login', '--lo
 
 $earlyRuntimeBypass = $false
 $earlyGlobalMaintenanceOptions = @('--help', '-h', '--version', '-v')
-$earlyMaintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'claude', 'codex', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup', 'setup-token', 'skills', 'stop', 'support', 'ultrareview', 'update', 'upgrade', 'version')
+$earlyMaintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'claude', 'codex', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup', 'setup-token', 'skills', 'stop', 'support', 'transfer', 'ultrareview', 'update', 'upgrade', 'version')
 $earlyPositionalSeen = $false
 for ($earlyIndex = 0; $earlyIndex -lt $ClaudeArguments.Count; $earlyIndex++) {
     $earlyArgument = [string] $ClaudeArguments[$earlyIndex]
@@ -1133,7 +1133,7 @@ if (-not $earlyRuntimeBypass) {
 
 $env:CLAUDE_CONFIG_DIR = $configDir
 
-if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('session', 'context', 'version', 'setup', 'support')) {
+if ($ClaudeArguments.Count -gt 0 -and $ClaudeArguments[0] -in @('session', 'context', 'version', 'setup', 'support', 'transfer')) {
     Assert-SkillBridgeNode 'GICC runtime management'
     if (-not (Test-Path -LiteralPath $runtimeHelper -PathType Leaf)) { Fail 'runtime helper is missing; reinstall GICC.' }
     if ($ClaudeArguments[0] -eq 'session' -and $ClaudeArguments.Count -gt 1 -and $ClaudeArguments[1] -eq 'resume') {
@@ -2767,7 +2767,7 @@ $suppressResumeFooter = $false
 $backgroundLaunch = $false
 $requestedResumeSessionId = ''
 $maintenanceGlobalOptions = @('--help', '-h', '--version', '-v')
-$maintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup', 'setup-token', 'skills', 'stop', 'support', 'ultrareview', 'update', 'upgrade', 'version')
+$maintenanceCommands = @('agents', 'attach', 'auth', 'auto-mode', 'context', 'doctor', 'gateway', 'install', 'kill', 'logs', 'mcp', 'plugin', 'plugins', 'project', 'remote-control', 'respawn', 'rm', 'self-update', 'session', 'setup', 'setup-token', 'skills', 'stop', 'support', 'transfer', 'ultrareview', 'update', 'upgrade', 'version')
 $maintenancePositionalSeen = $false
 $maintenanceCommandDetected = $false
 for ($scanIndex = 0; $scanIndex -lt $forwardArguments.Count; $scanIndex++) {

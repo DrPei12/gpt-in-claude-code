@@ -18,10 +18,15 @@ User
   |             -> caller owned Claude Code profile with requested model
   |             -> caller owned Anthropic authentication
   |
-  `-- Fableplan route
+  |-- Fableplan route
         native Fable read only planner
              -> validated plan text in private temporary file
              -> isolated managed Terra implementer
+
+  `-- session transfer
+        validated GICC Claude JSONL transcript
+             -> native Codex external-agent importer
+             -> persistent Codex thread (no model turn)
 ```
 
 Each running process belongs to one provider route. Native Claude and managed
@@ -61,7 +66,7 @@ the plan file and workspace after completion or interruption.
 | Status line | `statusline` | `statusline.ps1` | Render model, effort, stable context, and cached usage status |
 | Terminal preload | `preload.cjs` | shared | Translate Solplan input and replace only the interactive startup billing field without modifying Claude Code or machine output |
 | Skill bridge | `skill-bridge.cjs` | shared | Discover existing Claude and Codex skills, preserve project scope, adapt provider specific policy/model metadata, and build an immutable private overlay |
-| Session runtime | `gicc-runtime.mjs` | shared | Inventory and validate native transcripts, report checkpoint health, and perform scoped non destructive checkpoint recovery |
+| Session runtime | `gicc-runtime.mjs` | shared | Inventory and validate native transcripts, report checkpoint health, perform scoped non destructive checkpoint recovery, and request native one way Codex session imports |
 | Settings template | `settings.json` | shared | Provide isolated default Claude Code settings |
 
 ## Authentication lifecycle
@@ -106,6 +111,16 @@ identity and health without emitting message content. Its repair path never
 edits a transcript: it quarantines an invalid active checkpoint and promotes a
 valid previous checkpoint when one exists. Session scoped repair leaves files
 with unknown ownership untouched.
+
+Session transfer is a separate explicit operation. GICC accepts only a healthy
+UUID named transcript whose canonical path remains inside its isolated session
+store. It starts Codex app server directly, negotiates the JSONL protocol,
+requests `externalAgentConfig/import`, and waits for the completion
+notification. The resulting thread ID is accepted only when Codex records the
+same canonical source path and content digest in its import ledger. No
+`turn/start` request is made, so transfer itself consumes no model turn. The
+source transcript is never edited and no reverse or continuous synchronization
+is implied.
 
 ## Update and compatibility strategy
 
@@ -158,6 +173,9 @@ all asset digests and running the full platform matrix.
 - **Fableplan transfer boundary:** only bounded validated plan text moves from
   the native planner to the managed implementer, through a private temporary
   file that is removed at workflow exit.
+- **Session import boundary:** only an explicitly selected healthy transcript
+  inside the isolated GICC session store is handed to the installed Codex
+  import API; prompts are never copied into command arguments or GICC output.
 - **Third party boundary:** Codex, Claude Code, provider APIs, browser
   extensions, and CLIProxyAPI remain separately maintained software and
   services.

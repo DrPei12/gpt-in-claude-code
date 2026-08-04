@@ -25,7 +25,7 @@ fi
 
 gicc_is_maintenance_command() {
   case "$1" in
-    --help|-h|--version|-v|agents|attach|auth|auto-mode|context|doctor|gateway|install|kill|logs|mcp|plugin|plugins|project|remote-control|respawn|rm|self-update|session|setup|setup-token|skills|stop|support|ultrareview|update|upgrade|version) return 0 ;;
+    --help|-h|--version|-v|agents|attach|auth|auto-mode|context|doctor|gateway|install|kill|logs|mcp|plugin|plugins|project|remote-control|respawn|rm|self-update|session|setup|setup-token|skills|stop|support|transfer|ultrareview|update|upgrade|version) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -643,7 +643,7 @@ node_supports_skill_bridge() {
     >/dev/null 2>&1
 }
 
-if [[ "${1:-}" == session || "${1:-}" == context || "${1:-}" == version || "${1:-}" == setup || "${1:-}" == support ]]; then
+if [[ "${1:-}" == session || "${1:-}" == context || "${1:-}" == version || "${1:-}" == setup || "${1:-}" == support || "${1:-}" == transfer ]]; then
   activate_managed_node
   node_supports_skill_bridge || { printf '%s\n' 'gicc: Node.js 18 or newer is required for GICC runtime management.' >&2; exit 1; }
   [[ -r "$gicc_runtime_helper" ]] || { printf '%s\n' 'gicc: runtime helper is missing; reinstall GICC.' >&2; exit 1; }

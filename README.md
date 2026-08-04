@@ -88,6 +88,9 @@ For release downloads, system requirements, updating, and removal, see the [inst
   Terra. Only bounded plan text crosses between the two processes.
 - Concurrent Claude and GPT sessions with separate provider environments and
   no shared credential process.
+- One way, model free transfer of a validated GICC Claude transcript into a
+  persistent Codex thread, using Codex's native `externalAgentConfig/import`
+  session importer.
 - Auto, max effort, and Ultracode modes with explicit and separate behavior.
 - Transparent continuation when Codex consumes one output segment with
   encrypted reasoning before it can produce a visible answer. This fixes the
@@ -151,6 +154,7 @@ gicc session list       List resumable sessions for the current directory
 gicc session status     Inspect the latest session and its context checkpoints
 gicc session doctor     Validate the latest native transcript and context state
 gicc session resume ID  Resume one validated session through Claude Code
+gicc transfer [ID]      Import a validated GICC session into a resumable Codex thread
 gicc context status     Inspect persisted model context checkpoints
 gicc context repair     Quarantine damaged checkpoints and restore safe backups
 gicc self-update --status  Inspect automatic update state

@@ -2680,6 +2680,7 @@ HOME="$update_home" PATH="$tmp/bin:$PATH" GICC_CURL_BIN="$tmp/bin/curl" GICC_SKI
 "$root/tests/auth-usage-regressions.sh"
 "$root/tests/self-update-regressions.sh"
 bash "$root/tests/installer-regressions.sh"
+node "$root/tests/runtime-transfer.test.mjs"
 node "$root/scripts/check-docs.mjs"
 
 printf '%s\n' 'all GICC tests passed'

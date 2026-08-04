@@ -10,14 +10,17 @@ import {
   openSync,
   readFileSync,
   readSync,
+  realpathSync,
   readdirSync,
   renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { spawn, spawnSync } from 'node:child_process';
 import { arch, homedir, platform } from 'node:os';
-import { basename, delimiter, dirname, extname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
@@ -32,6 +35,10 @@ const receiptPath = join(configDir, 'install.json');
 const MANAGED_MODELS = new Set(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']);
 const SETTINGS_MODELS = new Set([...MANAGED_MODELS, 'opusplan', 'solplan', 'opus', 'fable', 'sonnet', 'haiku']);
 const INSTALL_METHODS = new Set(['homebrew', 'scoop', 'winget', 'archive', 'git']);
+const EXTERNAL_AGENT_IMPORT_COMPLETED = 'externalAgentConfig/import/completed';
+const TRANSFER_TIMEOUT_MS = 2 * 60 * 1000;
+const MAX_APP_SERVER_LINE_BYTES = 1024 * 1024;
+const MAX_APP_SERVER_STDERR_BYTES = 256 * 1024;
 
 function oneOf(...values) {
   const accepted = new Set(values);
@@ -67,12 +74,12 @@ function fail(message, code = 1) {
 }
 
 function parseOptions(tokens, allowed) {
-  const options = { json: false, all: false, cwd: null, session: null, positional: [] };
+  const options = { json: false, all: false, cwd: null, session: null, source: null, positional: [] };
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
     if (token === '--json' && allowed.has('json')) options.json = true;
     else if (token === '--all' && allowed.has('all')) options.all = true;
-    else if ((token === '--cwd' || token === '--session') && allowed.has(token.slice(2))) {
+    else if ((token === '--cwd' || token === '--session' || token === '--source') && allowed.has(token.slice(2))) {
       const value = tokens[index + 1];
       if (!value || value.startsWith('--')) fail(`${token} requires a value`, 2);
       options[token.slice(2)] = value;
@@ -430,6 +437,328 @@ async function inspectTranscript(path, id) {
   return { lines, invalidLines, matchingRecords, rootRecords, cwdCount: cwdValues.size, issues };
 }
 
+function directoryExists(path) {
+  try { return statSync(path).isDirectory(); } catch { return false; }
+}
+
+function pathInside(parent, child) {
+  const candidate = relative(parent, child);
+  return candidate !== '' && candidate !== '..' && !candidate.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) &&
+    !isAbsolute(candidate);
+}
+
+function resolveUserPath(cwd, value) {
+  if (value === '~') return homedir();
+  if (String(value).startsWith('~/') || String(value).startsWith('~\\')) {
+    return resolve(homedir(), String(value).slice(2));
+  }
+  return resolve(cwd, value);
+}
+
+async function resolveTransferSession(options) {
+  if (options.source && options.positional.length) fail('a session ID and --source cannot be used together', 2);
+  if (options.positional.length > 1) fail('Usage: gicc transfer [SESSION_ID] [--source FILE] [--cwd PATH] [--json]', 2);
+
+  let session;
+  if (options.source) {
+    const requested = resolveUserPath(options.cwd || process.cwd(), options.source);
+    if (extname(requested).toLowerCase() !== '.jsonl') fail(`transfer source must be a JSONL file: ${requested}`, 2);
+    if (!regularFile(requested)) fail(`transfer source is not a regular file: ${requested}`, 3);
+    let source;
+    let root;
+    try {
+      source = realpathSync(requested);
+      root = realpathSync(projectsDir);
+    } catch {
+      fail(`transfer source was not found in the GICC session store: ${requested}`, 3);
+    }
+    if (!pathInside(root, source)) fail(`transfer source must remain inside the GICC session store: ${projectsDir}`, 2);
+    const id = basename(source, '.jsonl');
+    if (!UUID.test(id)) fail('transfer source filename must be a Claude session UUID', 2);
+    session = sampleTranscript(source, id);
+  } else {
+    let id = options.positional[0];
+    if (!id) {
+      const latest = listSessions({ all: false, cwd: options.cwd }).sessions[0];
+      if (!latest) fail(`no GICC session found for ${resolve(options.cwd || process.cwd())}`, 3);
+      id = latest.id;
+    }
+    session = findSession(id);
+  }
+
+  const transcript = await inspectTranscript(session._path, session.id);
+  if (transcript.issues.length) fail(`Claude transcript is not safe to transfer: ${transcript.issues.join('; ')}`, 4);
+  return { session, transcript };
+}
+
+function protocolError(message, detail = null) {
+  const error = new Error(message);
+  if (detail?.code !== undefined) error.rpcCode = detail.code;
+  error.detail = detail;
+  return error;
+}
+
+class DirectCodexAppServer {
+  constructor(cwd) {
+    this.cwd = cwd;
+    this.nextId = 1;
+    this.pending = new Map();
+    this.stderr = '';
+    this.closed = false;
+    this.importCompleted = false;
+    this.importWaiter = null;
+  }
+
+  async start() {
+    this.child = spawn('codex', ['app-server'], {
+      cwd: this.cwd,
+      env: process.env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
+      windowsHide: true,
+    });
+    this.exitPromise = new Promise((resolveExit) => {
+      this.child.once('exit', (code, signal) => {
+        const detail = signal ? `signal ${signal}` : `exit ${code}`;
+        const error = this.closed && code === 0 ? null : protocolError(
+          `Codex app-server closed unexpectedly (${detail}).${this.stderr ? `\n${this.stderr}` : ''}`,
+        );
+        for (const request of this.pending.values()) {
+          clearTimeout(request.timer);
+          request.reject(error || protocolError('Codex app-server closed before completing a request.'));
+        }
+        this.pending.clear();
+        if (this.importWaiter) {
+          clearTimeout(this.importWaiter.timer);
+          this.importWaiter.reject(error || protocolError('Codex app-server closed before completing the import.'));
+          this.importWaiter = null;
+        }
+        resolveExit();
+      });
+    });
+    this.child.once('error', (error) => {
+      for (const request of this.pending.values()) {
+        clearTimeout(request.timer);
+        request.reject(error);
+      }
+      this.pending.clear();
+    });
+    this.child.stderr.setEncoding('utf8');
+    this.child.stderr.on('data', (chunk) => {
+      this.stderr = `${this.stderr}${chunk}`.slice(-MAX_APP_SERVER_STDERR_BYTES);
+    });
+    this.reader = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
+    this.reader.on('line', (line) => this.handleLine(line));
+
+    await this.request('initialize', {
+      clientInfo: { title: 'GPT in Claude Code', name: 'GICC', version: versionInfo().version || '0.0.0' },
+      capabilities: {
+        experimentalApi: false,
+        requestAttestation: false,
+        optOutNotificationMethods: [
+          'item/agentMessage/delta',
+          'item/reasoning/summaryTextDelta',
+          'item/reasoning/summaryPartAdded',
+          'item/reasoning/textDelta',
+        ],
+      },
+    });
+    this.send({ method: 'initialized', params: {} });
+  }
+
+  handleLine(line) {
+    if (!line.trim()) return;
+    if (Buffer.byteLength(line, 'utf8') > MAX_APP_SERVER_LINE_BYTES) {
+      this.rejectAll(protocolError('Codex app-server returned an oversized response line.'));
+      return;
+    }
+    let message;
+    try { message = JSON.parse(line); }
+    catch {
+      this.rejectAll(protocolError('Codex app-server returned malformed JSONL.'));
+      return;
+    }
+    if (message.id !== undefined && message.method) {
+      this.send({ id: message.id, error: { code: -32601, message: `Unsupported server request: ${message.method}` } });
+      return;
+    }
+    if (message.id !== undefined) {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      clearTimeout(pending.timer);
+      if (message.error) pending.reject(protocolError(message.error.message || `Codex request ${pending.method} failed.`, message.error));
+      else pending.resolve(message.result || {});
+      return;
+    }
+    if (message.method === EXTERNAL_AGENT_IMPORT_COMPLETED) {
+      this.importCompleted = true;
+      if (this.importWaiter) {
+        clearTimeout(this.importWaiter.timer);
+        this.importWaiter.resolve();
+        this.importWaiter = null;
+      }
+    }
+  }
+
+  rejectAll(error) {
+    for (const request of this.pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(error);
+    }
+    this.pending.clear();
+    if (this.importWaiter) {
+      clearTimeout(this.importWaiter.timer);
+      this.importWaiter.reject(error);
+      this.importWaiter = null;
+    }
+  }
+
+  send(message) {
+    if (!this.child?.stdin || this.child.stdin.destroyed) throw protocolError('Codex app-server stdin is unavailable.');
+    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+  }
+
+  request(method, params) {
+    const id = this.nextId;
+    this.nextId += 1;
+    return new Promise((resolveRequest, rejectRequest) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        rejectRequest(protocolError(`Timed out waiting for Codex request ${method}.`));
+      }, TRANSFER_TIMEOUT_MS);
+      this.pending.set(id, { method, resolve: resolveRequest, reject: rejectRequest, timer });
+      try { this.send({ id, method, params }); }
+      catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        rejectRequest(error);
+      }
+    });
+  }
+
+  waitForImport() {
+    if (this.importCompleted) return Promise.resolve();
+    return new Promise((resolveImport, rejectImport) => {
+      const timer = setTimeout(() => {
+        this.importWaiter = null;
+        rejectImport(protocolError('Timed out waiting for Codex to finish importing the Claude session.'));
+      }, TRANSFER_TIMEOUT_MS);
+      this.importWaiter = { resolve: resolveImport, reject: rejectImport, timer };
+    });
+  }
+
+  async close() {
+    if (!this.child) return;
+    this.closed = true;
+    this.reader?.close();
+    if (!this.child.stdin.destroyed) this.child.stdin.end();
+    const closed = await Promise.race([
+      this.exitPromise.then(() => true),
+      new Promise((resolveWait) => setTimeout(() => resolveWait(false), 1000)),
+    ]);
+    if (closed) return;
+    if (process.platform === 'win32') {
+      spawnSync('taskkill.exe', ['/PID', String(this.child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } else {
+      try { this.child.kill('SIGTERM'); } catch { }
+    }
+    await Promise.race([
+      this.exitPromise,
+      new Promise((resolveWait) => setTimeout(resolveWait, 1000)),
+    ]);
+  }
+}
+
+function externalAgentSessionMigration(sourcePath, cwd) {
+  return {
+    migrationItems: [{
+      itemType: 'SESSIONS',
+      description: `Transfer Claude session ${basename(sourcePath)}`,
+      cwd: null,
+      details: {
+        plugins: [],
+        sessions: [{ path: sourcePath, cwd, title: null }],
+        mcpServers: [],
+        hooks: [],
+        subagents: [],
+        commands: [],
+      },
+    }],
+  };
+}
+
+async function sha256File(path) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+async function importedThreadId(sourcePath) {
+  const ledgerPath = join(resolve(process.env.CODEX_HOME || join(homedir(), '.codex')), 'external_agent_session_imports.json');
+  const ledger = readJsonObject(ledgerPath, 16 * 1024 * 1024);
+  if (!ledger) return null;
+  const canonicalSource = realpathSync(sourcePath);
+  const contentSha256 = await sha256File(canonicalSource);
+  const records = Array.isArray(ledger.records) ? ledger.records : [];
+  const match = records.filter((record) =>
+    typeof record?.source_path === 'string' && normalizePath(record.source_path) === normalizePath(canonicalSource) &&
+    record?.content_sha256 === contentSha256 && typeof record?.imported_thread_id === 'string' &&
+    UUID.test(record.imported_thread_id)).at(-1);
+  return match?.imported_thread_id || null;
+}
+
+async function importClaudeSession(sourcePath, cwd) {
+  if (!commandAvailable('codex')) throw new Error('Codex CLI is unavailable. Install or update it with `npm install -g @openai/codex@latest`.');
+  const client = new DirectCodexAppServer(cwd);
+  try {
+    await client.start();
+    try {
+      await client.request('externalAgentConfig/import', externalAgentSessionMigration(sourcePath, cwd));
+      await client.waitForImport();
+    } catch (error) {
+      if (error?.rpcCode === -32601) {
+        throw new Error('This Codex CLI does not support native Claude session transfer. Update it with `npm install -g @openai/codex@latest`.');
+      }
+      throw error;
+    }
+  } finally {
+    await client.close();
+  }
+  const threadId = await importedThreadId(sourcePath);
+  if (!threadId) {
+    throw new Error(`Codex reported a completed import but did not record a resumable thread.${client.stderr ? ` ${client.stderr}` : ''}`);
+  }
+  return { threadId };
+}
+
+function humanTransfer(value) {
+  return [
+    `Transferred GICC session ${value.sessionId} into Codex without a model call.`,
+    `Codex thread: ${value.threadId}`,
+    `Resume: ${value.resumeCommand}`,
+  ].join('\n');
+}
+
+async function transferCommand(tokens) {
+  const options = parseOptions(tokens, new Set(['json', 'cwd', 'source']));
+  const serverCwd = resolve(options.cwd || process.cwd());
+  if (!directoryExists(serverCwd)) fail(`transfer working directory does not exist: ${serverCwd}`, 2);
+  const { session } = await resolveTransferSession(options);
+  let imported;
+  try { imported = await importClaudeSession(session._path, serverCwd); }
+  catch (error) { fail(error instanceof Error ? error.message : String(error)); }
+  const value = {
+    schema: SCHEMA,
+    sessionId: session.id,
+    sourcePath: realpathSync(session._path),
+    threadId: imported.threadId,
+    resumeCommand: `codex resume ${imported.threadId}`,
+    modelInvocation: false,
+  };
+  output(value, humanTransfer, options.json);
+}
+
 function readCheckpoint(path) {
   if (!regularFile(path)) return { valid: false, value: null, error: 'not a regular file' };
   let value;
@@ -659,5 +988,7 @@ if (command === 'session') {
   const value = setupStatus();
   output(value, humanSetup, options.json);
   if (!value.ready) process.exitCode = 1;
+} else if (command === 'transfer') {
+  await transferCommand(argumentsAfterCommand);
 } else if (command === 'support') supportCommand(argumentsAfterCommand);
-else fail('Usage: gicc-runtime <session|context|version|setup|support> ...', 2);
+else fail('Usage: gicc-runtime <session|context|version|setup|support|transfer> ...', 2);

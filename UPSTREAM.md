@@ -18,5 +18,11 @@ at commit `fde40c5a0a2f8f6808bcde498bc6079f32c355ef`. The verified source archiv
 patch list, build inputs, and release asset digests are recorded in
 [`proxy/manifest.json`](proxy/manifest.json).
 
+The one way session transfer protocol was informed by OpenAI's public
+[`codex-plugin-cc`](https://github.com/openai/codex-plugin-cc) implementation of
+Codex app server external agent session import. GICC independently implements
+the protocol for its isolated transcript store; it does not vendor that plugin
+or make it a runtime dependency.
+
 This project is maintained independently. Upstream authors are not responsible
 for its patches, releases, support, or compatibility claims.

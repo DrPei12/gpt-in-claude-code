@@ -21,6 +21,9 @@ All notable changes to this independent distribution are documented here.
 - A checked JSON compatibility manifest keeps harness classifications, pass
   through arguments, and native uncapped workflow ownership synchronized with
   the public documentation and both launchers.
+- `gicc transfer` validates a selected GICC Claude transcript and uses Codex's
+  native external agent importer to create a persistent `codex resume` thread
+  without starting a model turn or modifying the source transcript.
 
 ### Changed
 
