@@ -312,7 +312,9 @@ function writeSupportBundle(value, destination) {
 }
 
 function normalizePath(path) {
-  const normalized = resolve(path);
+  let normalized = resolve(path);
+  try { normalized = realpathSync(normalized); }
+  catch { /* Preserve normalization for paths that no longer exist. */ }
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 

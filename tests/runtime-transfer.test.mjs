@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -12,6 +12,7 @@ const configDir = join(temporary, 'config');
 const codexHome = join(temporary, 'codex-home');
 const fakeBin = join(temporary, 'bin');
 const project = join(temporary, 'project');
+const recordedProject = process.platform === 'win32' ? project : join(temporary, 'project-link');
 const transcriptDir = join(configDir, 'projects', 'fixture-project');
 const trace = join(temporary, 'codex-requests.jsonl');
 const sessionId = '123e4567-e89b-12d3-a456-426614174000';
@@ -93,11 +94,12 @@ try {
   for (const directory of [configDir, codexHome, fakeBin, project, transcriptDir]) {
     mkdirSync(directory, { recursive: true });
   }
+  if (process.platform !== 'win32') symlinkSync(project, recordedProject, 'dir');
   installFakeCodex();
   const privatePrompt = 'private transcript content must never become a command argument or result';
   writeFileSync(transcript, [
-    JSON.stringify({ sessionId, cwd: project, isSidechain: false, type: 'user', message: privatePrompt }),
-    JSON.stringify({ sessionId, cwd: project, isSidechain: false, type: 'assistant', message: 'private answer' }),
+    JSON.stringify({ sessionId, cwd: recordedProject, isSidechain: false, type: 'user', message: privatePrompt }),
+    JSON.stringify({ sessionId, cwd: recordedProject, isSidechain: false, type: 'assistant', message: 'private answer' }),
     '',
   ].join('\n'), { mode: 0o600 });
   const originalTranscript = readFileSync(transcript);
